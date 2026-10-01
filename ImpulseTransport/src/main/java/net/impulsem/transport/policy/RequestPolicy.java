@@ -40,6 +40,9 @@ public final class RequestPolicy {
         public final int errorCode;
         public final String errorText;
 
+        /** True for RETRY_AFTER decisions caused by FLOOD_PREMIUM_WAIT_X; the app is told (1405-1408). */
+        public final boolean premiumFloodWait;
+
 
         Decision(
             Action action,
@@ -47,10 +50,22 @@ public final class RequestPolicy {
             int errorCode,
             String errorText
         ) {
+            this(action, delayMillis, errorCode, errorText, false);
+        }
+
+
+        Decision(
+            Action action,
+            long delayMillis,
+            int errorCode,
+            String errorText,
+            boolean premiumFloodWait
+        ) {
             this.action = action;
             this.delayMillis = delayMillis;
             this.errorCode = errorCode;
             this.errorText = errorText;
+            this.premiumFloodWait = premiumFloodWait;
         }
     }
 
@@ -124,6 +139,7 @@ public final class RequestPolicy {
             long waitSeconds = DefaultFloodWaitSeconds;
             if (text.contains("FLOOD_PREMIUM_WAIT_")) {
                 waitSeconds = parseWait(text, "FLOOD_PREMIUM_WAIT_");
+                return new Decision(Action.RETRY_AFTER, waitSeconds * 1000L, 0, null, true);
             } else if (text.contains("FLOOD_WAIT_")) {
                 waitSeconds = parseWait(text, "FLOOD_WAIT_");
             }
@@ -167,6 +183,24 @@ public final class RequestPolicy {
         boolean loggedIn
     ) {
         return !loggedIn && (flags & FLAG_WITHOUT_LOGIN) == 0;
+    }
+
+
+    /**
+     * Requests that wait for a login can go as soon as a user is set and a session exists. The
+     * C++ released them from setUserId only (3051-3075); here the session can also arrive later.
+     */
+    public static boolean canReleaseLoginWaiters(
+        long userId,
+        boolean hasSession
+    ) {
+        return userId != 0L && hasSession;
+    }
+
+
+    /** 1519-1535: a dead session logs out only an account that is logged in (currentUserId != 0). */
+    public static boolean shouldForceLogout(long userId) {
+        return userId != 0L;
     }
 
 
