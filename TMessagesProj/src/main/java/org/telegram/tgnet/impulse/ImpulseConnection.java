@@ -662,10 +662,18 @@ public final class ImpulseConnection {
             FileLog.e(e);
             finishError(pending, 500, "CLIENT_ERROR");
             return;
+        } catch (StackOverflowError e) {
+            // A pathologically nested response must fail this request, not kill the worker thread.
+            log("token " + entry.token + " " + pending.method + " stack overflow while transcoding");
+            FileLog.e(e);
+            finishError(pending, 500, "CLIENT_ERROR");
+            return;
         }
         synchronized (lock) {
             pending.call = null;
             if (pending.cancelled) {
+                // A cancelled login request may still have stored its tokens; do not strand the waiters.
+                releaseLoginWaiters();
                 return;
             }
         }
