@@ -115,6 +115,7 @@ public final class ImpulseConnection {
     private final Map<Integer, Set<Integer>> tokensByGuid = new HashMap<>();
     private final Map<Integer, Integer> guidByToken = new HashMap<>();
     private final AtomicBoolean logoutPosted = new AtomicBoolean();
+    private final ImpulseRealtime realtime;
 
     private boolean chainBusy;
     private boolean configInFlight;
@@ -181,6 +182,7 @@ public final class ImpulseConnection {
         ScheduledThreadPoolExecutor timers = new ScheduledThreadPoolExecutor(1, namedThreads("impulse-timer-" + account));
         timers.setRemoveOnCancelPolicy(true);
         this.scheduler = timers;
+        this.realtime = ImpulseRealtime.create(account, this);
     }
 
 
@@ -224,6 +226,7 @@ public final class ImpulseConnection {
                 fetchConfig();
             }
         }, 0L, ConfigRefreshMillis, TimeUnit.MILLISECONDS);
+        realtime.start();
         releaseLoginWaiters();
         if (stale) {
             // The app thinks it is logged in but there is no ImpulseM session to authenticate with.
@@ -367,6 +370,7 @@ public final class ImpulseConnection {
         if (resetKeys || hadUser) {
             tokens.clear();
         }
+        realtime.syncSoon();
         log("cleanup reset=" + resetKeys + " hadUser=" + hadUser + " failed=" + victims.size());
     }
 
@@ -381,6 +385,7 @@ public final class ImpulseConnection {
             logoutPosted.set(false);
         }
         log("setUserId " + id);
+        realtime.syncSoon();
         releaseLoginWaiters();
         if (changed && id != 0) {
             fetchConfig();
@@ -438,6 +443,7 @@ public final class ImpulseConnection {
 
 
     public void networkChanged() {
+        realtime.syncSoon();
         executor.execute(new Runnable() {
             @Override
             public void run() {
@@ -476,6 +482,47 @@ public final class ImpulseConnection {
                 return thread;
             }
         };
+    }
+
+
+    static OkHttpClient httpClient() {
+        return sharedHttpClient();
+    }
+
+
+    RpcClient rpcClient() {
+        return rpc();
+    }
+
+
+    Transcoder transcoder() {
+        rpc();
+        return transcoder;
+    }
+
+
+    long currentUserId() {
+        synchronized (lock) {
+            return userId;
+        }
+    }
+
+
+    boolean hasSession() {
+        return tokens.hasSession();
+    }
+
+
+    /** The realtime layer could not get a token because the session is gone: log out like any forced logout. */
+    void onRealtimeSessionLost() {
+        boolean loggedIn;
+        synchronized (lock) {
+            loggedIn = RequestPolicy.shouldForceLogout(userId);
+        }
+        if (loggedIn) {
+            tokens.clear();
+            postLogout();
+        }
     }
 
 
