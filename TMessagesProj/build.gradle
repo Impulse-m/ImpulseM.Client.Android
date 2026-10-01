@@ -146,6 +146,8 @@ android {
 
         vectorDrawables.generatedDensities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi']
 
+        buildConfigField "String", "IMPULSEM_ENDPOINT", "\"" + (project.findProperty("IMPULSEM_ENDPOINT") ?: "https://rpc.impulsem.net") + "\""
+
         multiDexEnabled true
 
         externalNativeBuild {

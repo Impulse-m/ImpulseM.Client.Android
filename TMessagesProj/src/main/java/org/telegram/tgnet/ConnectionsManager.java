@@ -45,6 +45,8 @@ import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.StatsController;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
+import org.telegram.tgnet.impulse.ImpulseConnection;
+import org.telegram.tgnet.impulse.RequestEntry;
 import org.telegram.utils.proxy.WebProxyConnectionTester;
 import org.telegram.utils.proxy.WebProxyTransport;
 import org.telegram.utils.proxy.ProxySettings;
@@ -144,6 +146,11 @@ public class ConnectionsManager extends BaseController {
     };
 
     private boolean forceTryIpV6;
+    private volatile ImpulseConnection impulse;
+    private static String storedLangCode = "";
+    private static String storedSystemLangCode = "";
+    private static String storedRegId = "";
+    private boolean pushConnectionEnabled;
 
     static {
         ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(CORE_POOL_SIZE, MAXIMUM_POOL_SIZE, KEEP_ALIVE_SECONDS, TimeUnit.SECONDS, sPoolWorkQueue, sThreadFactory);
@@ -159,14 +166,12 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void discardConnection(int dcId, int connectionType) {
-        Utilities.stageQueue.postRunnable(() -> {
-            native_discardConnection(currentAccount, dcId, connectionType);
-        });
+        // Nothing to discard: every request runs over its own HTTP call.
     }
 
     public void failNotRunningRequest(int requestToken) {
         Utilities.stageQueue.postRunnable(() -> {
-            native_failNotRunningRequest(currentAccount, requestToken);
+            impulse.failNotRunning(requestToken);
         });
     }
 
@@ -205,7 +210,8 @@ public class ConnectionsManager extends BaseController {
 
     public ConnectionsManager(int instance) {
         super(instance);
-        connectionState = native_getConnectionState(currentAccount);
+        connectionState = ConnectionStateConnecting;
+        impulse = ImpulseConnection.forAccount(currentAccount, this);
         String deviceModel;
         String systemLangCode;
         String langCode;
@@ -293,23 +299,23 @@ public class ConnectionsManager extends BaseController {
     }
 
     public long getCurrentTimeMillis() {
-        return native_getCurrentTimeMillis(currentAccount);
+        return impulse.currentTimeMillis();
     }
 
     public int getCurrentTime() {
-        return native_getCurrentTime(currentAccount);
+        return (int) (impulse.currentTimeMillis() / 1000L);
     }
 
     public int getCurrentDatacenterId() {
-        return native_getCurrentDatacenterId(currentAccount);
+        return impulse.datacenterId();
     }
 
     public long getCurrentAuthKeyId() {
-        return native_getCurrentAuthKeyId(currentAccount);
+        return 0;
     }
 
     public int getTimeDifference() {
-        return native_getTimeDifference(currentAccount);
+        return impulse.timeDifference();
     }
 
     public <T extends TLObject> int sendRequestTyped(TLMethod<T> method, Utilities.Callback2<T, TLRPC.TL_error> completionBlock) {
@@ -399,24 +405,30 @@ public class ConnectionsManager extends BaseController {
             NativeByteBuffer buffer = new NativeByteBuffer(object.getObjectSize());
             object.serializeToStream(buffer);
             object.freeResources();
+            byte[] requestBytes = new byte[buffer.limit()];
+            buffer.position(0);
+            buffer.buffer.get(requestBytes);
+            buffer.reuse();
 
             long startRequestTime = 0;
             if (BuildVars.DEBUG_PRIVATE_VERSION && BuildVars.LOGS_ENABLED || (connectionType & ConnectionTypeDownload) != 0) {
                 startRequestTime = System.currentTimeMillis();
             }
             long finalStartRequestTime = startRequestTime;
-            listen(requestToken, (response, errorCode, errorText, networkType, timestamp, requestMsgId, dcId) -> {
+            listen(requestToken, (response, ownsBuffer, errorCode, errorText, networkType, timestamp, requestMsgId, dcId) -> {
                 try {
                     TLObject resp = null;
                     TLRPC.TL_error error = null;
                     int responseSize = 0;
-                    if (response != 0) {
-                        NativeByteBuffer buff = NativeByteBuffer.wrap(response);
+                    if (response != null) {
+                        NativeByteBuffer buff = response;
                         buff.setDataSourceType(TLDataSourceType.NETWORK);
-                        buff.reused = true;
+                        if (!ownsBuffer) {
+                            buff.reused = true;
+                        }
                         responseSize = buff.limit();
-                        int magic = buff.readInt32(true);
                         try {
+                            int magic = buff.readInt32(true);
                             resp = object.deserializeResponse(buff, magic, true);
                         } catch (Exception e2) {
                             if (BuildVars.DEBUG_PRIVATE_VERSION) {
@@ -424,6 +436,10 @@ public class ConnectionsManager extends BaseController {
                             }
                             FileLog.fatal(e2);
                             return;
+                        } finally {
+                            if (ownsBuffer) {
+                                buff.reuse();
+                            }
                         }
                     } else if (errorText != null) {
                         error = new TLRPC.TL_error();
@@ -434,7 +450,7 @@ public class ConnectionsManager extends BaseController {
                         }
                     }
                     if ((connectionType & ConnectionTypeDownload) != 0 && VideoPlayer.activePlayers.isEmpty()) {
-                        long ping_time = native_getCurrentPingTime(currentAccount);
+                        long ping_time = impulse.lastPingMillis();
                         final long size = responseSize;
                         final long delta = Math.max(0, (System.currentTimeMillis() - finalStartRequestTime) - ping_time);
                         DefaultBandwidthMeter.getSingletonInstance(ApplicationLoader.applicationContext).onTransfer(size, delta);
@@ -473,26 +489,38 @@ public class ConnectionsManager extends BaseController {
                     FileLog.e(e);
                 }
             }, onQuickAck, onWriteToSocket);
-            native_sendRequest(currentAccount, buffer.address, flags, datacenterId, connectionType, immediate, requestToken);
+            impulse.send(new RequestEntry(
+                requestToken,
+                requestBytes,
+                flags,
+                datacenterId,
+                connectionType,
+                immediate,
+                onComplete != null || onCompleteTimestamp != null
+            ));
         } catch (Exception e) {
             FileLog.e(e);
         }
     }
 
     private final ConcurrentHashMap<Integer, RequestCallbacks> requestCallbacks = new ConcurrentHashMap<>();
+    private interface ResponseDelegate {
+        void run(NativeByteBuffer response, boolean ownsBuffer, int errorCode, String errorText, int networkType, long timestamp, long requestMsgId, int dcId);
+    }
+
     private static class RequestCallbacks {
-        public RequestDelegateInternal onComplete;
+        public ResponseDelegate onComplete;
         public QuickAckDelegate onQuickAck;
         public WriteToSocketDelegate onWriteToSocket;
         public Runnable onCancelled;
-        public RequestCallbacks(RequestDelegateInternal onComplete, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket) {
+        public RequestCallbacks(ResponseDelegate onComplete, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket) {
             this.onComplete = onComplete;
             this.onQuickAck = onQuickAck;
             this.onWriteToSocket = onWriteToSocket;
         }
     }
 
-    private void listen(int requestToken, RequestDelegateInternal onComplete, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket) {
+    private void listen(int requestToken, ResponseDelegate onComplete, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket) {
         requestCallbacks.put(requestToken, new RequestCallbacks(onComplete, onQuickAck, onWriteToSocket));
 //        FileLog.d("{rc} listen(" + currentAccount + ", " + requestToken + "): " + requestCallbacks.size() + " requests' callbacks");
     }
@@ -534,7 +562,7 @@ public class ConnectionsManager extends BaseController {
         connectionsManager.requestCallbacks.remove(requestToken);
         if (callbacks != null) {
             if (callbacks.onComplete != null) {
-                callbacks.onComplete.run(response, errorCode, errorText, networkType, timestamp, requestMsgId, dcId);
+                callbacks.onComplete.run(NativeByteBuffer.wrap(response), false, errorCode, errorText, networkType, timestamp, requestMsgId, dcId);
             }
 //            FileLog.d("{rc} onRequestComplete(" + currentAccount + ", " + requestToken + "): found request " + requestToken + ", " + connectionsManager.requestCallbacks.size() + " requests' callbacks");
         } else {
@@ -570,6 +598,22 @@ public class ConnectionsManager extends BaseController {
         }
     }
 
+    /** Delivers a response built by the ImpulseM transport; the buffer is released once it is parsed. */
+    public void deliverResponse(int token, NativeByteBuffer response, int errorCode, String errorText, int networkType, long timestamp) {
+        RequestCallbacks callbacks = requestCallbacks.remove(token);
+        if (callbacks == null) {
+            if (response != null) {
+                response.reuse();
+            }
+            return;
+        }
+        if (callbacks.onComplete != null) {
+            callbacks.onComplete.run(response, true, errorCode, errorText, networkType, timestamp, 0, impulse.datacenterId());
+        } else if (response != null) {
+            response.reuse();
+        }
+    }
+
     public void cancelRequest(int token, boolean notifyServer) {
         cancelRequest(token, notifyServer, null);
     }
@@ -581,17 +625,17 @@ public class ConnectionsManager extends BaseController {
                     Utilities.stageQueue.postRunnable(onCancelled);
                 });
             }
-            native_cancelRequest(currentAccount, token, notifyServer);
+            impulse.cancel(token, notifyServer);
         });
     }
 
     public void cleanup(boolean resetKeys) {
-        native_cleanUp(currentAccount, resetKeys);
+        impulse.cleanup(resetKeys);
     }
 
     public void cancelRequestsForGuid(int guid) {
         Utilities.stageQueue.postRunnable(() -> {
-            native_cancelRequestsForGuid(currentAccount, guid);
+            impulse.cancelForGuid(guid);
         });
     }
 
@@ -599,11 +643,11 @@ public class ConnectionsManager extends BaseController {
         if (guid == 0) {
             return;
         }
-        native_bindRequestToGuid(currentAccount, requestToken, guid);
+        impulse.bindToGuid(requestToken, guid);
     }
 
     public void applyDatacenterAddress(int datacenterId, String ipAddress, int port) {
-        native_applyDatacenterAddress(currentAccount, datacenterId, ipAddress, port);
+        // Datacenter addresses do not exist on ImpulseM.
     }
 
     public int getConnectionState() {
@@ -614,35 +658,18 @@ public class ConnectionsManager extends BaseController {
     }
 
     public void setUserId(long id) {
-        native_setUserId(currentAccount, id);
+        impulse.setUserId(id);
     }
 
     public void checkConnection() {
-        byte selectedStrategy = getIpStrategy();
-        if (BuildVars.LOGS_ENABLED) {
-            FileLog.d("selected ip strategy " + selectedStrategy);
-        }
-        native_setIpStrategy(currentAccount, selectedStrategy);
-        native_setNetworkAvailable(currentAccount, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), ApplicationLoader.isConnectionSlow());
+        impulse.networkChanged();
     }
 
     public void setPushConnectionEnabled(boolean value) {
-        native_setPushConnectionEnabled(currentAccount, value);
+        pushConnectionEnabled = value;
     }
 
     public void init(int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, int timezoneOffset, long userId, boolean userPremium, boolean enablePushConnection) {
-        final SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-        final ProxySettings proxySettings = ProxySettings.fromSharedPreferences(preferences);
-        if (preferences.getBoolean("proxy_enabled", false) && proxySettings.isValid()) {
-            if (proxySettings.getType() == ProxySettings.Type.WEB) {
-                int localPort = WebProxyTransport.start(proxySettings.getAddress(), proxySettings.getSecret());
-                native_setProxySettings(currentAccount, "127.0.0.1", localPort != 0 ? localPort : 9, "", "",
-                        proxySettings.getSecret());
-            } else {
-                native_setProxySettings(currentAccount, proxySettings.getAddress(), proxySettings.getPort(),
-                        proxySettings.getUser(), proxySettings.getPassword(), proxySettings.getSecret());
-            }
-        }
         String installer = "";
         try {
             Context context = ApplicationLoader.applicationContext;
@@ -673,14 +700,19 @@ public class ConnectionsManager extends BaseController {
             packageId = "";
         }
 
-        native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, installer, packageId, timezoneOffset, userId, userPremium, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType(), SharedConfig.measureDevicePerformanceClass());
+        storedLangCode = langCode;
+        storedSystemLangCode = systemLangCode;
+        storedRegId = regId;
+        pushConnectionEnabled = enablePushConnection;
+        impulse = ImpulseConnection.forAccount(currentAccount, this);
+        impulse.start(userId);
         checkConnection();
     }
 
     public static void setLangCode(String langCode) {
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            native_setLangCode(a, langCode);
+            storedLangCode = langCode;
         }
     }
 
@@ -697,37 +729,36 @@ public class ConnectionsManager extends BaseController {
             pushString = SharedConfig.pushStringStatus = "__" + tag + "_GENERATING_SINCE_" + getInstance(0).getCurrentTime() + "__";
         }
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            native_setRegId(a, pushString);
+            storedRegId = pushString;
         }
     }
 
     public static void setSystemLangCode(String langCode) {
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            native_setSystemLangCode(a, langCode);
+            storedSystemLangCode = langCode;
         }
     }
 
     public void switchBackend(boolean restart) {
         SharedPreferences preferences = MessagesController.getGlobalMainSettings();
         preferences.edit().remove("language_showed2").commit();
-        native_switchBackend(currentAccount, restart);
     }
 
     public boolean isTestBackend() {
-        return native_isTestBackend(currentAccount) != 0;
+        return false;
     }
 
     public void resumeNetworkMaybe() {
-        native_resumeNetwork(currentAccount, true);
+        impulse.resume();
     }
 
     public void updateDcSettings() {
-        native_updateDcSettings(currentAccount);
+        impulse.updateDcSettings();
     }
 
     public void setDefaultDatacenterId(int dcId) {
-        native_moveDatacenter(currentAccount, dcId);
+        // ImpulseM has a single backend.
     }
 
     public long getPauseTime() {
@@ -743,11 +774,16 @@ public class ConnectionsManager extends BaseController {
             return 0;
         }
 
-        return native_checkProxy(currentAccount, settings.getAddress(), settings.getPort(), settings.getUser(), settings.getPassword(), settings.getSecret(), requestTimeDelegate);
+        if (requestTimeDelegate != null) {
+            requestTimeDelegate.run(-1);
+        }
+        return 0;
     }
 
     private void checkWebProxyInternal(ProxySettings settings, int port, RequestTimeDelegate requestTimeDelegate) {
-        native_checkProxy(currentAccount, "127.0.0.1", port, "", "", settings.getSecret(), requestTimeDelegate);
+        if (requestTimeDelegate != null) {
+            requestTimeDelegate.run(-1);
+        }
     }
 
     public void setAppPaused(final boolean value, final boolean byScreenState) {
@@ -772,7 +808,7 @@ public class ConnectionsManager extends BaseController {
             if (lastPauseTime == 0) {
                 lastPauseTime = System.currentTimeMillis();
             }
-            native_pauseNetwork(currentAccount);
+            impulse.setAppPaused(true);
         } else {
             if (appPaused) {
                 return;
@@ -784,7 +820,7 @@ public class ConnectionsManager extends BaseController {
                 getContactsController().checkContacts();
             }
             lastPauseTime = 0;
-            native_resumeNetwork(currentAccount, false);
+            impulse.setAppPaused(false);
         }
     }
 
@@ -970,11 +1006,6 @@ public class ConnectionsManager extends BaseController {
         }
 
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-            if (enabled && settings != null && settings.isValid()) {
-                native_setProxySettings(a, address, port, username, password, secret);
-            } else {
-                native_setProxySettings(a, "", 1080, "", "", "");
-            }
             AccountInstance accountInstance = AccountInstance.getInstance(a);
             if (accountInstance.getUserConfig().isClientActivated()) {
                 accountInstance.getMessagesController().checkPromoInfo(true);

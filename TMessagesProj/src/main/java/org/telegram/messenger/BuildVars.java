@@ -29,8 +29,8 @@ public class BuildVars {
     public static final String BRAND_PACKAGE = "net.impulsem.messenger";
     public static final String BRAND_NAME = "ImpulseM";
 
-    public static int APP_ID = 4;
-    public static String APP_HASH = "014b35b6184100b085b0d0572f9b5103";
+    public static int APP_ID = 3;
+    public static String APP_HASH = "85e6b3be52309e397e6b4b2d688c7ca4";
 
     // SafetyNet key for Google Identity SDK, set it to empty to disable
     public static String SAFETYNET_KEY = "AIzaSyDqt8P-7F7CPCseMkOiVRgb1LY8RN1bvH8";
