@@ -1705,6 +1705,10 @@ JNIEXPORT void Java_org_telegram_messenger_Intro_setBackgroundColor(JNIEnv *env,
     powerful_mask.params = was_mask.params;
 
     telegram_mask = create_textured_rectangle(CSizeMake(200, 150), telegram_mask_texture);
+
+    TexturedShape was_sphere = telegram_sphere;
+    telegram_sphere = create_textured_rectangle(CSizeMake(150, 150), telegram_sphere_texture);
+    telegram_sphere.params = was_sphere.params;
 }
 
 JNIEXPORT void Java_org_telegram_messenger_Intro_onDrawFrame(JNIEnv *env, jclass class, jint deltaMs) {
@@ -2725,8 +2729,8 @@ JNIEXPORT void Java_org_telegram_messenger_Intro_onSurfaceCreated(JNIEnv *env, j
 
     telegram_sphere = create_textured_rectangle(CSizeMake(150, 150), telegram_sphere_texture);
     telegram_mask = create_textured_rectangle(CSizeMake(200, 150), telegram_mask_texture);
-    telegram_plane = create_textured_rectangle(CSizeMake(82, 74), telegram_plane_texture);
-    telegram_plane.params.anchor = xyzMake(6, -5, 0);
+    telegram_plane = create_textured_rectangle(CSizeMake(150, 150), telegram_plane_texture);
+    telegram_plane.params.anchor = xyzMake(0, 0, 0);
 
     fast_body = create_textured_rectangle(CSizeMake(148, 148), fast_body_texture);
 

@@ -5,11 +5,11 @@ from PIL import Image
 import brand
 
 
-PLANE_SIZES: dict[str, tuple[int, int]] = {
-    "mdpi": (82, 74),
-    "hdpi": (123, 111),
-    "xhdpi": (164, 148),
-    "xxhdpi": (246, 222),
+PLANE_SIZES: dict[str, int] = {
+    "mdpi": 150,
+    "hdpi": 225,
+    "xhdpi": 300,
+    "xxhdpi": 450,
 }
 LOGO_MIDDLE_SIZES: dict[str, int] = {
     "mdpi": 68,
@@ -26,9 +26,16 @@ class LogosTest(unittest.TestCase):
             folder = brand.RES / ("drawable-" + density)
             self.assertFalse((folder / "intro_tg_plane.webp").exists(), density)
             image: Image.Image = Image.open(folder / "intro_tg_plane.png").convert("RGBA")
-            self.assertEqual(size, image.size, density)
-            left_middle: tuple[int, ...] = image.getpixel((round(size[0] * 0.12), size[1] // 2))
-            self.assertGreater(left_middle[3], 128, density + " pulse baseline must be opaque")
+            self.assertEqual((size, size), image.size, density)
+            opaque: Image.Image = image.getchannel("A").point(lambda value: 255 if value > 128 else 0)
+            box: tuple[int, int, int, int] | None = opaque.getbbox()
+            self.assertIsNotNone(box, density)
+            left, _, right, _ = box
+            self.assertAlmostEqual(size / 2, (left + right) / 2, delta=2, msg=density + " horizontal centre")
+            self.assertAlmostEqual(size * (22 - 7) / 200, left, delta=2, msg=density + " left edge")
+            self.assertAlmostEqual(size * (178 + 7) / 200, right, delta=2, msg=density + " right edge")
+            baseline: tuple[int, ...] = image.getpixel((round(size * 40 / 200), size // 2))
+            self.assertGreater(baseline[3], 128, density + " pulse baseline must be opaque")
 
 
     def test_logo_middle(self) -> None:

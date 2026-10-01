@@ -652,6 +652,18 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         private float maxRefreshRate;
         private long lastDrawFrame;
 
+        private final GenericProvider<Void, Bitmap> telegramSphereProvider = v -> {
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            // Matches the web client's --primary-color: #58AEEE in dark themes, otherwise the logo colour
+            paint.setColor(Theme.isCurrentThemeDark() ? 0xFF58AEEE : ThemeColors.TELEGRAM_COLOR);
+            int size = dp(ICON_HEIGHT_DP);
+            Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(bm);
+            c.drawCircle(size / 2f, size / 2f, size / 2f, paint);
+            return bm;
+        };
+
+
         private final GenericProvider<Void, Bitmap> telegramMaskProvider = v -> {
             int size = dp(ICON_HEIGHT_DP);
             Bitmap bm = Bitmap.createBitmap(dp(ICON_WIDTH_DP), size, Bitmap.Config.ARGB_8888);
@@ -786,15 +798,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             loadTexture(R.drawable.intro_private_door, 19);
             loadTexture(R.drawable.intro_private_screw, 20);
             loadTexture(R.drawable.intro_tg_plane, 21);
-            loadTexture(v -> {
-                Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-                paint.setColor(ThemeColors.TELEGRAM_COLOR); // It's logo color, it should not be colored by the theme
-                int size = dp(ICON_HEIGHT_DP);
-                Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-                Canvas c = new Canvas(bm);
-                c.drawCircle(size / 2f, size / 2f, size / 2f, paint);
-                return bm;
-            }, 22);
+            loadTexture(telegramSphereProvider, 22);
             loadTexture(telegramMaskProvider, 23);
 
             updateTelegramTextures();
@@ -969,6 +973,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
                     eglThread.loadTexture(R.drawable.intro_powerful_mask, 17, Theme.getColor(Theme.key_windowBackgroundWhite), true);
                     eglThread.updatePowerfulTextures();
 
+                    eglThread.loadTexture(eglThread.telegramSphereProvider, 22, true);
                     eglThread.loadTexture(eglThread.telegramMaskProvider, 23, true);
                     eglThread.updateTelegramTextures();
 

@@ -156,11 +156,11 @@ def write_vectors() -> None:
         webp.unlink()
 
 
-PLANE_SIZES: dict[str, tuple[int, int]] = {
-    "mdpi": (82, 74),
-    "hdpi": (123, 111),
-    "xhdpi": (164, 148),
-    "xxhdpi": (246, 222),
+PLANE_SIZES: dict[str, int] = {
+    "mdpi": 150,
+    "hdpi": 225,
+    "xhdpi": 300,
+    "xxhdpi": 450,
 }
 LOGO_MIDDLE_SIZES: dict[str, int] = {
     "mdpi": 68,
@@ -168,16 +168,24 @@ LOGO_MIDDLE_SIZES: dict[str, int] = {
     "xhdpi": 136,
     "xxhdpi": 204,
 }
-PLANE_FILL: float = 0.92
+
+
+def render_intro_pulse(size: int) -> Image.Image:
+    """Draws only the white pulse in logo.svg geometry (200-unit viewBox) so it overlays the intro sphere exactly."""
+    big: int = size * SUPERSAMPLE
+    image: Image.Image = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    draw: ImageDraw.ImageDraw = ImageDraw.Draw(image)
+    draw_pulse(draw, big / brand.LOGO_VIEWBOX, 0, 0, brand.LOGO_STROKE, rgba(brand.WHITE))
+    return image.resize((size, size), Image.LANCZOS)
 
 
 def write_logo_rasters() -> None:
-    for density, (width, height) in PLANE_SIZES.items():
+    for density, size in PLANE_SIZES.items():
         folder: Path = brand.RES / ("drawable-" + density)
         old: Path = folder / "intro_tg_plane.webp"
         if old.exists():
             old.unlink()
-        render_glyph(width, height, brand.WHITE, PLANE_FILL).save(folder / "intro_tg_plane.png", optimize=True)
+        render_intro_pulse(size).save(folder / "intro_tg_plane.png", optimize=True)
     for density, size in LOGO_MIDDLE_SIZES.items():
         folder = brand.RES / ("drawable-" + density)
         old = folder / "logo_middle.webp"
