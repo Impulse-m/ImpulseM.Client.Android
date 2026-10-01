@@ -111,35 +111,43 @@ public final class Transcoder {
             throw new TranscodeException("unknown method id " + Integer.toHexString(methodId));
         }
         try {
-            ResultSpec result = method.result;
-            TlWriter writer = new TlWriter();
-            if (result.kind.equals("bool")) {
-                writer.writeInt32(BoolTrue);
-            } else if (result.kind.equals("bool_overlay")) {
-                List<Occurrence> values = parseBody(proto, 0, proto.length).fields.get(1);
-                boolean value = true;
-                if (values != null && !values.isEmpty()) {
-                    value = values.get(values.size() - 1).value != 0;
-                }
-                writer.writeInt32(value ? BoolTrue : BoolFalse);
-            } else if (result.kind.equals("int")) {
-                writer.writeInt32((int) scalarValue(parseBody(proto, 0, proto.length), 1));
-            } else if (result.kind.equals("long")) {
-                writer.writeInt64(scalarValue(parseBody(proto, 0, proto.length), 1));
-            } else if (result.kind.equals("list")) {
-                Body body = parseBody(proto, 0, proto.length);
-                writeVector(writer, result.elem, body, body.fields.get(1), sink, 0);
-            } else if (result.kind.equals("object")) {
-                protoToObject(result.typeName, proto, 0, proto.length, writer, sink, 0);
-            } else {
-                throw new TranscodeException("unsupported result kind " + result.kind);
-            }
-            return writer.toByteArray();
+            return decodeResultSpec(method.result, proto, sink);
         } catch (TranscodeException e) {
             throw e;
         } catch (RuntimeException e) {
             throw new TranscodeException("cannot decode result of " + method.method + ": " + e.getMessage(), e);
         }
+    }
+
+
+    byte[] decodeResultSpec(
+        ResultSpec result,
+        byte[] proto,
+        CaptureSink sink
+    ) {
+        TlWriter writer = new TlWriter();
+        if (result.kind.equals("bool")) {
+            writer.writeInt32(BoolTrue);
+        } else if (result.kind.equals("bool_overlay")) {
+            List<Occurrence> values = parseBody(proto, 0, proto.length).fields.get(1);
+            boolean value = true;
+            if (values != null && !values.isEmpty()) {
+                value = values.get(values.size() - 1).value != 0;
+            }
+            writer.writeInt32(value ? BoolTrue : BoolFalse);
+        } else if (result.kind.equals("int")) {
+            writer.writeInt32((int) scalarValue(parseBody(proto, 0, proto.length), 1));
+        } else if (result.kind.equals("long")) {
+            writer.writeInt64(scalarValue(parseBody(proto, 0, proto.length), 1));
+        } else if (result.kind.equals("list")) {
+            Body body = parseBody(proto, 0, proto.length);
+            writeVector(writer, result.elem, body, body.fields.get(1), sink, 0);
+        } else if (result.kind.equals("object")) {
+            protoToObject(result.typeName, proto, 0, proto.length, writer, sink, 0);
+        } else {
+            throw new TranscodeException("unsupported result kind " + result.kind);
+        }
+        return writer.toByteArray();
     }
 
 
@@ -500,6 +508,7 @@ public final class Transcoder {
             if (register == null) {
                 throw new TranscodeException("flag register " + param.flagRegister + " is not declared");
             }
+            // A flagged vector that is present but empty leaves its bit cleared (documented behaviour).
             if (isPresent(source, body)) {
                 registers.put(param.flagRegister, Integer.valueOf(register.intValue() | (1 << param.flagBit)));
             }
@@ -576,7 +585,7 @@ public final class Transcoder {
                     }
                     protoToObject(param.typeName, body.data, last.offset, last.length, writer, sink, depth + 1);
                 } else {
-                    writeEmptyObject(param, writer);
+                    writeEmptyObject(param, writer, sink, depth);
                 }
                 break;
             case VECTOR:
@@ -588,17 +597,38 @@ public final class Transcoder {
     }
 
 
+    /**
+     * An absent unconditional object: a flat type decodes from an empty body (all defaults),
+     * a polymorphic type falls back to its zero-param constructor (preferring "...Empty").
+     */
     private void writeEmptyObject(
         ParamSpec param,
-        TlWriter writer
+        TlWriter writer,
+        CaptureSink sink,
+        int depth
     ) {
+        TypeSpec typeSpec = schema.type(param.typeName);
+        if (typeSpec != null && !typeSpec.polymorphic) {
+            protoToObject(param.typeName, new byte[0], 0, 0, writer, sink, depth + 1);
+            return;
+        }
+        ConstructorSpec fallback = null;
         for (ConstructorSpec candidate : schema.constructorsOf(param.typeName)) {
-            if (candidate.params.isEmpty()) {
-                writer.writeInt32(candidate.id);
-                return;
+            if (!candidate.params.isEmpty()) {
+                continue;
+            }
+            if (candidate.predicate.endsWith("Empty")) {
+                fallback = candidate;
+                break;
+            }
+            if (fallback == null) {
+                fallback = candidate;
             }
         }
-        throw new TranscodeException("missing required object field " + param.name + " of type " + param.typeName);
+        if (fallback == null) {
+            throw new TranscodeException("missing required object field " + param.name + " of type " + param.typeName);
+        }
+        writer.writeInt32(fallback.id);
     }
 
 
