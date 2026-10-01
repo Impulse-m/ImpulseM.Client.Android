@@ -2,12 +2,15 @@ package org.telegram.ui.Components;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.drawable.Drawable;
 import android.opengl.GLES20;
 import android.opengl.GLUtils;
 
 import androidx.annotation.RawRes;
+import androidx.core.content.ContextCompat;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.R;
 
@@ -71,8 +74,10 @@ public class InstantCameraVideoEncoderOverlayHelper {
                 final int logoOffset = Math.round(width * 28 / 1536f);
                 final int trueSize = logoSize - logoOffset - logoOffset;
 
-                final RLottieNative rLottie = RLottieNative.createFromRawJson(AndroidUtilities.readRes(R.raw.plane_logo_plain));
                 final Bitmap logoBitmap = Bitmap.createBitmap(logoSize, logoSize, Bitmap.Config.ARGB_8888);
+                final Drawable pulse = ContextCompat.getDrawable(ApplicationLoader.applicationContext, R.drawable.menu_invit_telegram);
+                pulse.setBounds(0, 0, logoSize, logoSize);
+                pulse.draw(new Canvas(logoBitmap));
 
                 Bitmap bitmap = Bitmap.createBitmap(trueSize * 8, trueSize * 4, Bitmap.Config.ALPHA_8);
                 Canvas canvas = new Canvas(bitmap);
@@ -90,7 +95,6 @@ public class InstantCameraVideoEncoderOverlayHelper {
                         b = (y + 1) / 4f;
 
                         setTextureCords(texData, TEXTURE_BUFFER_WATERMARK_LOGO_POSITION + index * 8, l, t, r, b);
-                        rLottie.getFrame(index * 2, logoBitmap, true);
                         canvas.drawBitmap(logoBitmap, trueSize * x - logoOffset, trueSize * y - logoOffset, null);
                     }
                 }
@@ -102,7 +106,6 @@ public class InstantCameraVideoEncoderOverlayHelper {
 
                 bitmap.recycle();
                 logoBitmap.recycle();
-                rLottie.recycle();
             } else if (i == TEXTURE_INDEX_WATERMARK_TEXT) {
                 final int logoSize = Math.round(width * 372f / 1536f);
                 float scale = (float) logoSize / videoWidth;

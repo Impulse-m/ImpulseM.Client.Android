@@ -155,9 +155,43 @@ def write_vectors() -> None:
         webp.unlink()
 
 
+PLANE_SIZES: dict[str, tuple[int, int]] = {
+    "mdpi": (82, 74),
+    "hdpi": (123, 111),
+    "xhdpi": (164, 148),
+    "xxhdpi": (246, 222),
+}
+LOGO_MIDDLE_SIZES: dict[str, int] = {
+    "mdpi": 68,
+    "hdpi": 102,
+    "xhdpi": 136,
+    "xxhdpi": 204,
+}
+PLANE_FILL: float = 0.92
+
+
+def write_logo_rasters() -> None:
+    for density, (width, height) in PLANE_SIZES.items():
+        folder: Path = brand.RES / ("drawable-" + density)
+        old: Path = folder / "intro_tg_plane.webp"
+        if old.exists():
+            old.unlink()
+        render_glyph(width, height, brand.WHITE, PLANE_FILL).save(folder / "intro_tg_plane.png", optimize=True)
+    for density, size in LOGO_MIDDLE_SIZES.items():
+        folder = brand.RES / ("drawable-" + density)
+        old = folder / "logo_middle.webp"
+        if old.exists():
+            old.unlink()
+        render_logo(size, 0.0).save(folder / "logo_middle.png", optimize=True)
+    write(brand.RES / "drawable" / "menu_invit_telegram.xml", vector(24, 200, pulse_vector_path("#FFFFFFFF", brand.GLYPH_STROKE)))
+    for webp in sorted(brand.RES.glob("drawable-*/menu_invit_telegram.webp")):
+        webp.unlink()
+
+
 def main() -> None:
     write_launcher_pngs()
     write_vectors()
+    write_logo_rasters()
 
 
 if __name__ == "__main__":

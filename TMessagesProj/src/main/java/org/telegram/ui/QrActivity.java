@@ -121,7 +121,6 @@ import java.util.List;
 public class QrActivity extends BaseFragment {
 
     private static final ArrayMap<String, int[]> qrColorsMap = new ArrayMap<>();
-    private static final int LOGO_OPTIMAL_FRAME = 33;
     private static List<EmojiThemes> cachedThemes;
 
     static {
@@ -162,11 +161,10 @@ public class QrActivity extends BaseFragment {
     private FrameLayout themeLayout;
     private BackupImageView avatarImageView;
     private QrView qrView;
-    private RLottieImageView logoImageView;
+    private ImageView logoImageView;
     private ImageView closeImageView;
 
     private Bitmap emojiThemeIcon;
-    private Bitmap logoOptimal;
     private EmojiThemes currentTheme = homeTheme;
     private boolean isCurrentThemeDark;
     private long userId;
@@ -369,10 +367,9 @@ public class QrActivity extends BaseFragment {
         });
         rootLayout.addView(qrView);
 
-        logoImageView = new RLottieImageView(context);
-        logoImageView.setAutoRepeat(true);
-        logoImageView.setAnimation(R.raw.plane_logo_plain, 60, 60);
-        logoImageView.playAnimation();
+        logoImageView = new ImageView(context);
+        logoImageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        logoImageView.setImageResource(R.drawable.ic_impulsem_logo);
         rootLayout.addView(logoImageView);
 
         avatarImageView = new BackupImageView(context);
@@ -435,15 +432,6 @@ public class QrActivity extends BaseFragment {
             }
             fragmentView.postDelayed(() -> {
                 onItemSelected(currentTheme, 0, true);
-
-                final RLottieDrawable d = logoImageView.getAnimatedDrawable();
-                if (logoOptimal == null && d != null) {
-                    logoOptimal = Bitmap.createBitmap(d.getIntrinsicWidth(), d.getIntrinsicHeight(), Bitmap.Config.ARGB_8888);
-                    d.prepareForGenerateCache();
-                    d.setGeneratingFrame(LOGO_OPTIMAL_FRAME);
-                    d.getNextFrame(logoOptimal);
-                    d.releaseForGenerateCache();
-                }
             }, 17);
         }, 25);
 
@@ -784,8 +772,6 @@ public class QrActivity extends BaseFragment {
 
         themeLayout.setVisibility(View.GONE);
         closeImageView.setVisibility(View.GONE);
-        logoImageView.setVisibility(View.GONE);
-        RLottieDrawable drawable = logoImageView.getAnimatedDrawable();
 
         if (qrView != null) {
             qrView.setForShare(true);
@@ -795,16 +781,10 @@ public class QrActivity extends BaseFragment {
         fragmentView.layout(0, 0, width, height);
         fragmentView.draw(canvas);
 
-        AndroidUtilities.rectTmp.set(logoImageView.getLeft(), logoImageView.getTop(), logoImageView.getRight(), logoImageView.getBottom());
-        if (logoOptimal != null) {
-            Paint p = new Paint(Paint.FILTER_BITMAP_FLAG);
-            canvas.drawBitmap(logoOptimal, null, AndroidUtilities.rectTmp, p);
-        }
         canvas.setBitmap(null);
 
         themeLayout.setVisibility(View.VISIBLE);
         closeImageView.setVisibility(View.VISIBLE);
-        logoImageView.setVisibility(View.VISIBLE);
 
         ViewGroup parent = (ViewGroup) fragmentView.getParent();
         fragmentView.layout(0, 0, parent.getWidth(), parent.getHeight());

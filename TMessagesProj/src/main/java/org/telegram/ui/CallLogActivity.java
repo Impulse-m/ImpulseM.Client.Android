@@ -1850,7 +1850,7 @@ public class CallLogActivity extends BaseFragment implements NotificationCenter.
 						getString(R.string.QRCodeLinkGroupCall),
 						false
 					);
-					qrCodeBottomSheet.setCenterAnimation(R.raw.qr_code_logo);
+					qrCodeBottomSheet.setCenterImage(R.drawable.ic_impulsem_logo);
 					qrCodeBottomSheet.show();
 				})
 				.addIf(creator, R.drawable.msg_delete, getString(R.string.RevokeLink), true, revoke)

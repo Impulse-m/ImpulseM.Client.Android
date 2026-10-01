@@ -2,15 +2,17 @@ package org.telegram.utils.camera.roundvideo;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.drawable.Drawable;
 import android.opengl.GLES20;
 import android.opengl.GLES11Ext;
 import android.util.Size;
 
 import androidx.annotation.NonNull;
+import androidx.core.content.ContextCompat;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.R;
-import org.telegram.ui.Components.RLottieNative;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -983,17 +985,16 @@ final class RoundVideoOverlayRenderer {
         int atlasWidth = Math.max(logoAtlasWidth, textSize);
         int atlasHeight = logoAtlasHeight + textSize;
 
-        RLottieNative lottie = RLottieNative.createFromRawJson(
-                AndroidUtilities.readRes(R.raw.plane_logo_plain)
-        );
-        if (lottie == null) throw new IllegalStateException("Unable to load watermark animation");
+        Drawable pulse = ContextCompat.getDrawable(ApplicationLoader.applicationContext, R.drawable.menu_invit_telegram);
+        if (pulse == null) throw new IllegalStateException("Unable to load watermark logo");
         Bitmap frameBitmap = Bitmap.createBitmap(logoSize, logoSize, Bitmap.Config.ARGB_8888);
+        pulse.setBounds(0, 0, logoSize, logoSize);
+        pulse.draw(new Canvas(frameBitmap));
         Bitmap atlasBitmap = Bitmap.createBitmap(atlasWidth, atlasHeight, Bitmap.Config.ALPHA_8);
         Canvas canvas = new Canvas(atlasBitmap);
         for (int frame = 0; frame < LOGO_FRAME_COUNT; frame++) {
             int x = frame % 8;
             int y = frame / 8;
-            lottie.getFrame(frame * 2, frameBitmap, true);
             canvas.drawBitmap(frameBitmap, frameSize * x - logoOffset, frameSize * y - logoOffset, null);
         }
 
@@ -1010,7 +1011,6 @@ final class RoundVideoOverlayRenderer {
         if (atlasBitmap.getRowBytes() != atlasWidth) {
             atlasBitmap.recycle();
             frameBitmap.recycle();
-            lottie.recycle();
             throw new IllegalStateException("Unexpected watermark atlas stride");
         }
         ByteBuffer pixels = ByteBuffer.allocateDirect(atlasWidth * atlasHeight);
@@ -1026,7 +1026,6 @@ final class RoundVideoOverlayRenderer {
         );
         atlasBitmap.recycle();
         frameBitmap.recycle();
-        lottie.recycle();
         if (outputSize == 360) cachedWatermark360 = result;
         else if (outputSize == 480) cachedWatermark480 = result;
         return result;

@@ -398,7 +398,7 @@ public class LinkActionView extends LinearLayout {
                 qrCodeBottomSheet = null;
             }
         };
-        qrCodeBottomSheet.setCenterAnimation(R.raw.qr_code_logo);
+        qrCodeBottomSheet.setCenterImage(R.drawable.ic_impulsem_logo);
         qrCodeBottomSheet.show();
         if (actionBarPopupWindow != null) {
             actionBarPopupWindow.dismiss();
