@@ -6,7 +6,7 @@ import gzip
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import proto_parser
 
@@ -63,7 +63,7 @@ def parse_tl_type(tlType: str, where: str) -> Dict[str, Any]:
         raise ValueError("unsupported TL type %r at %s" % (tlType, where))
     if tlType == "#":
         return {"kind": "flags"}
-    m = re.match(r"^(flags2?)\.(\d+)\?(.+)$", tlType)
+    m: Optional[re.Match] = re.match(r"^(flags2?)\.(\d+)\?(.+)$", tlType)
     if m:
         inner: Dict[str, Any] = parse_tl_type(m.group(3), where)
         inner["flag"] = [m.group(1), int(m.group(2))]
@@ -86,6 +86,7 @@ def map_params(
     where: str,
     ignored: List[str],
     allowCapture: bool,
+    overlayFields: Set[Tuple[str, str, str]],
 ) -> Tuple[List[Param], List[Dict[str, Any]]]:
     fields: Dict[str, Tuple[int, str, str]] = message["fields"]
     tlNames: List[str] = [p["name"] for p in tlParams]
@@ -107,10 +108,12 @@ def map_params(
     capture: List[Dict[str, Any]] = []
     for fieldName, info in fields.items():
         if fieldName not in tlNames:
-            # Only fields marked "ImpulseM extension" in the proto may exceed the TL params.
-            if fieldName not in message["extension"]:
+            # Only fields listed in overlays.json may exceed the TL params.
+            if (message["file"], message["name"], fieldName) not in overlayFields:
                 raise ValueError("unexpected extra proto field %s in %s" % (fieldName, where))
-            if allowCapture and fieldName in CAPTURE_NAMES:
+            if allowCapture:
+                if fieldName not in CAPTURE_NAMES:
+                    raise ValueError("overlay field %s in response message %s is not a capture field" % (fieldName, where))
                 capture.append({"field": info[0], "name": fieldName})
             else:
                 ignored.append("%s: `%s` = field %d" % (where, fieldName, info[0]))
@@ -134,7 +137,7 @@ def result_of(
         if tlResult != kind:
             raise ValueError("%s: %s for TL result %s" % (where, rpcReturn, tlResult))
         return {"kind": kind}
-    m = re.match(r"^Vector<(.+)>$", tlResult)
+    m: Optional[re.Match] = re.match(r"^Vector<(.+)>$", tlResult)
     if m:
         elem: Dict[str, Any] = parse_tl_type(m.group(1), where)
         if elem["kind"] == "object":
@@ -152,8 +155,14 @@ def result_of(
     return {"kind": "object", "type": tlResult}
 
 
-def build(schema: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    messages, services = proto_parser.parse_dir(PROTOS_DIR)
+def load_overlay_fields(path: Path) -> Set[Tuple[str, str, str]]:
+    """Returns (file, message, field) for every kind=field overlay entry."""
+    doc: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return {(e["file"], e["message"], e["name"]) for e in doc["entries"] if e["kind"] == "field"}
+
+
+def build(schema: Dict[str, Any], protosDir: Path = PROTOS_DIR) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    messages, services = proto_parser.parse_dir(protosDir)
     v1: Dict[str, Any] = messages["v1"]
 
     byType: Dict[str, List[Dict[str, Any]]] = {}
@@ -162,6 +171,7 @@ def build(schema: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             continue
         byType.setdefault(c["type"], []).append(c)
 
+    overlayFields: Set[Tuple[str, str, str]] = load_overlay_fields(protosDir / "overlays.json")
     ignoredExtensions: List[str] = []
     constructors: List[Dict[str, Any]] = []
     types: List[Dict[str, Any]] = []
@@ -192,7 +202,7 @@ def build(schema: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
                 arm = None
             if protoName not in v1:
                 raise ValueError("%s: message %s missing" % (where, protoName))
-            params, capture = map_params(c["params"], v1[protoName], where, ignoredExtensions, True)
+            params, capture = map_params(c["params"], v1[protoName], where, ignoredExtensions, True, overlayFields)
             constructors.append({
                 "id": int(c["id"]),
                 "predicate": c["predicate"],
@@ -232,7 +242,7 @@ def build(schema: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         declaredReq, declaredRes = rpcs[rpcName]
         if declaredReq != reqName:
             raise ValueError("%s: rpc request %s != %s" % (where, declaredReq, reqName))
-        params, capture = map_params(m["params"], messages[package][reqName], where, ignoredExtensions, False)
+        params, capture = map_params(m["params"], messages[package][reqName], where, ignoredExtensions, False, overlayFields)
         if capture:
             raise ValueError("%s: unexpected capture in request" % where)
         methods.append({

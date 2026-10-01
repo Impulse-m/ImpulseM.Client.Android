@@ -1,10 +1,8 @@
 """Minimal parser for the generated ImpulseM .proto files."""
 import re
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
-FieldInfo = Tuple[int, str, str]
-OneofInfo = Tuple[int, str]
 MessageInfo = Dict[str, Dict[str, object]]
 Messages = Dict[str, Dict[str, MessageInfo]]
 Services = Dict[Tuple[str, str], Dict[str, Tuple[str, str]]]
@@ -17,24 +15,22 @@ def strip_comments(text: str) -> str:
     return re.sub(r"/\*.*?\*/", "", text, flags=re.S)
 
 
-def new_message() -> Dict[str, object]:
-    return {"fields": {}, "oneof": {}, "extension": set()}
+def new_message(file: str, name: str) -> Dict[str, object]:
+    return {"fields": {}, "oneof": {}, "file": file, "name": name}
 
 
-def parse_proto(path: Path) -> Tuple[str, Messages, Services]:
-    """Returns (package, {package: {message: {"fields", "oneof"}}}, services)."""
+def parse_proto(path: Path, root: Path) -> Tuple[str, Messages, Services]:
+    """Returns (package, {package: {message: {"fields", "oneof", "file", "name"}}}, services)."""
     package: str = ""
     messages: Dict[str, MessageInfo] = {}
     services: Dict[Tuple[str, str], Dict[str, Tuple[str, str]]] = {}
     # Stack of open scopes: ("message", name) | ("oneof", name) | ("service", name)
     stack: List[Tuple[str, str]] = []
-    # Set by a preceding "// ImpulseM extension" comment; consumed by the next field line.
-    pendingExtension: bool = False
+    m: Optional[re.Match] = None
+    relFile: str = path.relative_to(root).as_posix()
     for rawLine in strip_comments(path.read_text(encoding="utf-8")).split("\n"):
         line: str = rawLine.strip()
         if line.startswith("//"):
-            if "ImpulseM extension" in line:
-                pendingExtension = True
             continue
         line = re.sub(r"\s*//.*$", "", line)
         if not line:
@@ -47,7 +43,7 @@ def parse_proto(path: Path) -> Tuple[str, Messages, Services]:
             continue
         m = re.match(r"^message\s+(\w+)\s*\{(.*)\}$", line)
         if m:
-            messages[m.group(1)] = new_message()
+            messages[m.group(1)] = new_message(relFile, m.group(1))
             for statement in m.group(2).split(";"):
                 statement = statement.strip()
                 if not statement:
@@ -60,7 +56,7 @@ def parse_proto(path: Path) -> Tuple[str, Messages, Services]:
         m = re.match(r"^message\s+(\w+)\s*\{$", line)
         if m:
             name: str = m.group(1)
-            messages[name] = new_message()
+            messages[name] = new_message(relFile, name)
             stack.append(("message", name))
             continue
         m = re.match(r"^oneof\s+(\w+)\s*\{$", line)
@@ -95,11 +91,8 @@ def parse_proto(path: Path) -> Tuple[str, Messages, Services]:
             messages[owner]["oneof"][fieldName] = (number, fieldType)
         elif kind == "message":
             messages[scopeName]["fields"][fieldName] = (number, fieldType, label)
-            if pendingExtension:
-                messages[scopeName]["extension"].add(fieldName)
         else:
             raise ValueError("field outside message in %s: %s" % (path, line))
-        pendingExtension = False
     if stack:
         raise ValueError("unterminated block in " + str(path))
     return package, {package: messages}, services
@@ -111,7 +104,7 @@ def parse_dir(root: Path) -> Tuple[Messages, Services]:
     allServices: Services = {}
     files: List[Path] = sorted(root.glob("*.proto")) + sorted((root / "v1").glob("*.proto"))
     for f in files:
-        package, messages, services = parse_proto(f)
+        package, messages, services = parse_proto(f, root)
         for pkg, msgs in messages.items():
             target = allMessages.setdefault(pkg, {})
             for name, info in msgs.items():

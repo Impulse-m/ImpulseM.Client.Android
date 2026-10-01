@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Set
 
 import gen_tl_proto_map
 
@@ -56,7 +56,7 @@ class GenTlProtoMapTest(unittest.TestCase):
         excluded: int = len([c for c in self.schema["constructors"] if c["predicate"] in EXCLUDED_CONSTRUCTORS])
         self.assertEqual(len(self.mapping["constructors"]), total - excluded)
         self.assertIn(len(self.mapping["constructors"]), (1653, 1654))
-        mapped = {c["id"] for c in self.mapping["constructors"]}
+        mapped: Set[int] = {c["id"] for c in self.mapping["constructors"]}
         for c in self.schema["constructors"]:
             if c["predicate"] not in EXCLUDED_CONSTRUCTORS:
                 self.assertIn(int(c["id"]), mapped, c["predicate"])
@@ -65,7 +65,7 @@ class GenTlProtoMapTest(unittest.TestCase):
         dotted = [m for m in self.schema["methods"] if "." in m["method"]]
         self.assertEqual(len(self.schema["methods"]) - len(dotted), 11)
         self.assertEqual(len(self.mapping["methods"]), len(dotted))
-        mapped = {m["method"] for m in self.mapping["methods"]}
+        mapped: Set[str] = {m["method"] for m in self.mapping["methods"]}
         for m in dotted:
             self.assertIn(m["method"], mapped)
 
@@ -107,12 +107,39 @@ class GenTlProtoMapTest(unittest.TestCase):
         captures = {c["name"]: c["field"] for c in auth["capture"]}
         self.assertEqual(captures, {"session_token": 6, "refresh_token": 7})
 
+    def test_phone_call_captures(self) -> None:
+        call = self.constructor("phone.phoneCall")
+        captures: Dict[str, int] = {c["name"]: c["field"] for c in call["capture"]}
+        self.assertEqual(captures, {"livekit_url": 3, "livekit_token": 4})
+
+    def test_bot_callback_answer_derived(self) -> None:
+        answer = self.constructor("messages.botCallbackAnswer")
+        hasUrl = self.param(answer, "has_url")
+        self.assertEqual(hasUrl["derived_from"], "url")
+        self.assertNotIn("field", hasUrl)
+
+    def test_guard_rejects_unlisted_extra_field(self) -> None:
+        message: Dict[str, Any] = {
+            "fields": {"id": (1, "int32", ""), "sneaky": (2, "int32", "")},
+            "oneof": {},
+            "file": "x.proto",
+            "name": "Fake",
+        }
+        tlParams: List[Dict[str, str]] = [{"name": "id", "type": "int"}]
+        with self.assertRaises(ValueError):
+            gen_tl_proto_map.map_params(tlParams, message, "test", [], False, set())
+        # Listed in overlays: tolerated on a request, but not on a response unless it is a capture field.
+        listed: Set[Any] = {("x.proto", "Fake", "sneaky")}
+        ignored: List[str] = []
+        gen_tl_proto_map.map_params(tlParams, message, "test", ignored, False, listed)
+        self.assertEqual(len(ignored), 1)
+        with self.assertRaises(ValueError):
+            gen_tl_proto_map.map_params(tlParams, message, "test", [], True, listed)
+
     def test_derived_params_have_no_field(self) -> None:
-        count: int = 0
         for entry in self.mapping["constructors"] + self.mapping["methods"]:
             for p in entry["params"]:
                 if "derived_from" in p:
-                    count += 1
                     self.assertNotIn("field", p)
                 elif p["kind"] != "flags":
                     self.assertIn("field", p)
