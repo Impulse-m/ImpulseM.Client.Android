@@ -9,7 +9,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
@@ -26,6 +30,7 @@ public final class TlProtoSchema {
     private final Map<Integer, ConstructorSpec> constructors = new HashMap<Integer, ConstructorSpec>();
     private final Map<String, TypeSpec> types = new HashMap<String, TypeSpec>();
     private final Map<Integer, MethodSpec> methods = new HashMap<Integer, MethodSpec>();
+    private final Map<String, List<ConstructorSpec>> constructorsByType = new HashMap<String, List<ConstructorSpec>>();
 
 
     private TlProtoSchema(JsonObject root) {
@@ -33,6 +38,12 @@ public final class TlProtoSchema {
         for (JsonElement element : root.getAsJsonArray("constructors")) {
             ConstructorSpec spec = parseConstructor(element.getAsJsonObject());
             constructors.put(spec.id, spec);
+            List<ConstructorSpec> siblings = constructorsByType.get(spec.type);
+            if (siblings == null) {
+                siblings = new ArrayList<ConstructorSpec>();
+                constructorsByType.put(spec.type, siblings);
+            }
+            siblings.add(spec);
         }
         for (JsonElement element : root.getAsJsonArray("types")) {
             TypeSpec spec = parseType(element.getAsJsonObject());
@@ -72,6 +83,25 @@ public final class TlProtoSchema {
 
     public MethodSpec method(int id) {
         return methods.get(id);
+    }
+
+
+    public Collection<ConstructorSpec> constructors() {
+        return Collections.unmodifiableCollection(constructors.values());
+    }
+
+
+    public Collection<MethodSpec> methods() {
+        return Collections.unmodifiableCollection(methods.values());
+    }
+
+
+    public List<ConstructorSpec> constructorsOf(String tlTypeName) {
+        List<ConstructorSpec> list = constructorsByType.get(tlTypeName);
+        if (list == null) {
+            return Collections.emptyList();
+        }
+        return Collections.unmodifiableList(list);
     }
 
 
