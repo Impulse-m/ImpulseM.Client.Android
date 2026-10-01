@@ -110,4 +110,49 @@ class BrandTextTest {
     fun replacesBrandInsideMarkdownEmphasis() {
         assertEquals("by subscribing to __ImpulseM Premium.__", BrandText.replace("by subscribing to __Telegram Premium.__", "ImpulseM"))
     }
+
+
+    @Test
+    fun keepsCustomSchemeQuery() {
+        assertEquals("tg://resolve?domain=Telegram", BrandText.replace("tg://resolve?domain=Telegram", "ImpulseM"))
+    }
+
+
+    @Test
+    fun keepsHttpQueryValue() {
+        assertEquals("https://example.com/?start=Telegram", BrandText.replace("https://example.com/?start=Telegram", "ImpulseM"))
+    }
+
+
+    @Test
+    fun keepsHashtag() {
+        assertEquals("#Telegram", BrandText.replace("#Telegram", "ImpulseM"))
+    }
+
+
+    @Test
+    fun keepsHandleWithUnderscore() {
+        assertEquals("@my_Telegram", BrandText.replace("@my_Telegram", "ImpulseM"))
+    }
+
+
+    @Test
+    fun keepsUppercaseDomain() {
+        assertEquals("TELEGRAM.ORG", BrandText.replace("TELEGRAM.ORG", "ImpulseM"))
+    }
+
+
+    @Test
+    fun replacesBrandInMarkdownLinkText() {
+        assertEquals(
+            "[ImpulseM FAQ](https://telegram.org/faq)",
+            BrandText.replace("[Telegram FAQ](https://telegram.org/faq)", "ImpulseM")
+        )
+    }
+
+
+    @Test
+    fun keepsFormatStringPlaceholders() {
+        assertEquals("%1\$s joined ImpulseM", BrandText.replace("%1\$s joined Telegram", "ImpulseM"))
+    }
 }

@@ -22,11 +22,19 @@ object BrandText {
         """(?i)\{telegram\}""",
         """(?i)\]\(telegram\)""",
         """(?i)telegramdesktop""",
-        """TelegramTips\w*"""
+        """TelegramTips\w*""",
+        // Protected spans: URLs (scheme-anchored so "[Telegram](https://...)" link text is still rewritten), bare
+        // t.me / telegram.me / telegram.dog links, www. hosts, @handles and #hashtags.
+        """[A-Za-z][A-Za-z0-9+.\-]*://\S*""",
+        """(?i)(?:t\.me|telegram\.me|telegram\.dog)/\S*""",
+        """www\.\S*""",
+        """@[\w.]+""",
+        """#\w+"""
     )
 
-    // A word start that is not part of an @handle or a URL path.
-    private const val WORD_START: String = """(?<![@/\p{L}\p{N}])"""
+    // A word start that is not part of an @handle, a URL path or query value, or a snake_case identifier.
+    // An underscore only blocks when it joins two word parts (my_Telegram), so markdown emphasis (__Telegram) still works.
+    private const val WORD_START: String = """(?<![@/=\p{L}\p{N}])(?<![\p{L}\p{N}]_)"""
 
     // Group 1: protected exclusion, group 2: "Telegram" (also as a word prefix), group 3: upper case, group 4: native spelling.
     private val PATTERN: Regex = Regex(
@@ -37,7 +45,7 @@ object BrandText {
             append(WORD_START)
             append("""Telegram(?!\.(?:org|me|dog)\b))|(""")
             append(WORD_START)
-            append("""TELEGRAM\b)|(""")
+            append("""TELEGRAM\b(?!\.\p{L}))|(""")
             append(NATIVE_SPELLINGS.joinToString("|") { Regex.escape(it) })
             append(")")
         }
