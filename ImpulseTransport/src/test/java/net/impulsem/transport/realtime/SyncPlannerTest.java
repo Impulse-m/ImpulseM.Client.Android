@@ -80,6 +80,16 @@ public class SyncPlannerTest {
 
 
     @Test
+    public void userSwitchDisconnectsSoTheSocketDropsTheOldToken() {
+        SyncPlanner planner = new SyncPlanner();
+        planner.plan(5L, true, true);
+        SyncPlanner.Plan plan = planner.plan(6L, true, true);
+        assertTrue(plan.disconnect);
+        assertTrue(plan.connect);
+    }
+
+
+    @Test
     public void concurrentTriggersDropEachLaneExactlyOnce() throws Exception {
         for (int round = 0; round < 50; round++) {
             final SyncPlanner planner = new SyncPlanner();

@@ -57,7 +57,7 @@ public final class SyncPlanner {
         if (!online) {
             return new Plan(drop, drop != 0L, true, 0L, false);
         }
-        // A returning network drops the socket first so the reconnect backoff is skipped.
-        return new Plan(drop, drop != 0L, cameBack, userId, true);
+        // A returning network or a switched user drops the socket first: the backoff is skipped and the old token is not kept.
+        return new Plan(drop, drop != 0L, cameBack || drop != 0L, userId, true);
     }
 }
