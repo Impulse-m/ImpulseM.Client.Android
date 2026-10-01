@@ -25,9 +25,10 @@ object BrandText {
         """TelegramTips\w*""",
         // Protected spans: URLs (scheme-anchored so "[Telegram](https://...)" link text is still rewritten), bare
         // t.me / telegram.me / telegram.dog links, www. hosts, @handles and #hashtags.
-        """[A-Za-z][A-Za-z0-9+.\-]*://\S*""",
-        """(?i)(?:t\.me|telegram\.me|telegram\.dog)/\S*""",
-        """www\.\S*""",
+        // Every span stops at whitespace and the markup delimiters " ' < > ) so anchor text after a href stays rewritable.
+        """[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>)]*""",
+        """(?i)(?<![\w.])(?:t\.me|telegram\.me|telegram\.dog)/[^\s"'<>)]*""",
+        """(?<!\w)www\.[^\s"'<>)]*""",
         """@[\w.]+""",
         """#\w+"""
     )

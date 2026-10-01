@@ -152,6 +152,39 @@ class BrandTextTest {
 
 
     @Test
+    fun replacesAnchorTextAfterHttpHref() {
+        assertEquals(
+            "<a href=\"https://telegram.org/faq\">ImpulseM FAQ</a>",
+            BrandText.replace("<a href=\"https://telegram.org/faq\">Telegram FAQ</a>", "ImpulseM")
+        )
+    }
+
+
+    @Test
+    fun replacesAnchorTextAfterCustomSchemeHref() {
+        assertEquals(
+            "<a href=\"tg://x\">ImpulseM</a>",
+            BrandText.replace("<a href=\"tg://x\">Telegram</a>", "ImpulseM")
+        )
+    }
+
+
+    @Test
+    fun replacesMarkdownLinkTextWithTmeUrl() {
+        assertEquals("[ImpulseM](https://t.me/x)", BrandText.replace("[Telegram](https://t.me/x)", "ImpulseM"))
+    }
+
+
+    @Test
+    fun keepsUrlInParentheses() {
+        assertEquals(
+            "(see https://telegram.org/Telegram)",
+            BrandText.replace("(see https://telegram.org/Telegram)", "ImpulseM")
+        )
+    }
+
+
+    @Test
     fun keepsFormatStringPlaceholders() {
         assertEquals("%1\$s joined ImpulseM", BrandText.replace("%1\$s joined Telegram", "ImpulseM"))
     }
