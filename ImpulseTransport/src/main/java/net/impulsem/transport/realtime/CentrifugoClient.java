@@ -30,6 +30,16 @@ import okhttp3.WebSocketListener;
  * <p>All state lives behind one lock. Frames are processed on the OkHttp reader thread, in order. Anything
  * that can block (minting a token) or that must not run on the reader (resubscribing after a server
  * unsubscribe) goes through the supplied executor. Listener callbacks are never invoked with the lock held.
+ *
+ * <p>Requirements on the caller:
+ * <ul>
+ * <li>The executor needs at least 2 threads: a token fetch blocks one while timers and resubscribes need another.</li>
+ * <li>The 32 channel-lane cap is the caller's responsibility; this client does not enforce it.</li>
+ * <li>Liveness is detected with a watchdog on the server's application-level {@code {}} pings (interval taken
+ * from the connect reply, 25 s by default, plus a 10 s grace). The supplied {@code OkHttpClient} should not set
+ * {@code pingInterval}: it is not needed, and its coexistence with Centrifugo's own pings was not verified.</li>
+ * <li>Publications that cannot be decoded are still delivered, with {@code envelope.undecodable() == true}.</li>
+ * </ul>
  */
 public final class CentrifugoClient {
 
@@ -63,6 +73,8 @@ public final class CentrifugoClient {
     private static final int AbnormalCloseCode = 1006;
     private static final long TokenRetryMillis = 2000L;
     private static final int RefreshMarginSeconds = 30;
+    private static final int DefaultPingSeconds = 25;
+    private static final long DefaultPingGraceMillis = 10000L;
 
 
     private static final class Pending {
@@ -91,7 +103,8 @@ public final class CentrifugoClient {
     private static final class ChannelState {
 
         final String channel;
-        final String actorTag;
+        String actorTag;
+        boolean resubscribeAfterReply;
         long offset;
         String epoch;
         boolean subscribed;
@@ -141,6 +154,10 @@ public final class CentrifugoClient {
     private WebSocket socket;
     private ScheduledFuture<?> refreshTask;
     private ScheduledFuture<?> reconnectTask;
+    private ScheduledFuture<?> watchdogTask;
+    private long lastFrameAt;
+    private long watchdogWindowMillis;
+    private long pingGraceMillis = DefaultPingGraceMillis;
 
 
     public CentrifugoClient(
@@ -168,6 +185,12 @@ public final class CentrifugoClient {
         this.listener = listener;
         this.executor = executor;
         this.backoff = backoff;
+    }
+
+
+    /** Test hook: how long past the server ping interval silence is tolerated. */
+    void setPingGraceMillis(long pingGraceMillis) {
+        this.pingGraceMillis = pingGraceMillis;
     }
 
 
@@ -204,6 +227,7 @@ public final class CentrifugoClient {
             closing = socket;
             socket = null;
             cancelRefreshLocked();
+            cancelWatchdogLocked();
             if (reconnectTask != null) {
                 reconnectTask.cancel(false);
                 reconnectTask = null;
@@ -233,18 +257,84 @@ public final class CentrifugoClient {
     ) {
         ChannelState state;
         int gen;
+        boolean retag = false;
         synchronized (lock) {
-            if (channels.containsKey(channel)) {
-                return;
-            }
-            state = new ChannelState(channel, actorTagOrNull);
-            channels.put(channel, state);
-            if (!connected) {
-                return;
+            state = channels.get(channel);
+            if (state != null) {
+                boolean same = state.actorTag == null ? actorTagOrNull == null : state.actorTag.equals(actorTagOrNull);
+                if (same) {
+                    return;
+                }
+                state.actorTag = actorTagOrNull;
+                if (!connected) {
+                    return;
+                }
+                if (state.inFlight) {
+                    state.resubscribeAfterReply = true;
+                    return;
+                }
+                if (!state.subscribed) {
+                    return;
+                }
+                retag = true;
+            } else {
+                state = new ChannelState(channel, actorTagOrNull);
+                channels.put(channel, state);
+                if (!connected) {
+                    return;
+                }
             }
             gen = generation;
         }
-        sendSubscribe(gen, state);
+        if (retag) {
+            resubscribeWithNewTag(gen, state);
+        } else {
+            sendSubscribe(gen, state);
+        }
+    }
+
+
+    /** A subscription's tag filter cannot change in place: leave the channel, then subscribe again without a position. */
+    private void resubscribeWithNewTag(
+        final int gen,
+        final ChannelState state
+    ) {
+        synchronized (lock) {
+            if (gen != generation || channels.get(state.channel) != state) {
+                return;
+            }
+            state.subscribed = false;
+            state.inFlight = true;
+            state.dropPosition();
+        }
+        JsonObject inner = new JsonObject();
+        inner.addProperty("channel", state.channel);
+        JsonObject body = new JsonObject();
+        body.add("unsubscribe", inner);
+        ReplyHandler next = new ReplyHandler() {
+            @Override
+            public void onSuccess(JsonObject reply) {
+                proceed();
+            }
+
+
+            @Override
+            public void onError(
+                int code,
+                String message
+            ) {
+                proceed();
+            }
+
+
+            private void proceed() {
+                synchronized (lock) {
+                    state.inFlight = false;
+                }
+                sendSubscribe(gen, state);
+            }
+        };
+        sendCommand(gen, body, next, 0);
     }
 
 
@@ -453,6 +543,13 @@ public final class CentrifugoClient {
             connected = true;
             backoff.reset();
             scheduleRefreshLocked(gen, result);
+            long pingSeconds = longOfSafe(result, "ping");
+            if (pingSeconds <= 0) {
+                pingSeconds = DefaultPingSeconds;
+            }
+            watchdogWindowMillis = pingSeconds * 1000L + pingGraceMillis;
+            lastFrameAt = System.currentTimeMillis();
+            scheduleWatchdogLocked(gen, watchdogWindowMillis);
         }
         fireConnected();
         resubscribeAll(gen);
@@ -492,11 +589,11 @@ public final class CentrifugoClient {
 
 
     private void handleClosed(
-        int gen,
+        final int gen,
         int code,
         String reason
     ) {
-        boolean reconnectNow = false;
+        long reconnectDelay = -1L;
         boolean willReconnect;
         synchronized (lock) {
             if (gen != generation || socket == null) {
@@ -507,6 +604,7 @@ public final class CentrifugoClient {
             connected = false;
             connecting = false;
             cancelRefreshLocked();
+            cancelWatchdogLocked();
             clearPendingLocked();
             resetChannelFlagsLocked();
             if (!wantConnected) {
@@ -518,27 +616,33 @@ public final class CentrifugoClient {
             } else {
                 willReconnect = true;
                 if (code == ConnectionExpiredCloseCode && wasConnected) {
-                    reconnectNow = true;
+                    reconnectDelay = 0L;
                 } else {
-                    long delay = backoff.nextDelayMillis();
-                    reconnectTask = executor.schedule(new Runnable() {
-                        @Override
-                        public void run() {
-                            attemptConnect();
-                        }
-                    }, delay, TimeUnit.MILLISECONDS);
+                    reconnectDelay = backoff.nextDelayMillis();
                 }
             }
         }
-        if (reconnectNow) {
-            executor.execute(new Runnable() {
+        // The listener hears about the disconnect before any reconnect can start, so onConnected never overtakes it.
+        fireDisconnected(code, reason, willReconnect);
+        if (reconnectDelay < 0L) {
+            return;
+        }
+        synchronized (lock) {
+            if (!wantConnected || gen != generation) {
+                return;
+            }
+            Runnable attempt = new Runnable() {
                 @Override
                 public void run() {
                     attemptConnect();
                 }
-            });
+            };
+            if (reconnectDelay == 0L) {
+                executor.execute(attempt);
+            } else {
+                reconnectTask = executor.schedule(attempt, reconnectDelay, TimeUnit.MILLISECONDS);
+            }
         }
-        fireDisconnected(code, reason, willReconnect);
     }
 
 
@@ -637,6 +741,40 @@ public final class CentrifugoClient {
                     doRefresh(gen, lastTtl);
                 }
             }, TokenRetryMillis, TimeUnit.MILLISECONDS);
+        }
+    }
+
+
+    private void scheduleWatchdogLocked(
+        final int gen,
+        long delayMillis
+    ) {
+        cancelWatchdogLocked();
+        watchdogTask = executor.schedule(new Runnable() {
+            @Override
+            public void run() {
+                long remaining;
+                synchronized (lock) {
+                    if (gen != generation || !connected) {
+                        return;
+                    }
+                    remaining = lastFrameAt + watchdogWindowMillis - System.currentTimeMillis();
+                    if (remaining > 0) {
+                        scheduleWatchdogLocked(gen, remaining);
+                        return;
+                    }
+                }
+                Log.log(Level.WARNING, "no frame from the server for " + watchdogWindowMillis + " ms, reconnecting");
+                forceClose(gen);
+            }
+        }, delayMillis, TimeUnit.MILLISECONDS);
+    }
+
+
+    private void cancelWatchdogLocked() {
+        if (watchdogTask != null) {
+            watchdogTask.cancel(false);
+            watchdogTask = null;
         }
     }
 
@@ -790,6 +928,14 @@ public final class CentrifugoClient {
         for (Publication publication : replayed) {
             firePublication(publication);
         }
+        boolean retag;
+        synchronized (lock) {
+            retag = state.resubscribeAfterReply && gen == generation && channels.get(state.channel) == state;
+            state.resubscribeAfterReply = false;
+        }
+        if (retag) {
+            resubscribeWithNewTag(gen, state);
+        }
     }
 
 
@@ -800,27 +946,31 @@ public final class CentrifugoClient {
         WebSocket webSocket,
         String text
     ) {
+        synchronized (lock) {
+            if (gen == generation) {
+                lastFrameAt = System.currentTimeMillis();
+            }
+        }
         for (String line : text.split("\n")) {
             if (line.trim().isEmpty()) {
                 continue;
             }
-            JsonObject object;
             try {
                 JsonElement parsed = JsonParser.parseString(line);
                 if (!parsed.isJsonObject()) {
                     continue;
                 }
-                object = parsed.getAsJsonObject();
+                JsonObject object = parsed.getAsJsonObject();
+                if (object.size() == 0) {
+                    webSocket.send("{}");
+                } else if (object.has("id")) {
+                    handleReply(gen, object);
+                } else if (object.has("push")) {
+                    handlePush(gen, objectOf(object, "push"));
+                }
             } catch (RuntimeException e) {
-                Log.log(Level.WARNING, "unparseable realtime frame dropped", e);
-                continue;
-            }
-            if (object.size() == 0) {
-                webSocket.send("{}");
-            } else if (object.has("id")) {
-                handleReply(gen, object);
-            } else if (object.has("push")) {
-                handlePush(gen, object.getAsJsonObject("push"));
+                // Nothing may escape to OkHttp's reader thread: it would tear the connection down.
+                Log.log(Level.WARNING, "realtime frame object skipped", e);
             }
         }
     }
@@ -931,22 +1081,12 @@ public final class CentrifugoClient {
     }
 
 
+    /** Always yields a publication; an unreadable envelope is flagged so the app can run getDifference. */
     private static Publication toPublication(
         String channel,
         JsonObject pub
     ) {
-        JsonElement data = pub.get("data");
-        if (data == null) {
-            return null;
-        }
-        Envelope envelope;
-        try {
-            envelope = Envelope.parse(data);
-        } catch (IllegalArgumentException e) {
-            Log.log(Level.WARNING, "malformed envelope on " + channel + " dropped", e);
-            return null;
-        }
-        return new Publication(channel, envelope, longOf(pub, "offset"));
+        return new Publication(channel, Envelope.parse(pub.get("data")), longOfSafe(pub, "offset"));
     }
 
 
@@ -1040,6 +1180,18 @@ public final class CentrifugoClient {
             return element.getAsJsonObject();
         }
         return new JsonObject();
+    }
+
+
+    private static long longOfSafe(
+        JsonObject object,
+        String name
+    ) {
+        try {
+            return longOf(object, name);
+        } catch (RuntimeException e) {
+            return 0L;
+        }
     }
 
 

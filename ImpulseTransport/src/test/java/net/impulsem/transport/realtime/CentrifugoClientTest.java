@@ -47,6 +47,7 @@ public class CentrifugoClientTest {
         volatile long subscribeOffset = 10L;
         volatile boolean replyToConnect = true;
         volatile String subscribeReplyExtra = "";
+        volatile int pingSeconds = 0;
 
 
         @Override
@@ -72,7 +73,10 @@ public class CentrifugoClientTest {
             int id = frame.get("id").getAsInt();
             if (frame.has("connect")) {
                 if (replyToConnect) {
-                    webSocket.send("{\"id\":" + id + ",\"connect\":{\"client\":\"c1\",\"expires\":true,\"ttl\":" + ttl + "}}");
+                    webSocket.send(
+                        "{\"id\":" + id + ",\"connect\":{\"client\":\"c1\",\"expires\":true,\"ttl\":" + ttl
+                            + (pingSeconds > 0 ? ",\"ping\":" + pingSeconds : "") + "}}"
+                    );
                 }
             } else if (frame.has("subscribe")) {
                 JsonObject error = subscribeErrors.poll();
@@ -479,6 +483,98 @@ public class CentrifugoClientTest {
         JsonObject connect = sessions.get(1).nextCommand();
         assertEquals("tok-2", connect.getAsJsonObject("connect").get("token").getAsString());
         assertEquals(1, connect.get("id").getAsInt());
+    }
+
+
+    @Test
+    public void garbagePublicationIsDeliveredUndecodableAndDoesNotKillTheSocket() throws Exception {
+        client.connect();
+        client.subscribe("user:1", null);
+        recorder.expect("subscribed:user:1:false:false");
+        Session session = sessions.get(0);
+        session.socket.send("{\"push\":{\"channel\":\"user:1\",\"pub\":{\"data\":\"not an object\",\"offset\":31}}}");
+        session.socket.send("{\"push\":{\"channel\":\"user:1\",\"pub\":{\"data\":{\"type\":1,\"pts\":\"zzz\",\"data\":\"aGVsbG8=\"},\"offset\":\"abc\"}}}");
+        session.socket.send("{\"push\":{\"channel\":\"user:1\",\"pub\":{\"data\":{\"type\":1,\"pts\":1,\"data\":\"@@@\"},\"offset\":33}}}");
+        session.socket.send("{\"push\":{\"channel\":[1,2]}}");
+        session.socket.send(envelopeFrame("user:1", 34L));
+        Publication first = recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS);
+        Publication second = recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS);
+        Publication third = recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS);
+        Publication good = recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertNotNull(third);
+        assertNotNull(good);
+        assertTrue(first.envelope.undecodable());
+        assertEquals("user:1", first.channel);
+        assertEquals(31L, first.offset);
+        assertTrue(second.envelope.undecodable());
+        assertEquals(0L, second.offset);
+        assertTrue(third.envelope.undecodable());
+        assertEquals(33L, third.offset);
+        assertFalse(good.envelope.undecodable());
+        assertEquals(34L, good.offset);
+        assertEquals(1, server.getRequestCount());
+        assertTrue(recorder.willReconnect.isEmpty());
+    }
+
+
+    @Test
+    public void silenceBeyondPingWindowReconnects() throws Exception {
+        client.setPingGraceMillis(300L);
+        sessions.get(0).pingSeconds = 1;
+        client.connect();
+        recorder.expect("connected");
+        long start = System.currentTimeMillis();
+        recorder.expect("disconnected:1006:true");
+        long elapsed = System.currentTimeMillis() - start;
+        assertTrue("watchdog fired after " + elapsed, elapsed >= 900L && elapsed < 4000L);
+        JsonObject connect = sessions.get(1).nextCommand();
+        assertEquals("tok-2", connect.getAsJsonObject("connect").get("token").getAsString());
+    }
+
+
+    @Test
+    public void pingsKeepTheWatchdogQuiet() throws Exception {
+        client.setPingGraceMillis(400L);
+        sessions.get(0).pingSeconds = 1;
+        client.connect();
+        recorder.expect("connected");
+        for (int i = 0; i < 6; i++) {
+            Thread.sleep(500L);
+            sessions.get(0).socket.send("{}");
+        }
+        assertTrue(recorder.willReconnect.isEmpty());
+        assertEquals(1, server.getRequestCount());
+    }
+
+
+    @Test
+    public void disconnectedEventPrecedesReconnectedAfter3005() throws Exception {
+        client.connect();
+        recorder.expect("connected");
+        sessions.get(0).socket.close(3005, "connection expired");
+        assertEquals("disconnected:3005:true", recorder.events.poll(WaitMillis, TimeUnit.MILLISECONDS));
+        assertEquals("connected", recorder.events.poll(WaitMillis, TimeUnit.MILLISECONDS));
+    }
+
+
+    @Test
+    public void changedActorTagLeavesAndResubscribesWithNewFilter() throws Exception {
+        client.connect();
+        client.subscribe("channel:5", "tagA");
+        recorder.expect("subscribed:channel:5:false:false");
+        Session session = sessions.get(0);
+        session.commands.clear();
+        client.subscribe("channel:5", "tagA");
+        client.subscribe("channel:5", "tagB");
+        JsonObject leave = session.nextCommandOf("unsubscribe");
+        assertEquals("channel:5", leave.getAsJsonObject("unsubscribe").get("channel").getAsString());
+        JsonObject again = session.nextCommandOf("subscribe").getAsJsonObject("subscribe");
+        assertEquals("tagB", again.getAsJsonObject("tf").get("val").getAsString());
+        assertFalse(again.has("recover"));
+        recorder.expect("subscribed:channel:5:false:false");
+        assertTrue(client.subscribedChannels().contains("channel:5"));
     }
 
 

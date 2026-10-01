@@ -224,11 +224,18 @@ public class LiveRealtimeTest {
         awaitSubscribed(bEvents, "subscribed channel:" + channelId);
 
         String postText = "rt-channel " + nonce;
-        live.sendText(
-            a,
-            TlBuilder.object("inputPeerChannel").put("channel_id", channelId).put("access_hash", channelHash),
-            postText
-        );
+        TlBuilder channelPeer = TlBuilder.object("inputPeerChannel").put("channel_id", channelId).put("access_hash", channelHash);
+        try {
+            live.sendText(a, channelPeer, postText);
+        } catch (AssertionError first) {
+            // Known intermittent backend issue: the first post to a just-created channel can return 500. Retried once;
+            // any other error is a real failure.
+            if (!String.valueOf(first.getMessage()).contains("INTERNAL_SERVER_ERROR")) {
+                throw first;
+            }
+            System.out.println("LIVE BACKEND ISSUE: first post to a fresh channel returned 500, retrying once: " + first.getMessage());
+            live.sendText(a, channelPeer, postText);
+        }
         Publication post = bEvents.await("channel:" + channelId, this, null, postText, PublicationWaitMillis);
         assertNotNull("B got no channel-lane publication carrying the post", post);
         System.out.println("LIVE channel lane OK: type=" + post.envelope.type + " pts=" + post.envelope.pts

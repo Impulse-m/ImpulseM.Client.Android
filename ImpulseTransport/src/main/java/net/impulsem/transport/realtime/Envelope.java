@@ -15,6 +15,7 @@ public final class Envelope {
     /** The decoded {@code v1.Updates} proto; null when the envelope carries no body. */
     public final byte[] updatesProto;
     public final boolean oversize;
+    private final boolean undecodable;
 
 
     private Envelope(
@@ -23,7 +24,8 @@ public final class Envelope {
         int ptsCount,
         int date,
         byte[] updatesProto,
-        boolean oversize
+        boolean oversize,
+        boolean undecodable
     ) {
         this.type = type;
         this.pts = pts;
@@ -31,14 +33,26 @@ public final class Envelope {
         this.date = date;
         this.updatesProto = updatesProto;
         this.oversize = oversize;
+        this.undecodable = undecodable;
     }
 
 
     /**
+     * Never throws. Anything that cannot be read (not an object, non-numeric fields, invalid base64) yields an
+     * envelope with {@link #undecodable()} set, so the application can still react, for example with getDifference.
+     *
      * @param data the {@code data} object of a publication.
-     * @throws IllegalArgumentException when the value is not an object or the body is not valid base64.
      */
     public static Envelope parse(JsonElement data) {
+        try {
+            return parseStrict(data);
+        } catch (RuntimeException e) {
+            return new Envelope(0, 0L, 0, 0, null, false, true);
+        }
+    }
+
+
+    private static Envelope parseStrict(JsonElement data) {
         if (data == null || !data.isJsonObject()) {
             throw new IllegalArgumentException("envelope is not a JSON object");
         }
@@ -52,20 +66,28 @@ public final class Envelope {
             }
             body = decoded.toByteArray();
         }
+        JsonElement oversize = object.get("oversize");
         return new Envelope(
             intOf(object, "type"),
             longOf(object, "pts"),
             intOf(object, "ptsCount"),
             intOf(object, "date"),
             body,
-            object.has("oversize") && object.get("oversize").isJsonPrimitive() && object.get("oversize").getAsBoolean()
+            oversize != null && oversize.isJsonPrimitive() && oversize.getAsBoolean(),
+            false
         );
+    }
+
+
+    /** True when the publication could not be read; nothing else in the envelope is meaningful then. */
+    public boolean undecodable() {
+        return undecodable;
     }
 
 
     /** A body-less, non-oversize frame: the channel moved on and the client must resume from {@link #pts}. */
     public boolean isChannelTooLongSignal() {
-        return updatesProto == null && !oversize;
+        return !undecodable && updatesProto == null && !oversize;
     }
 
 

@@ -53,8 +53,19 @@ public class EnvelopeTest {
     }
 
 
-    @Test(expected = IllegalArgumentException.class)
-    public void invalidBase64IsRejected() {
-        Envelope.parse(json("{\"type\":1,\"pts\":1,\"data\":\"!!!not base64!!!\"}"));
+    @Test
+    public void invalidBase64IsUndecodable() {
+        Envelope envelope = Envelope.parse(json("{\"type\":1,\"pts\":1,\"data\":\"!!!not base64!!!\"}"));
+        assertTrue(envelope.undecodable());
+        assertFalse(envelope.isChannelTooLongSignal());
+    }
+
+
+    @Test
+    public void nonObjectAndNonNumericAreUndecodable() {
+        assertTrue(Envelope.parse(json("\"text\"")).undecodable());
+        assertTrue(Envelope.parse(null).undecodable());
+        assertTrue(Envelope.parse(json("{\"type\":1,\"pts\":\"zzz\"}")).undecodable());
+        assertFalse(Envelope.parse(json("{\"type\":1,\"pts\":1}")).undecodable());
     }
 }
