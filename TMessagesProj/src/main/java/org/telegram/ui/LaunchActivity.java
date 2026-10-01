@@ -94,6 +94,7 @@ import com.google.firebase.appindexing.FirebaseUserActions;
 import com.google.firebase.appindexing.builders.AssistActionBuilder;
 
 import org.telegram.PhoneFormat.PhoneFormat;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
@@ -7191,7 +7192,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
         } else if (id == NotificationCenter.needShowAlert) {
             final Integer reason = (Integer) args[0];
-            if (reason == 6 || reason == 3 && proxyErrorDialog != null) {
+            // TODO(impulsem-unimplemented): proxy
+            if (reason == 6 || reason == 3 && (proxyErrorDialog != null || !ImpulseFeatures.PROXY)) {
                 return;
             } else if (reason == 4) {
                 showTosActivity(account, (TLRPC.TL_help_termsOfService) args[1]);
@@ -8223,7 +8225,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             title = "Connecting";
             titleId = R.string.Connecting;
         }
-        if (currentConnectionState == ConnectionsManager.ConnectionStateConnecting || currentConnectionState == ConnectionsManager.ConnectionStateConnectingToProxy) {
+        // TODO(impulsem-unimplemented): proxy
+        if (ImpulseFeatures.PROXY && (currentConnectionState == ConnectionsManager.ConnectionStateConnecting || currentConnectionState == ConnectionsManager.ConnectionStateConnectingToProxy)) {
             action = () -> {
                 BaseFragment lastFragment = null;
                 if (AndroidUtilities.isTablet()) {

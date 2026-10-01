@@ -119,6 +119,7 @@ import com.google.android.play.core.integrity.IntegrityTokenResponse;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.telegram.PhoneFormat.PhoneFormat;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -1666,7 +1667,10 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         MessagesController.getInstance(currentAccount).checkPromoInfo(true);
         ConnectionsManager.getInstance(currentAccount).updateDcSettings();
         MessagesController.getInstance(currentAccount).loadAppConfig();
-        MessagesController.getInstance(currentAccount).loadWebBrowserConfig();
+        // TODO(impulsem-unimplemented): browser settings
+        if (ImpulseFeatures.BROWSER_SETTINGS) {
+            MessagesController.getInstance(currentAccount).loadWebBrowserConfig();
+        }
         MessagesController.getInstance(currentAccount).checkPeerColors(false);
 
         if (res.future_auth_token != null) {
@@ -8765,6 +8769,10 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
     private int currentConnectionState;
 
     private void updateProxyButton(boolean animated, boolean force) {
+        // TODO(impulsem-unimplemented): proxy
+        if (!ImpulseFeatures.PROXY) {
+            return;
+        }
         if (proxyDrawable == null) {
             return;
         }
@@ -8806,6 +8814,10 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
     }
 
     private void showProxyButton(boolean show, boolean animated) {
+        // TODO(impulsem-unimplemented): proxy
+        if (!ImpulseFeatures.PROXY) {
+            return;
+        }
         if (show == proxyButtonVisible) {
             return;
         }

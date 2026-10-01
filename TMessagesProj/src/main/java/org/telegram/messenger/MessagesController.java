@@ -735,7 +735,8 @@ public class MessagesController extends BaseController implements NotificationCe
     public boolean starsLocked;
 
     public boolean starsPurchaseAvailable() {
-        return !starsLocked;
+        // TODO(impulsem-unimplemented): stars and TON
+        return !starsLocked && ImpulseFeatures.STARS_AND_TON;
     }
     public boolean premiumFeaturesBlocked() {
         return premiumLocked && !getUserConfig().isPremium();
@@ -1969,7 +1970,10 @@ public class MessagesController extends BaseController implements NotificationCe
             }
         }
         AndroidUtilities.runOnUIThread(this::loadAppConfig, 2000);
-        AndroidUtilities.runOnUIThread(this::loadWebBrowserConfig, 2000);
+        // TODO(impulsem-unimplemented): browser settings
+        if (ImpulseFeatures.BROWSER_SETTINGS) {
+            AndroidUtilities.runOnUIThread(this::loadWebBrowserConfig, 2000);
+        }
         AndroidUtilities.runOnUIThread(() -> checkPeerColors(false), 400);
 
         topicsController = new TopicsController(num);

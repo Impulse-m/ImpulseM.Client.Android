@@ -26,6 +26,7 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLog;
@@ -188,6 +189,8 @@ public class ChatAttachAlertRichLayout extends ChatAttachAlert.AttachAlertLayout
         @Override public void onMath() { listView.onMathClicked(); }
         @Override public void onQuote() { listView.toggleQuoteOnSelection(); updateFormattingButtons(); }
         @Override public void onAiStyle() {
+            // TODO(impulsem-unimplemented): AI compose
+            if (!ImpulseFeatures.AI_COMPOSE) return;
             final RichEditorListView.SelectionEdit edit = listView.beginSelectionEdit();
             if (edit == null) return;
             final TL_iv.RichMessage rich = edit.extractRichMessage();

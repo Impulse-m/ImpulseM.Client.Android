@@ -4587,6 +4587,10 @@ public class AndroidUtilities {
     }
 
     public static boolean handleProxyIntent(Activity activity, Intent intent, boolean invoked) {
+        // TODO(impulsem-unimplemented): proxy
+        if (!ImpulseFeatures.PROXY) {
+            return false;
+        }
         if (intent == null) {
             return false;
         }

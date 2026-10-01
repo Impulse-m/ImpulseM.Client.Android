@@ -2096,7 +2096,8 @@ public class ChatObject {
     }
 
     public static boolean isBoostSupported(TLRPC.Chat chat) {
-        return (isChannelAndNotMegaGroup(chat) || isMegagroup(chat)) && !isMonoForum(chat) && !false;
+        // TODO(impulsem-unimplemented): boosts
+        return (isChannelAndNotMegaGroup(chat) || isMegagroup(chat)) && !isMonoForum(chat) && ImpulseFeatures.BOOSTS;
     }
 
     public static boolean isBoosted(TLRPC.ChatFull chatFull) {

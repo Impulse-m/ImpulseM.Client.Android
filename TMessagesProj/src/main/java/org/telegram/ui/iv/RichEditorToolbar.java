@@ -17,6 +17,7 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
 import org.telegram.ui.ActionBar.Theme;
@@ -401,6 +402,8 @@ public class RichEditorToolbar extends FrameLayout {
         aiStyleButton.setBackgroundColorKey(Theme.key_glass_targetMainTabs);
         aiStyleButton.setContentDescription(getString(R.string.AIEditor));
         aiStyleButton.setOnClickListener(v -> delegate.onAiStyle());
+        // TODO(impulsem-unimplemented): AI compose
+        aiStyleButton.setVisibility(ImpulseFeatures.AI_COMPOSE ? View.VISIBLE : View.GONE);
         formattingLayout1.addView(aiStyleButton, LayoutHelper.createLinear(38, 38, Gravity.CENTER_VERTICAL));
 
         sendButton = new ChatActivityEnterView.SendButton(context, R.drawable.send_plane_24, resourcesProvider, true) {

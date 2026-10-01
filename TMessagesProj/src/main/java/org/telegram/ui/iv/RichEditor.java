@@ -48,6 +48,7 @@ import androidx.annotation.Nullable;
 import androidx.core.graphics.Insets;
 import androidx.core.view.WindowInsetsCompat;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.Emoji;
@@ -623,6 +624,8 @@ public class RichEditor extends BaseFragment implements NotificationCenter.Notif
         bottomPanel.addView(aiButton, LayoutHelper.createLinear(44, 44, 0, Gravity.LEFT | Gravity.CENTER_VERTICAL, 0, 0, 8, 0));
         ScaleStateListAnimator.apply(aiButton);
         aiButton.setContentDescription(getString(R.string.AIEditor));
+        // TODO(impulsem-unimplemented): AI compose
+        aiButton.setVisibility(ImpulseFeatures.AI_COMPOSE ? View.VISIBLE : View.GONE);
         aiButton.setOnClickListener(v -> {
             if (listView.isInSelectionMode()) {
                 onAiStyleSelection();
@@ -982,6 +985,8 @@ public class RichEditor extends BaseFragment implements NotificationCenter.Notif
         aiStyleButton.setImageDrawable(new AiButtonDrawable(context));
         aiStyleButton.setContentDescription(getString(R.string.AIEditor));
         aiStyleButton.setOnClickListener(v -> onAiStyleSelection());
+        // TODO(impulsem-unimplemented): AI compose
+        aiStyleButton.setVisibility(ImpulseFeatures.AI_COMPOSE ? View.VISIBLE : View.GONE);
         formattingLayout1.addView(aiStyleButton, LayoutHelper.createLinear(38, 38, Gravity.CENTER_VERTICAL));
 
         final int sendIcon = editingMessageObject != null ? R.drawable.input_done : (isInScheduleMode() ? R.drawable.input_schedule : R.drawable.send_plane_24);
@@ -1377,6 +1382,8 @@ public class RichEditor extends BaseFragment implements NotificationCenter.Notif
     }
 
     private void onAiStyleSelection() {
+        // TODO(impulsem-unimplemented): AI compose
+        if (!ImpulseFeatures.AI_COMPOSE) return;
         final RichEditorListView.SelectionEdit edit = listView.beginSelectionEdit();
         if (edit == null) return;
         final TL_iv.RichMessage rich = edit.extractRichMessage();

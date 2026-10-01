@@ -96,6 +96,7 @@ import org.telegram.ui.recyclerview.LinearSmoothScrollerCustom;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager.widget.ViewPager;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
@@ -4725,11 +4726,14 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         });
         searchTabsAndFiltersLayout.addView(filtersView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP));
 
-        floatingButtonStories = new FragmentFloatingButton(context, resourceProvider, true);
-        floatingButtonStories.setContentDescription(getString(R.string.StoryPrivacyButtonPost));
-        floatingButtonStories.setImageResource(R.drawable.outline_fab_story_24);
-        floatingButtonStories.setOnClickListener(v -> openStoriesRecorder());
-        contentView.addView(floatingButtonStories, FragmentFloatingButton.createSubButtonLayoutParams());
+        // TODO(impulsem-unimplemented): stories posting
+        if (ImpulseFeatures.STORIES_POSTING) {
+            floatingButtonStories = new FragmentFloatingButton(context, resourceProvider, true);
+            floatingButtonStories.setContentDescription(getString(R.string.StoryPrivacyButtonPost));
+            floatingButtonStories.setImageResource(R.drawable.outline_fab_story_24);
+            floatingButtonStories.setOnClickListener(v -> openStoriesRecorder());
+            contentView.addView(floatingButtonStories, FragmentFloatingButton.createSubButtonLayoutParams());
+        }
 
         floatingButton3 = new FragmentFloatingButton(context, resourceProvider);
         contentView.addView(floatingButton3, FragmentFloatingButton.createDefaultLayoutParams());
@@ -5173,6 +5177,10 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
                 } catch (Exception ignored) {}
                 if (dialogId == UserConfig.getInstance(currentAccount).getClientUserId()) {
+                    // TODO(impulsem-unimplemented): stories posting
+                    if (!ImpulseFeatures.STORIES_POSTING) {
+                        return;
+                    }
                     if (!storiesEnabled) {
                         if (dialogStoriesCell != null) {
                             dialogStoriesCell.showPremiumHint();
@@ -13493,6 +13501,10 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     }
 
     private void openStoriesRecorder() {
+        // TODO(impulsem-unimplemented): stories posting
+        if (!ImpulseFeatures.STORIES_POSTING) {
+            return;
+        }
         if (!storiesEnabled) {
             if (storyPremiumHint != null) {
                 if (storyPremiumHint.shown()) {
@@ -13766,7 +13778,8 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             final boolean proxyVisible = proxyEnabled && !TextUtils.isEmpty(proxyAddress)
                     || getMessagesController().blockedCountry && !SharedConfig.proxyList.isEmpty();
 
-            if (proxyVisible) {
+            // TODO(impulsem-unimplemented): proxy
+            if (proxyVisible && ImpulseFeatures.PROXY) {
                 io.addGap();
                 io.add(proxyMenuSubItem);
             }

@@ -137,7 +137,9 @@ public class TranslateController extends BaseController {
     }
 
     public static boolean isSummarizable(MessageObject messageObject) {
+        // TODO(impulsem-unimplemented): AI compose (summarize)
         return (
+            ImpulseFeatures.AI_COMPOSE &&
             messageObject != null &&
             messageObject.messageOwner != null &&
             messageObject.messageOwner.summary_from_language != null &&

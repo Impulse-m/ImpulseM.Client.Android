@@ -26,6 +26,7 @@ import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.DownloadController;
@@ -194,9 +195,16 @@ public class DataSettingsActivity extends BaseFragment {
         useLessDataForCallsRow = rowCount++;
 //        quickRepliesRow = rowCount++;
         callsSection2Row = rowCount++;
-        proxySectionRow = rowCount++;
-        proxyRow = rowCount++;
-        proxySection2Row = rowCount++;
+        // TODO(impulsem-unimplemented): proxy
+        if (ImpulseFeatures.PROXY) {
+            proxySectionRow = rowCount++;
+            proxyRow = rowCount++;
+            proxySection2Row = rowCount++;
+        } else {
+            proxySectionRow = -1;
+            proxyRow = -1;
+            proxySection2Row = -1;
+        }
         clearDraftsRow = rowCount++;
         clearDraftsSectionRow = rowCount++;
 

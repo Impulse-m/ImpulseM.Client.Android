@@ -115,6 +115,7 @@ import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
 import org.json.JSONObject;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
 import org.telegram.messenger.ApplicationLoader;
@@ -5142,6 +5143,10 @@ public class ArticleViewer extends IArticleViewer implements NotificationCenter.
     }
 
     public void openWebSettings() {
+        // TODO(impulsem-unimplemented): browser settings
+        if (!ImpulseFeatures.BROWSER_SETTINGS) {
+            return;
+        }
         BaseFragment lastFragment = LaunchActivity.getSafeLastFragment();
         if (lastFragment != null) {
             BaseFragment.BottomSheetParams params = new BaseFragment.BottomSheetParams();

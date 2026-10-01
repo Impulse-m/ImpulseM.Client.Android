@@ -353,7 +353,10 @@ public class ApplicationLoader extends Application {
         AndroidUtilities.runOnUIThread(ApplicationLoader::startPushService);
 
         LauncherIconController.tryFixLauncherIconIfNeeded();
-        ProxyRotationController.init();
+        // TODO(impulsem-unimplemented): proxy
+        if (ImpulseFeatures.PROXY) {
+            ProxyRotationController.init();
+        }
 
         //if (BuildConfig.DEBUG_PRIVATE_VERSION) {
         //    Choreographer60FpsContent.getInstance().addFrameCallback(debugEverySecondChecks, 1);

@@ -51,6 +51,7 @@ import com.google.common.base.Charsets;
 
 import org.json.JSONArray;
 import org.json.JSONTokener;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.Emoji;
 import org.telegram.messenger.LanguageDetector;
@@ -367,7 +368,8 @@ public class TranslateAlert2 extends BottomSheet implements NotificationCenter.N
             textWithEntities.entities = reqMessageEntities;
         }
 
-        if (reqSum && reqPeer != null) {
+        // TODO(impulsem-unimplemented): AI compose (summarize)
+        if (ImpulseFeatures.AI_COMPOSE && reqSum && reqPeer != null) {
             TLRPC.TL_messages_summarizeText req = new TLRPC.TL_messages_summarizeText();
             req.flags |= 1;
             req.peer = reqPeer;

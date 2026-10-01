@@ -129,6 +129,7 @@ import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
 import org.telegram.PhoneFormat.PhoneFormat;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -3534,6 +3535,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                             int albumId = sharedMediaLayout.storyAlbums_getAlbumIdByTabType(sharedMediaLayout.getClosestTab());
                             sharedMediaLayout.openAddStoriesToAlbumSheet(this, getDialogId(), albumId);
                         } else {
+                            // TODO(impulsem-unimplemented): stories posting
+                            if (!ImpulseFeatures.STORIES_POSTING) {
+                                return;
+                            }
                             if (!getMessagesController().storiesEnabled()) {
                                 showDialog(new PremiumFeatureBottomSheet(this, PremiumPreviewFragment.PREMIUM_FEATURE_STORIES, true));
                                 return;
@@ -3927,6 +3932,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                         onCallClicked(true);
                         break;
                     case ProfileActionsView.KEY_STORY:
+                        // TODO(impulsem-unimplemented): stories posting
+                        if (!ImpulseFeatures.STORIES_POSTING) {
+                            break;
+                        }
                         getMessagesController().getMainSettings().edit().putBoolean("story_keep", true).apply();
                         final AlertDialog progressDialog = new AlertDialog(getContext(), AlertDialog.ALERT_TYPE_SPINNER, resourcesProvider);
                         progressDialog.showDelayed(200);
@@ -9352,7 +9361,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             }
         } else if (id == NotificationCenter.userIsPremiumBlockedUpadted) {
             if (otherItem != null) {
-                otherItem.setSubItemShown(start_secret_chat, DialogObject.isEmpty(getMessagesController().isUserContactBlocked(userId)));
+                // TODO(impulsem-unimplemented): secret chats
+                otherItem.setSubItemShown(start_secret_chat, ImpulseFeatures.SECRET_CHATS && DialogObject.isEmpty(getMessagesController().isUserContactBlocked(userId)));
             }
             updateEditColorIcon();
         } else if (id == NotificationCenter.currentUserPremiumStatusChanged) {
@@ -10390,7 +10400,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             birthdayFetcher.subscribe(this::createBirthdayEffect);
         }
         if (otherItem != null) {
-            otherItem.setSubItemShown(start_secret_chat, DialogObject.isEmpty(getMessagesController().isUserContactBlocked(userId)));
+            // TODO(impulsem-unimplemented): secret chats
+            otherItem.setSubItemShown(start_secret_chat, ImpulseFeatures.SECRET_CHATS && DialogObject.isEmpty(getMessagesController().isUserContactBlocked(userId)));
             if (hasPrivacyCommand()) {
                 otherItem.showSubItem(bot_privacy);
             } else {
@@ -10657,7 +10668,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     starsRow = rowCount++;
                 }
                 StarsController.getInstance(currentAccount, true).getBalance();
-                if (ApplicationLoader.isBetaBuild() || ApplicationLoader.isStandaloneBuild() || ApplicationLoader.isHuaweiStoreBuild() || (StarsController.getInstance(currentAccount, true).balanceAvailable() && (StarsController.getInstance(currentAccount, true).hasTransactions() || StarsController.getInstance(currentAccount, true).getBalance().positive()))) {
+                // TODO(impulsem-unimplemented): stars and TON
+                if (ImpulseFeatures.STARS_AND_TON && (ApplicationLoader.isBetaBuild() || ApplicationLoader.isStandaloneBuild() || ApplicationLoader.isHuaweiStoreBuild() || (StarsController.getInstance(currentAccount, true).balanceAvailable() && (StarsController.getInstance(currentAccount, true).hasTransactions() || StarsController.getInstance(currentAccount, true).getBalance().positive())))) {
                     tonRow = rowCount++;
                 }
                 if (!getMessagesController().premiumFeaturesBlocked()) {
@@ -12181,8 +12193,11 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                         otherItem.addSubItem(gift_premium, R.drawable.msg_gift_premium, LocaleController.getString(R.string.ProfileSendAGift));
                         giftAction = true;
                     }
-                    otherItem.addSubItem(start_secret_chat, R.drawable.msg_secret, LocaleController.getString(R.string.StartEncryptedChat));
-                    otherItem.setSubItemShown(start_secret_chat, DialogObject.isEmpty(getMessagesController().isUserContactBlocked(userId)));
+                    // TODO(impulsem-unimplemented): secret chats
+                    if (ImpulseFeatures.SECRET_CHATS) {
+                        otherItem.addSubItem(start_secret_chat, R.drawable.msg_secret, LocaleController.getString(R.string.StartEncryptedChat));
+                        otherItem.setSubItemShown(start_secret_chat, DialogObject.isEmpty(getMessagesController().isUserContactBlocked(userId)));
+                    }
 
                     if (userInfo != null) {
                         otherItem.addSubItem(enable_no_forwards, R.drawable.menu_share_off_24, getString(R.string.DisableSharing));
@@ -12355,7 +12370,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             actionsView.set(ProfileActionsView.KEY_VIDEO, videoCallItemVisible);
             actionsView.set(ProfileActionsView.KEY_DISCUSS, discussAction);
             actionsView.set(ProfileActionsView.KEY_LEAVE, leaveAction);
-            actionsView.set(ProfileActionsView.KEY_STORY, addStoryAction);
+            // TODO(impulsem-unimplemented): stories posting
+            actionsView.set(ProfileActionsView.KEY_STORY, ImpulseFeatures.STORIES_POSTING && addStoryAction);
             actionsView.set(ProfileActionsView.KEY_VOICE_CHAT, voiceChatAction);
             actionsView.set(ProfileActionsView.KEY_STREAM, streamAction);
 
@@ -14633,7 +14649,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     new SearchResult(217, getString(R.string.Calls), "callsSectionRow", getString(R.string.DataSettings), R.drawable.msg2_data, () -> f.presentFragment(new DataSettingsActivity())),
                     new SearchResult(218, getString(R.string.VoipUseLessData), "useLessDataForCallsRow", getString(R.string.DataSettings), R.drawable.msg2_data, () -> f.presentFragment(new DataSettingsActivity())).withLink("tg://settings/data/use-less-data"),
                     new SearchResult(219, getString(R.string.VoipQuickReplies), "quickRepliesRow", getString(R.string.DataSettings), R.drawable.msg2_data, () -> f.presentFragment(new DataSettingsActivity())),
-                    new SearchResult(220, getString(R.string.ProxySettings), getString(R.string.DataSettings), R.drawable.msg2_data, () -> f.presentFragment(new ProxyListActivity())).withLink("tg://settings/data/proxy"),
+                    // TODO(impulsem-unimplemented): proxy
+                    !ImpulseFeatures.PROXY ? null : new SearchResult(220, getString(R.string.ProxySettings), getString(R.string.DataSettings), R.drawable.msg2_data, () -> f.presentFragment(new ProxyListActivity())).withLink("tg://settings/data/proxy"),
                     new SearchResult(111, getString(R.string.PrivacyDeleteCloudDrafts), "clearDraftsRow", getString(R.string.DataSettings), R.drawable.msg2_data, () -> f.presentFragment(new DataSettingsActivity())).withLink("tg://settings/privacy/data-settings/delete-cloud-drafts"),
                     new SearchResult(222, getString(R.string.SaveToGallery), "saveToGallerySectionRow", getString(R.string.DataSettings), R.drawable.msg2_data, () -> f.presentFragment(new DataSettingsActivity())),
                     new SearchResult(223, getString(R.string.SaveToGalleryPrivate), "saveToGalleryPeerRow", getString(R.string.DataSettings), getString(R.string.SaveToGallery), R.drawable.msg2_data, () -> f.presentFragment(new DataSettingsActivity())).withLink("tg://settings/data/save-to-photos/chats"),

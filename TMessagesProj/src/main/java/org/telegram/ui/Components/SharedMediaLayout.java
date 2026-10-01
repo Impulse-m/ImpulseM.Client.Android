@@ -75,6 +75,7 @@ import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
 import org.telegram.messenger.ApplicationLoader;
@@ -1998,7 +1999,7 @@ public class SharedMediaLayout extends FrameLayout implements NotificationCenter
 
                 if (tab == TAB_BOT_PREVIEWS && user != null && user.bot && user.bot_has_main_app && user.bot_can_edit && botPreviewsContainer != null) {
                     ItemOptions.makeOptions(profileActivity, photoVideoOptionsItem)
-                        .addIf(botPreviewsContainer.getItemsCount() < profileActivity.getMessagesController().botPreviewMediasMax, R.drawable.msg_addbot, getString(R.string.ProfileBotAddPreview), () -> {
+                        .addIf(ImpulseFeatures.STORIES_POSTING && botPreviewsContainer.getItemsCount() < profileActivity.getMessagesController().botPreviewMediasMax, R.drawable.msg_addbot, getString(R.string.ProfileBotAddPreview), () -> {
                             StoryRecorder.getInstance(profileActivity.getParentActivity(), profileActivity.getCurrentAccount()).openBot(dialog_id, botPreviewsContainer.getCurrentLang(), null);
                         })
                         .addIf(botPreviewsContainer.getItemsCount() > 1 && !botPreviewsContainer.isSelectedAll(), R.drawable.tabs_reorder, getString(R.string.ProfileBotReorder), () -> {
@@ -7534,6 +7535,10 @@ public class SharedMediaLayout extends FrameLayout implements NotificationCenter
                     if (isAlbum) {
                         openAddStoriesToAlbumSheet(profileActivity, dialog_id, albumId);
                     } else {
+                        // TODO(impulsem-unimplemented): stories posting
+                        if (!ImpulseFeatures.STORIES_POSTING) {
+                            return;
+                        }
                         profileActivity.getMessagesController().getMainSettings().edit().putBoolean("story_keep", true).apply();
                         StoryRecorder.getInstance(profileActivity.getParentActivity(), profileActivity.getCurrentAccount()).open(null);
                     }
@@ -7551,6 +7556,10 @@ public class SharedMediaLayout extends FrameLayout implements NotificationCenter
                 mediaPages[a].emptyView.title.setText(getString(R.string.NoArchivedStoriesTitle));
                 mediaPages[a].emptyView.subtitle.setText(isStoriesView() ? getString(R.string.NoArchivedStoriesSubtitle) : "");
                 mediaPages[a].emptyView.button.setOnClickListener(v -> {
+                    // TODO(impulsem-unimplemented): stories posting
+                    if (!ImpulseFeatures.STORIES_POSTING) {
+                        return;
+                    }
                     profileActivity.getMessagesController().getMainSettings().edit().putBoolean("story_keep", true).apply();
                     StoryRecorder.getInstance(profileActivity.getParentActivity(), profileActivity.getCurrentAccount()).open(null);
                 });

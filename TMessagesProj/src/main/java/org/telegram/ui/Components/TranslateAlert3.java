@@ -32,6 +32,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.DefaultItemAnimator;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LanguageDetector;
@@ -383,7 +384,8 @@ public class TranslateAlert3 extends BottomSheetWithRecyclerListView {
         translated = loadingText;
         translatedLoading = true;
 
-        if (summarized && dialogId != 0 && messageId != 0) {
+        // TODO(impulsem-unimplemented): AI compose (summarize)
+        if (ImpulseFeatures.AI_COMPOSE && summarized && dialogId != 0 && messageId != 0) {
             final TLRPC.TL_messages_summarizeText req = new TLRPC.TL_messages_summarizeText();
 
             req.flags |= TLObject.FLAG_0;

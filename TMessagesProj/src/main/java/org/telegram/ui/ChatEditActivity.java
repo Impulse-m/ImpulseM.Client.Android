@@ -48,6 +48,7 @@ import android.widget.ScrollView;
 
 import androidx.annotation.NonNull;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.ChatObject;
@@ -927,7 +928,8 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
                 });
             }
 
-            if (ChatObject.isChannelAndNotMegaGroup(currentChat) && ChatObject.canChangeChatInfo(currentChat)) {
+            // TODO(impulsem-unimplemented): boosts (channel appearance)
+            if (ImpulseFeatures.BOOSTS && ChatObject.isChannelAndNotMegaGroup(currentChat) && ChatObject.canChangeChatInfo(currentChat)) {
                 colorCell = new PeerColorActivity.ChangeNameColorCell(currentAccount, -currentChat.id, context, getResourceProvider());
                 colorCell.setBackground(Theme.getSelectorDrawable(true));
                 typeEditContainer.addView(colorCell, LayoutHelper.createLinear(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -1063,7 +1065,8 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
                 });
             }
 
-            if (ChatObject.isMegagroup(currentChat) && ChatObject.hasAdminRights(currentChat) && !ChatObject.isCommunity(currentChat)) {
+            // TODO(impulsem-unimplemented): boosts (group appearance)
+            if (ImpulseFeatures.BOOSTS && ChatObject.isMegagroup(currentChat) && ChatObject.hasAdminRights(currentChat) && !ChatObject.isCommunity(currentChat)) {
                 MessagesController.getInstance(currentAccount).getBoostsController().getBoostsStats(-currentChat.id, boostsStatus -> this.boostsStatus = boostsStatus);
                 colorCell = new PeerColorActivity.ChangeNameColorCell(currentAccount, -currentChat.id, context, getResourceProvider());
                 colorCell.setBackground(Theme.getSelectorDrawable(true));
@@ -1494,7 +1497,8 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
             }
         }
 
-        if (currentChat != null && currentChat.creator || currentUser != null && currentUser.bot && currentUser.bot_can_edit) {
+        // TODO(impulsem-unimplemented): communities
+        if (ImpulseFeatures.COMMUNITIES && (currentChat != null && currentChat.creator || currentUser != null && currentUser.bot && currentUser.bot_can_edit)) {
             final long linkedCommunityId = currentChat != null ? currentChat.linked_community_id : currentUser.linked_community_id;
             final long currentDialogId = currentChat != null ? -currentChat.id : currentUser.id;
             final boolean isBot = currentUser != null;

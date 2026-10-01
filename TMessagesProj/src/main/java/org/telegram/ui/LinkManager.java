@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BirthdayController;
@@ -503,6 +504,10 @@ public class LinkManager {
         }
 
         if ("chat".equalsIgnoreCase(first) && "browser".equalsIgnoreCase(second)) {
+            // TODO(impulsem-unimplemented): browser settings
+            if (!ImpulseFeatures.BROWSER_SETTINGS) {
+                return true;
+            }
             if (TextUtils.isEmpty(third)) {
                 presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC));
                 scrollTo("browserRow");
@@ -998,6 +1003,10 @@ public class LinkManager {
             }
 
             if (!TextUtils.isEmpty(third) && "proxy".equalsIgnoreCase(second)) {
+                // TODO(impulsem-unimplemented): proxy
+                if (!ImpulseFeatures.PROXY) {
+                    return true;
+                }
                 presentFragment(new ProxyListActivity());
 
                 if ("use-proxy".equalsIgnoreCase(third))
@@ -1048,7 +1057,8 @@ public class LinkManager {
             if ("use-less-data".equalsIgnoreCase(second))
                 scrollTo("useLessDataForCallsRow");
 
-            if ("proxy".equalsIgnoreCase(second))
+            // TODO(impulsem-unimplemented): proxy
+            if (ImpulseFeatures.PROXY && "proxy".equalsIgnoreCase(second))
                 scrollTo("proxyRow");
 
             return true;
@@ -1381,6 +1391,8 @@ public class LinkManager {
     }
 
     private boolean handleAiStyle(String slug) {
+        // TODO(impulsem-unimplemented): AI compose
+        if (!ImpulseFeatures.AI_COMPOSE) return true;
         if (TextUtils.isEmpty(slug)) return false;
         final TL_aicompose.getTone req = new TL_aicompose.getTone();
         final TL_aicompose.inputAiComposeToneSlug input = new TL_aicompose.inputAiComposeToneSlug();

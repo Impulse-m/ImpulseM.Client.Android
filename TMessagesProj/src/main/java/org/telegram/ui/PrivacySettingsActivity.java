@@ -37,6 +37,7 @@ import androidx.annotation.Keep;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BuildVars;
@@ -765,26 +766,37 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
         advancedSectionRow = rowCount++;
         deleteAccountRow = rowCount++;
         deleteAccountDetailRow = rowCount++;
-        botsSectionRow = rowCount++;
+        // TODO(impulsem-unimplemented): payment shipping info
+        final boolean hasWebSessions = webSessionsActivityPreload != null && webSessionsActivityPreload.getSessionsCount() > 0;
+        final boolean hasBotsRows = ImpulseFeatures.PAYMENT_SHIPPING_INFO || getUserConfig().hasSecureData || !biometryBots.isEmpty() || hasWebSessions;
+        if (hasBotsRows) {
+            botsSectionRow = rowCount++;
+        } else {
+            botsSectionRow = -1;
+        }
         if (getUserConfig().hasSecureData) {
             passportRow = rowCount++;
         } else {
             passportRow = -1;
         }
-        paymentsClearRow = rowCount++;
+        if (ImpulseFeatures.PAYMENT_SHIPPING_INFO) {
+            paymentsClearRow = rowCount++;
+        } else {
+            paymentsClearRow = -1;
+        }
         if (!biometryBots.isEmpty()) {
             botsBiometryRow = rowCount++;
         } else {
             botsBiometryRow = -1;
         }
-        if (webSessionsActivityPreload != null && webSessionsActivityPreload.getSessionsCount() > 0) {
+        if (hasWebSessions) {
             webSessionsRow = rowCount++;
             botsDetailRow = rowCount++;
             botsAndWebsitesShadowRow = -1;
         } else {
             webSessionsRow = -1;
             botsDetailRow = -1;
-            botsAndWebsitesShadowRow = rowCount++;
+            botsAndWebsitesShadowRow = hasBotsRows ? rowCount++ : -1;
         }
         contactsSectionRow = rowCount++;
         contactsDeleteRow = rowCount++;

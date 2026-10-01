@@ -50,6 +50,7 @@ import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BotWebViewVibrationEffect;
 import org.telegram.messenger.BuildConfig;
@@ -473,6 +474,10 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
             performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
         } catch (Exception ignored) {}
         if (cell.isSelf && !storiesController.hasSelfStories()) {
+            // TODO(impulsem-unimplemented): stories posting
+            if (!ImpulseFeatures.STORIES_POSTING) {
+                return;
+            }
             if (!MessagesController.getInstance(currentAccount).storiesEnabled()) {
                 showPremiumHint();
             } else {

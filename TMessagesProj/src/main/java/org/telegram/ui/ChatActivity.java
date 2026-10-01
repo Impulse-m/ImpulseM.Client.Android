@@ -133,6 +133,7 @@ import androidx.viewpager.widget.ViewPager;
 import com.google.zxing.common.detector.MathUtils;
 
 import org.telegram.PhoneFormat.PhoneFormat;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -4430,7 +4431,8 @@ public class ChatActivity extends BaseFragment implements
             if (currentChat != null && !isTopic) {
                 viewAsTopics = headerItem.lazilyAddSubItem(view_as_topics, R.drawable.msg_topics, LocaleController.getString(R.string.TopicViewAsTopics));
             }
-            if (themeDelegate.isThemeChangeAvailable(true)) {
+            // TODO(impulsem-unimplemented): chat wallpaper and theme
+            if (ImpulseFeatures.CHAT_WALLPAPER_AND_THEME && themeDelegate.isThemeChangeAvailable(true)) {
                 headerItem.lazilyAddSubItem(change_colors, R.drawable.msg_background, LocaleController.getString(R.string.SetWallpapers));
             }
             if (currentUser != null && currentUser.self && getDialogId() != UserObject.VERIFY) {
@@ -39316,7 +39318,8 @@ public class ChatActivity extends BaseFragment implements
                     arrayList = new ArrayList<>();
                     arrayList.add(messageObject);
                 }
-                final boolean includeStory = getMessagesController().storiesEnabled() && StoryEntry.canRepostMessage(messageObject);
+                // TODO(impulsem-unimplemented): stories posting
+                final boolean includeStory = ImpulseFeatures.STORIES_POSTING && getMessagesController().storiesEnabled() && StoryEntry.canRepostMessage(messageObject);
                 showDialog(new ShareAlert(getContext(), ChatActivity.this, arrayList, null, null, ChatObject.isChannel(currentChat), null, null, false, false, includeStory, null, themeDelegate) {
                     { includeStoryFromMessage = includeStory; }
                     @Override
@@ -43295,6 +43298,10 @@ public class ChatActivity extends BaseFragment implements
     }
 
     private void showChatThemeBottomSheet() {
+        // TODO(impulsem-unimplemented): chat wallpaper and theme
+        if (!ImpulseFeatures.CHAT_WALLPAPER_AND_THEME) {
+            return;
+        }
         if (currentChat != null) {
             if (ChatObject.isMegagroup(currentChat)) {
                 if (ChatObject.hasAdminRights(currentChat)) {
