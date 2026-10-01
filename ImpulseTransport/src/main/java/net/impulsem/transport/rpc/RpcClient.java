@@ -142,6 +142,9 @@ public final class RpcClient {
         String path,
         byte[] protoRequest
     ) throws IOException {
+        if (tokens.needsProactiveRefresh() && !tokens.refreshBlocking()) {
+            throw new SessionLostException(path + " failed: session expired before the call", new RpcError(401, "SESSION_EXPIRED"));
+        }
         boolean retried = false;
         while (true) {
             Call call = grpc.newCall(path, protoRequest, headers(null));

@@ -591,4 +591,34 @@ public class RpcClientTest {
         assertEquals("pend", tokens.bearer());
         assertEquals("new", store.tokens.accessToken);
     }
+
+
+    @Test
+    public void callImpulseRefreshesAnExpiredTokenBeforeSending() throws Exception {
+        store.tokens = new SessionTokens("h.eyJleHAiOjE2OTk5OTAwMDB9.s", "r1", 5L);
+        build();
+        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        server.enqueue(ok(utf8("x")));
+
+        assertArrayEquals(utf8("x"), client.callImpulse(TokenPath, new byte[0]));
+
+        assertEquals("/impulse.auth.AuthService/RefreshSession", server.takeRequest().getPath());
+        RecordedRequest request = server.takeRequest();
+        assertEquals(TokenPath, request.getPath());
+        assertEquals("Bearer new", request.getHeader("authorization"));
+    }
+
+
+    @Test
+    public void callImpulseSessionLostWhenExpiredTokenRefreshIsRejected() throws Exception {
+        store.tokens = new SessionTokens("h.eyJleHAiOjE2OTk5OTAwMDB9.s", "r1", 5L);
+        build();
+        server.enqueue(error(16, "SESSION_EXPIRED"));
+        try {
+            client.callImpulse(TokenPath, new byte[0]);
+            fail("expected SessionLostException");
+        } catch (SessionLostException expected) {
+            assertEquals(1, server.getRequestCount());
+        }
+    }
 }
