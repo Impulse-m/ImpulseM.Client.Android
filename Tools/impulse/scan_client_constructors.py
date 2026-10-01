@@ -5,7 +5,9 @@ alias or a supported upgrade (see gen_tl_proto_map.py), or when it is on the exp
 below with a reason. The check covers every class of TLRPC.java and tgnet/tl/*.java that is
 instantiated (`new TL_xxx(` or `TL_xxx::new`) outside org/telegram/tgnet/.
 
-Usage: python Tools/impulse/scan_client_constructors.py   (exit code 1 when anything is unhandled)
+Usage: python Tools/impulse/scan_client_constructors.py [--check]
+The exit code is 1 when anything is unhandled. --check prints only the failures (used by the Gradle
+task :ImpulseTransport:checkClientConstructors, which :TMessagesProj:preBuild depends on).
 """
 import collections
 import gzip
@@ -105,16 +107,30 @@ def parse_classes() -> List[Dict[str, Any]]:
         for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):
             match: Optional[re.Match] = CLASS_RE.match(line)
             if match:
-                current = {"name": match.group(1), "constructor": None, "file": path.name}
+                current = {"name": match.group(1), "constructors": [], "file": path.name}
                 classes.append(current)
                 continue
-            if current is None or current["constructor"] is not None:
+            if current is None:
                 continue
             found: Optional[re.Match] = CONSTRUCTOR_RE.search(line)
             if found:
                 raw: str = found.group(1)
-                current["constructor"] = to_u32(int(raw, 16 if "0x" in raw else 10))
-    return [c for c in classes if c["constructor"] is not None]
+                current["constructors"].append(to_u32(int(raw, 16 if "0x" in raw else 10)))
+    # Self-check: a constructor id is attributed to the nearest class header above it. A class
+    # declaration the header regex misses (for example one spanning several lines) would make the
+    # previous class own two ids, so this fails loudly instead of attributing ids to the wrong class.
+    for cls in classes:
+        if len(cls["constructors"]) > 1:
+            raise RuntimeError(
+                "class %s in %s has %d constructor ids (%s): a class declaration was probably not recognised"
+                % (cls["name"], cls["file"], len(cls["constructors"]), ", ".join("0x%08x" % c for c in cls["constructors"]))
+            )
+    result: List[Dict[str, Any]] = []
+    for cls in classes:
+        if cls["constructors"]:
+            cls["constructor"] = cls["constructors"][0]
+            result.append(cls)
+    return result
 
 
 def count_instantiations() -> "collections.Counter[str]":
@@ -158,7 +174,19 @@ def scan() -> Dict[str, Any]:
 
 
 def main() -> int:
+    quiet: bool = "--check" in sys.argv[1:]
     result: Dict[str, Any] = scan()
+    if quiet:
+        for name in result["stale"]:
+            print("stale allow-list entry (no longer needed): %s" % name)
+        for entry in result["unhandled"]:
+            print("unhandled TL class: %(name)s %(id)s used %(uses)d times: %(problem)s" % entry)
+        if result["unhandled"]:
+            print("The client uses TL constructors that ImpulseM cannot accept. Add a legacy upgrade or an")
+            print("allow-list entry with a reason in Tools/impulse/scan_client_constructors.py.")
+        else:
+            print("client constructor guard: %d classes checked, 0 unhandled" % result["checked"])
+        return 1 if result["unhandled"] or result["stale"] else 0
     print("instantiated classes checked: %d" % result["checked"])
     print("allow-listed: %d" % len(result["allowed"]))
     for name in result["allowed"]:

@@ -22,3 +22,46 @@ test {
         exceptionFormat 'full'
     }
 }
+
+
+// Build-time guard: every TL class the client instantiates must be handled by the transport
+// (layer 229, a legacy upgrade, or the documented allow-list). See Tools/impulse/scan_client_constructors.py.
+// :TMessagesProj:preBuild depends on this task. Run it alone with: ./gradlew :ImpulseTransport:checkClientConstructors
+def findPython = {
+    for (String name : ['python', 'python3']) {
+        try {
+            Process probe = new ProcessBuilder(name, '--version').redirectErrorStream(true).start()
+            probe.inputStream.text
+            if (probe.waitFor() == 0) {
+                return name
+            }
+        } catch (IOException ignored) {
+        }
+    }
+    return null
+}
+
+tasks.register('checkClientConstructors', Exec) {
+    group = 'verification'
+    description = 'Fails when the client uses TL constructors that the ImpulseM transport cannot accept.'
+    def root = rootProject.projectDir
+    def marker = layout.buildDirectory.file('checkClientConstructors.ok')
+    inputs.files(fileTree("${root}/TMessagesProj/src/main/java/org/telegram/tgnet"))
+    inputs.files(fileTree("${root}/TMessagesProj/src/main/java").include('**/*.java'))
+    inputs.file("${root}/Tools/impulse/scan_client_constructors.py")
+    inputs.file("${root}/ImpulseTransport/src/main/resources/impulse/tl-proto-229.json.gz")
+    inputs.file("${root}/TMessagesProj_AppTests/tlscheme/229.json")
+    outputs.file(marker)
+    workingDir = root
+    doFirst {
+        String python = findPython()
+        if (python == null) {
+            throw new GradleException('checkClientConstructors needs Python 3 on the PATH (tried "python" and "python3"). '
+                + 'Install it, or skip the guard with -x :ImpulseTransport:checkClientConstructors.')
+        }
+        commandLine python, 'Tools/impulse/scan_client_constructors.py', '--check'
+    }
+    doLast {
+        marker.get().asFile.text = 'ok'
+    }
+}

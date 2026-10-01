@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 
@@ -22,19 +23,15 @@ import java.util.Map;
  * shared params are copied (with the int to double, int to long, Vector of int to Vector of
  * InputMessage and T to Vector of T adapters), params only in 229 are absent when conditional and zero otherwise, and
  * params only in the legacy layout are dropped. Any other kind change throws a TranscodeException.
+ *
+ * Known limitations: a 229-only unconditional object param gets an arbitrary zero-param constructor of
+ * its type (the "...Empty" one when there is one), which may not be a meaningful value. The langpack
+ * requests are upgraded with an empty lang_pack string; langpack is out of scope of the port. The
+ * build-time guard (Tools/impulse/scan_client_constructors.py) stops other old ids from being used
+ * unnoticed.
  * Instances are stateless and thread-safe.
  */
 public final class TlUpgrader {
-
-    private static final int BoolTrue = 0x997275b5;
-    private static final int BoolFalse = 0xbc799737;
-    private static final int VectorId = 0x1cb5c415;
-    private static final int MaxDepth = 256;
-    private static final String InputMessageType = "InputMessage";
-    private static final String InputMessageIdPredicate = "inputMessageID";
-
-    private final TlProtoSchema schema;
-
 
     /** A parsed object in the layout of {@code params}. Values are keyed by param name; absent means not present. */
     private static final class Node {
@@ -52,6 +49,16 @@ public final class TlUpgrader {
             this.params = params;
         }
     }
+
+
+    private static final int BoolTrue = 0x997275b5;
+    private static final int BoolFalse = 0xbc799737;
+    private static final int VectorId = 0x1cb5c415;
+    private static final int MaxDepth = 256;
+    private static final String InputMessageType = "InputMessage";
+    private static final String InputMessageIdPredicate = "inputMessageID";
+
+    private final TlProtoSchema schema;
 
 
     public TlUpgrader(TlProtoSchema schema) {
@@ -397,7 +404,7 @@ public final class TlUpgrader {
         if (spec.kind == ParamSpec.Kind.OBJECT) {
             return spec.typeName;
         }
-        return spec.kind.name().toLowerCase(java.util.Locale.ROOT);
+        return spec.kind.name().toLowerCase(Locale.ROOT);
     }
 
 

@@ -29,6 +29,7 @@ public class TlUpgraderTest {
     private static final int VideoAttributeLegacy = 0x0ef02ce6;
     private static final int ContactsGetContactsLegacy = 0x22c6aa08;
     private static final int CreateThemeLegacy = 0x8432c21f;
+    private static final int DeleteChatLegacy = 0x83247d11;
     private static final int InvokeWithLayer = -627372787;
 
     private final TlProtoSchema schema = TlProtoSchema.load();
@@ -165,6 +166,11 @@ public class TlUpgraderTest {
     private static TlBuilder uploadedDocument(Object attribute) {
         List<Object> attributes = new ArrayList<Object>();
         attributes.add(attribute);
+        return uploadedDocumentWith(attributes);
+    }
+
+
+    private static TlBuilder uploadedDocumentWith(List<Object> attributes) {
         return TlBuilder.object("inputMediaUploadedDocument")
             .put("file", TlBuilder.object("inputFile")
                 .put("id", 1L)
@@ -256,6 +262,36 @@ public class TlUpgraderTest {
             .put("settings", one)
             .toBytes();
         assertArrayEquals(current, upgrader.upgradeRequest(legacy));
+        assertEncodesAs(legacy, current);
+    }
+
+
+    @Test
+    public void intBecomesLongAndNegativeValuesAreSignExtended() {
+        // messages.deleteChat#83247d11 took chat_id:int, layer 229 takes chat_id:long.
+        for (int chatId : new int[] {123456, -5, Integer.MIN_VALUE}) {
+            byte[] legacy = TlBuilder.legacyMethod(DeleteChatLegacy).put("chat_id", chatId).toBytes();
+            byte[] current = TlBuilder.method("messages.deleteChat").put("chat_id", (long) chatId).toBytes();
+            byte[] upgraded = upgrader.upgradeRequest(legacy);
+            assertArrayEquals(current, upgraded);
+            TlReader reader = new TlReader(upgraded, 0, upgraded.length);
+            reader.readInt32();
+            assertEquals((long) chatId, reader.readInt64());
+            assertEncodesAs(legacy, current);
+        }
+    }
+
+
+    @Test
+    public void legacyObjectFollowedByMoreDataKeepsTheReaderPosition() {
+        List<Object> attributes = new ArrayList<Object>();
+        attributes.add(TlBuilder.legacyObject(VideoAttributeLegacy).put("duration", 12).put("w", 640).put("h", 480));
+        attributes.add(TlBuilder.object("documentAttributeFilename").put("file_name", "v.mp4"));
+        List<Object> currentAttributes = new ArrayList<Object>();
+        currentAttributes.add(TlBuilder.object("documentAttributeVideo").put("duration", 12.0).put("w", 640).put("h", 480));
+        currentAttributes.add(TlBuilder.object("documentAttributeFilename").put("file_name", "v.mp4"));
+        byte[] legacy = uploadMediaWith(uploadedDocumentWith(attributes).put("ttl_seconds", 60));
+        byte[] current = uploadMediaWith(uploadedDocumentWith(currentAttributes).put("ttl_seconds", 60));
         assertEncodesAs(legacy, current);
     }
 
