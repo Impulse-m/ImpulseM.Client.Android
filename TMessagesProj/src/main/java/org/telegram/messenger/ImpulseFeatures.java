@@ -39,6 +39,9 @@ public final class ImpulseFeatures {
     // TODO(impulsem-unimplemented): MTProto and SOCKS proxies, the transport is gRPC-Web
     public static final boolean PROXY = false;
 
+    // TODO(impulsem-unimplemented): Ask a Question / FAQ / Privacy Policy point at Telegram support and telegram.org
+    public static final boolean HELP_SECTION = false;
+
 
     private ImpulseFeatures() {
     }
