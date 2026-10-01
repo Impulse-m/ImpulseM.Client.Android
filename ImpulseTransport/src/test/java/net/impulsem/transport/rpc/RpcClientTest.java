@@ -47,6 +47,7 @@ public class RpcClientTest {
     private static final int AuthSignInId = -1923962543;
     private static final int InvokeWithTakeoutId = -1398145746;
     private static final int AuthorizationId = 782418132;
+    private static final int GetContactIdsId = 2061264541;
 
     private static final class MemoryStore implements SessionStore {
 
@@ -211,6 +212,50 @@ public class RpcClientTest {
         assertNotNull(outcome.error);
         assertEquals("AUTH_KEY_UNREGISTERED", outcome.error.text);
         assertEquals(3, server.getRequestCount());
+    }
+
+
+    @Test
+    public void persistentAuthKeyUnregisteredAfterRefreshForcesLogout() throws Exception {
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+
+        RpcOutcome outcome = client.callBlocking(resetAuthorizations());
+
+        assertTrue(outcome.forceLogout);
+        assertEquals("AUTH_KEY_UNREGISTERED", outcome.error.text);
+    }
+
+
+    @Test
+    public void callImpulsePersistentAuthKeyUnregisteredThrowsSessionLost() throws Exception {
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        try {
+            client.callImpulse(TokenPath, new byte[0]);
+            fail("expected SessionLostException");
+        } catch (SessionLostException expected) {
+            assertEquals("AUTH_KEY_UNREGISTERED", expected.error.text);
+        }
+    }
+
+
+    @Test
+    public void undecodableResponseIsDeliveredAsTranscodeFailedWithoutIoException() throws Exception {
+        server.enqueue(ok(new byte[] {(byte) 0x0A, (byte) 0x7F, 1, 2}));
+        TlWriter request = new TlWriter();
+        request.writeInt32(GetContactIdsId);
+        request.writeInt64(0L);
+
+        RpcOutcome outcome = client.callBlocking(request.toByteArray());
+
+        assertNull(outcome.tlResult);
+        assertFalse(outcome.forceLogout);
+        assertEquals(400, outcome.error.code);
+        assertEquals("TRANSCODE_FAILED", outcome.error.text);
+        assertEquals(1, server.getRequestCount());
     }
 
 

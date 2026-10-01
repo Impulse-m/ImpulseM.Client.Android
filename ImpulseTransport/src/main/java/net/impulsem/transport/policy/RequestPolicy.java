@@ -116,8 +116,8 @@ public final class RequestPolicy {
             return ignoreFloodWait ? DeliverAsIs : retryAfter(2000L);
         }
 
-        // 1352-1367
-        if (failServerErrors && (code == 500 || code < 0)) {
+        // 1352-1367. 503 is gRPC UNAVAILABLE, a microservice mid-redeploy; it is transient like a 500.
+        if (failServerErrors && (code == 500 || code == 503 || code < 0)) {
             if (text.contains("MSG_WAIT_FAILED")) {
                 return retryAfter(0L);
             }

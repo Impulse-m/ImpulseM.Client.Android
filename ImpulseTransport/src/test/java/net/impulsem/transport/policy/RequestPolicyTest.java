@@ -126,6 +126,28 @@ public class RequestPolicyTest {
     }
 
 
+    // gRPC UNAVAILABLE (503) is a redeploying microservice: treated like a 500.
+    @Test
+    public void unavailableBacksOffLikeServerError() {
+        RequestPolicy.Decision decision = RequestPolicy.onError(0, Generic, new RpcError(503, "UNAVAILABLE"), 3);
+        assertEquals(RequestPolicy.Action.RETRY_AFTER, decision.action);
+        assertEquals(3000L, decision.delayMillis);
+        assertEquals(10000L, RequestPolicy.onError(0, Generic, new RpcError(503, "UNAVAILABLE"), 50).delayMillis);
+    }
+
+
+    @Test
+    public void unavailableWithFailOnServerErrorsIsDelivered() {
+        RequestPolicy.Decision decision = RequestPolicy.onError(
+            RequestPolicy.FLAG_FAIL_ON_SERVER_ERRORS,
+            Generic,
+            new RpcError(503, "UNAVAILABLE"),
+            0
+        );
+        assertEquals(RequestPolicy.Action.DELIVER, decision.action);
+    }
+
+
     // ConnectionsManager.cpp 1344-1350: AUTH_RESTART is processed even when FailOnServerErrors is set.
     @Test
     public void authRestartRetriesEvenWithFailOnServerErrors() {

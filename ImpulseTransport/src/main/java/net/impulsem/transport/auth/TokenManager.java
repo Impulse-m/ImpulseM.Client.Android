@@ -48,6 +48,8 @@ public final class TokenManager {
     private boolean lastRefreshResult;
     private IOException lastRefreshFailure;
 
+    private long clearGeneration;
+
     private volatile SessionTokens tokens;
     private volatile Pending pending;
     private volatile String qrTicket;
@@ -90,11 +92,21 @@ public final class TokenManager {
     }
 
 
-    /** Persists a refreshed pair. Unlike onLoginTokens it leaves an active pending 2FA token alone. */
-    private void onRefreshedTokens(SessionTokens value) {
+    /**
+     * Persists a refreshed pair. Unlike onLoginTokens it leaves an active pending 2FA token alone.
+     * Returns false and stores nothing when clear() ran since the refresh began.
+     */
+    private boolean onRefreshedTokens(
+        SessionTokens value,
+        long expectedClearGeneration
+    ) {
         synchronized (this) {
+            if (clearGeneration != expectedClearGeneration) {
+                return false;
+            }
             tokens = value;
             store.save(value);
+            return true;
         }
     }
 
@@ -139,6 +151,7 @@ public final class TokenManager {
 
     public void clear() {
         synchronized (this) {
+            clearGeneration++;
             store.clear();
             tokens = null;
             pending = null;
@@ -218,7 +231,12 @@ public final class TokenManager {
 
 
     private boolean doRefresh() throws IOException {
-        SessionTokens current = tokens;
+        long startedClearGeneration;
+        SessionTokens current;
+        synchronized (this) {
+            startedClearGeneration = clearGeneration;
+            current = tokens;
+        }
         if (current == null || current.refreshToken == null) {
             return false;
         }
@@ -246,8 +264,11 @@ public final class TokenManager {
             throw new IOException("RefreshSession response has no tokens");
         }
         long userId = authorization.userId != 0 ? authorization.userId : current.userId;
-        onRefreshedTokens(new SessionTokens(authorization.sessionToken, authorization.refreshToken, userId));
-        return true;
+        // False means the session was cleared while the request was on the wire; the new tokens are dropped.
+        return onRefreshedTokens(
+            new SessionTokens(authorization.sessionToken, authorization.refreshToken, userId),
+            startedClearGeneration
+        );
     }
 
 

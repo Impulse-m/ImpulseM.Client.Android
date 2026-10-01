@@ -324,4 +324,36 @@ public class TokenManagerTest {
         manager = newManager();
         assertFalse(manager.needsProactiveRefresh());
     }
+
+
+    @Test
+    public void refreshCompletingAfterClearDoesNotRestoreTheSession() throws Exception {
+        final CountDownLatch requestSeen = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        server.setDispatcher(new okhttp3.mockwebserver.Dispatcher() {
+            @Override
+            public okhttp3.mockwebserver.MockResponse dispatch(RecordedRequest request) throws InterruptedException {
+                requestSeen.countDown();
+                release.await(10, TimeUnit.SECONDS);
+                return ok(authorizationProto(42L, "access-2", "refresh-2"));
+            }
+        });
+        ExecutorService pool = Executors.newFixedThreadPool(1);
+        Future<Boolean> refresh = pool.submit(new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                return manager.refreshBlocking();
+            }
+        });
+        assertTrue(requestSeen.await(5, TimeUnit.SECONDS));
+
+        manager.clear();
+        release.countDown();
+
+        assertFalse(refresh.get(10, TimeUnit.SECONDS));
+        pool.shutdown();
+        assertNull(store.tokens);
+        assertFalse(manager.hasSession());
+        assertNull(manager.bearer());
+    }
 }

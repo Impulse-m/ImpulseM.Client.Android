@@ -3,6 +3,8 @@ package net.impulsem.transport.rpc;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.CaptureSink;
 import net.impulsem.transport.codec.EncodedRequest;
@@ -25,6 +27,8 @@ import okhttp3.Request;
 
 /** Runs one TL call over gRPC-Web: transcode, authenticate, map errors, refresh and retry, capture login tokens. */
 public final class RpcClient {
+
+    private static final Logger Log = Logger.getLogger(RpcClient.class.getName());
 
     private static final String HeaderAuthorization = "authorization";
     private static final String HeaderQrTicket = "x-impulse-qr-exporter-ticket";
@@ -114,8 +118,12 @@ public final class RpcClient {
         }
         checkCanceled(active);
         RpcOutcome second = attemptOnce(active, build(encoded), encoded);
-        if (second.error != null && RpcErrors.classify(second.error) == AuthErrorClass.FORCE_LOGOUT) {
-            return new RpcOutcome(null, second.error, true);
+        if (second.error != null) {
+            AuthErrorClass secondClass = RpcErrors.classify(second.error);
+            // Still unregistered right after a refresh: the session is dead, refreshing again only burns the rotating token.
+            if (secondClass == AuthErrorClass.FORCE_LOGOUT || secondClass == AuthErrorClass.REFRESH_AND_RETRY) {
+                return new RpcOutcome(null, second.error, true);
+            }
         }
         return second;
     }
@@ -159,11 +167,11 @@ public final class RpcClient {
             if (errorClass == AuthErrorClass.FORCE_LOGOUT) {
                 throw new SessionLostException(path + " failed: " + error, error);
             }
-            if (errorClass == AuthErrorClass.REFRESH_AND_RETRY && !retried) {
-                retried = true;
-                if (!sessionRefreshed(sentAuthorization)) {
+            if (errorClass == AuthErrorClass.REFRESH_AND_RETRY) {
+                if (retried || !sessionRefreshed(sentAuthorization)) {
                     throw new SessionLostException(path + " failed: " + error, error);
                 }
+                retried = true;
                 continue;
             }
             throw new IOException(path + " failed: " + error);
@@ -273,7 +281,9 @@ public final class RpcClient {
                 }
             );
         } catch (TranscodeException e) {
-            throw new IOException("cannot decode response: " + e.getMessage(), e);
+            // The server already executed the call, so a retry would repeat it; deliver once.
+            Log.log(Level.WARNING, "cannot decode response of " + encoded.path + ": " + e.getMessage(), e);
+            return new RpcOutcome(null, new RpcError(400, "TRANSCODE_FAILED"), false);
         }
         if (captured[0] != null && captured[1] != null) {
             tokens.onLoginTokens(captured[0], captured[1], extractUserId(encoded.methodId, response.body));
