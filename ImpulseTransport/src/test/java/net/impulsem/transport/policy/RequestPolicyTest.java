@@ -249,4 +249,31 @@ public class RequestPolicyTest {
         assertFalse(RequestPolicy.mustWaitForLogin(0, true));
         assertFalse(RequestPolicy.mustWaitForLogin(RequestPolicy.FLAG_WITHOUT_LOGIN, true));
     }
+
+
+    // ConnectionsManager.cpp 1405-1408: a premium flood wait is reported to the app and retried.
+    @Test
+    public void premiumFloodWaitIsFlaggedOnlyForPremiumWaits() {
+        assertTrue(RequestPolicy.onError(0, Generic, new RpcError(420, "FLOOD_PREMIUM_WAIT_7"), 0).premiumFloodWait);
+        assertFalse(RequestPolicy.onError(0, Generic, new RpcError(420, "FLOOD_WAIT_7"), 0).premiumFloodWait);
+        assertFalse(RequestPolicy.onError(0, Generic, new RpcError(500, "INTERNAL"), 0).premiumFloodWait);
+    }
+
+
+    // ConnectionsManager.cpp 3051-3075: waiters go once a user is set; here also once the session exists.
+    @Test
+    public void loginWaitersAreReleasedWhenUserAndSessionExist() {
+        assertTrue(RequestPolicy.canReleaseLoginWaiters(5L, true));
+        assertFalse(RequestPolicy.canReleaseLoginWaiters(0L, true));
+        assertFalse(RequestPolicy.canReleaseLoginWaiters(5L, false));
+        assertFalse(RequestPolicy.canReleaseLoginWaiters(0L, false));
+    }
+
+
+    // ConnectionsManager.cpp 1527-1531: logout only when currentUserId != 0.
+    @Test
+    public void forcedLogoutAppliesOnlyToALoggedInUser() {
+        assertTrue(RequestPolicy.shouldForceLogout(5L));
+        assertFalse(RequestPolicy.shouldForceLogout(0L));
+    }
 }

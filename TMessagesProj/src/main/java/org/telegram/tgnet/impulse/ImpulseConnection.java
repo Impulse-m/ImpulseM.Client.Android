@@ -188,10 +188,17 @@ public final class ImpulseConnection {
     /** Starts the tick and the config refresh. Never touches the native connection layer. */
     public void start(long userId) {
         boolean stale;
+        boolean alreadyStarted;
         synchronized (lock) {
             this.userId = userId;
-            this.started = true;
-            stale = userId != 0 && !tokens.hasSession();
+            alreadyStarted = started;
+            started = true;
+            stale = !alreadyStarted && userId != 0 && !tokens.hasSession();
+        }
+        if (alreadyStarted) {
+            // A second start only refreshes the user; the tick and config tasks already run.
+            releaseLoginWaiters();
+            return;
         }
         log("start user=" + userId + " session=" + tokens.hasSession());
         executor.execute(new Runnable() {
@@ -218,6 +225,7 @@ public final class ImpulseConnection {
                 fetchConfig();
             }
         }, 0L, ConfigRefreshMillis, TimeUnit.MILLISECONDS);
+        releaseLoginWaiters();
         if (stale) {
             // The app thinks it is logged in but there is no ImpulseM session to authenticate with.
             log("stored user without a session, logging out");
@@ -365,25 +373,16 @@ public final class ImpulseConnection {
 
 
     public void setUserId(long id) {
-        List<Pending> released = null;
         boolean changed;
         synchronized (lock) {
             changed = userId != id;
             userId = id;
-            if (id != 0 && isLoggedInLocked() && !loginWaiting.isEmpty()) {
-                released = new ArrayList<>(loginWaiting);
-                loginWaiting.clear();
-            }
         }
         if (id != 0) {
             logoutPosted.set(false);
         }
         log("setUserId " + id);
-        if (released != null) {
-            for (int a = 0; a < released.size(); a++) {
-                dispatch(released.get(a));
-            }
-        }
+        releaseLoginWaiters();
         if (changed && id != 0) {
             fetchConfig();
         }
@@ -487,6 +486,23 @@ public final class ImpulseConnection {
             rpc = new RpcClient(transcoder, grpc, tokens);
         }
         return rpc;
+    }
+
+
+    /** Sends the requests that wait for a login if a user and a session exist now. Safe to call any time. */
+    private void releaseLoginWaiters() {
+        List<Pending> released = null;
+        synchronized (lock) {
+            if (!loginWaiting.isEmpty() && RequestPolicy.canReleaseLoginWaiters(userId, tokens.hasSession())) {
+                released = new ArrayList<>(loginWaiting);
+                loginWaiting.clear();
+            }
+        }
+        if (released != null) {
+            for (int a = 0; a < released.size(); a++) {
+                dispatch(released.get(a));
+            }
+        }
     }
 
 
@@ -609,6 +625,7 @@ public final class ImpulseConnection {
             lastPingMillis = (int) Math.min(SystemClock.elapsedRealtime() - startTime, Integer.MAX_VALUE);
         }
         setState(ConnectionStateConnected);
+        releaseLoginWaiters();
         ConnectionsManager.onBytesSent(entry.data.length, ApplicationLoader.getCurrentNetworkType(), account);
         if (outcome.error == null) {
             ConnectionsManager.onBytesReceived(outcome.tlResult.length, ApplicationLoader.getCurrentNetworkType(), account);
@@ -628,12 +645,28 @@ public final class ImpulseConnection {
         RequestPolicy.Decision decision = RequestPolicy.onError(entry.flags, entry.connectionType, error, pending.serverFailures);
         log("token " + entry.token + " error " + error.code + " " + error.text + " -> " + decision.action);
         if (outcome.forceLogout || decision.action == RequestPolicy.Action.LOGOUT_AND_DELIVER) {
-            tokens.clear();
-            finishError(pending, error.code, error.text);
-            postLogout();
+            boolean loggedIn;
+            synchronized (lock) {
+                loggedIn = RequestPolicy.shouldForceLogout(userId);
+            }
+            if (loggedIn) {
+                tokens.clear();
+                finishError(pending, error.code, error.text);
+                postLogout();
+            } else {
+                // Not logged in (login flow): deliver only, an active pending 2FA token must stay.
+                finishError(pending, error.code, error.text);
+            }
             return;
         }
         if (decision.action == RequestPolicy.Action.RETRY_AFTER) {
+            if (decision.premiumFloodWait) {
+                ConnectionsManager.onPremiumFloodWait(
+                    account,
+                    entry.token,
+                    (entry.connectionType & ConnectionsManager.ConnectionTypeUpload) != 0
+                );
+            }
             pending.serverFailures++;
             scheduleRun(pending, decision.delayMillis, false);
             return;
