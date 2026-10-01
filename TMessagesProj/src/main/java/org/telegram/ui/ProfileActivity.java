@@ -3758,9 +3758,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
 
                     int a = getSelectedTab() - SharedMediaLayout.TAB_STORIES;
                     if (a < 0 || a > 1) return;
+                    // TODO(impulsem-unimplemented): stories posting
                     bottomButtonContainer[a]
                             .animate()
-                            .translationY(show || a == 0 && MessagesController.getInstance(currentAccount).storiesEnabled() ? 0 : dp(72))
+                            .translationY(show || a == 0 && ImpulseFeatures.STORIES_POSTING && MessagesController.getInstance(currentAccount).storiesEnabled() ? 0 : dp(72))
                             .setDuration(320)
                             .setInterpolator(CubicBezierInterpolator.EASE_OUT_QUINT)
                             .setUpdateListener(anm -> updateBottomButtonY())
