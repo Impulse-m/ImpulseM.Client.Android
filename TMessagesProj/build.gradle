@@ -168,6 +168,9 @@ android {
             buildConfigField "boolean", "DEBUG_PRIVATE_VERSION", "true"
             buildConfigField "boolean", "BUNDLE", "false"
             buildConfigField "int", "VERSION_NUM", "0"
+            ndk {
+                abiFilters.addAll(IMPULSEM_DEBUG_ABIS.split(',').collect { it.trim() })
+            }
         }
 
         HA_private {
