@@ -86,6 +86,7 @@ public final class ImpulseConnection {
         boolean waitingRetry;
         int serverFailures;
         int networkFailures;
+        String method = "?";
         Call call;
         ScheduledFuture<?> timer;
 
@@ -647,6 +648,7 @@ public final class ImpulseConnection {
                 return;
             }
             pending.call = call;
+            pending.method = call.request().url().encodedPath();
         }
         ConnectionsManager.onRequestWriteToSocket(account, entry.token);
         long startTime = SystemClock.elapsedRealtime();
@@ -689,7 +691,7 @@ public final class ImpulseConnection {
         RpcError error = outcome.error;
         RequestEntry entry = pending.entry;
         RequestPolicy.Decision decision = RequestPolicy.onError(entry.flags, entry.connectionType, error, pending.serverFailures);
-        log("token " + entry.token + " error " + error.code + " " + error.text + " -> " + decision.action);
+        log("token " + entry.token + " " + pending.method + " error " + error.code + " " + error.text + " -> " + decision.action);
         if (outcome.forceLogout || decision.action == RequestPolicy.Action.LOGOUT_AND_DELIVER) {
             boolean loggedIn;
             synchronized (lock) {
@@ -733,7 +735,7 @@ public final class ImpulseConnection {
         }
         RequestEntry entry = pending.entry;
         pending.networkFailures++;
-        log("token " + entry.token + " network failure " + pending.networkFailures + ": " + failure);
+        log("token " + entry.token + " " + pending.method + " network failure " + pending.networkFailures + ": " + failure);
         setState(ApplicationLoader.isNetworkOnline() ? ConnectionStateConnecting : ConnectionStateWaitingForNetwork);
         RequestPolicy.Decision decision = RequestPolicy.onNetworkFailure(entry.flags, entry.connectionType, pending.networkFailures);
         if (decision.action == RequestPolicy.Action.RETRY_AFTER) {
