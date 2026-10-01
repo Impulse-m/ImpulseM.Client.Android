@@ -161,6 +161,24 @@ public class GrpcWebClientTest {
     }
 
 
+    // gRPC HTTP-to-status rule: HTTP 404 is UNIMPLEMENTED (12).
+    @Test
+    public void http404IsUnimplemented() throws Exception {
+        enqueue(404, "not found".getBytes(StandardCharsets.UTF_8));
+        GrpcWebResponse response = run(new byte[0]);
+        assertEquals(12, response.grpcStatus);
+        assertEquals(0, response.body.length);
+        assertNull(response.metadata.get("error-code"));
+    }
+
+
+    @Test(expected = IOException.class)
+    public void http429StillThrows() throws Exception {
+        enqueue(429, new byte[0]);
+        run(new byte[0]);
+    }
+
+
     @Test(expected = IOException.class)
     public void missingGrpcStatusThrows() throws Exception {
         enqueue(200, frame(0, new byte[] {1}));

@@ -22,6 +22,7 @@ public final class GrpcWebClient {
     private static final MediaType CONTENT_TYPE = MediaType.get("application/grpc-web+proto");
     private static final Charset UTF8 = Charset.forName("UTF-8");
     private static final int TRAILER_FLAG = 0x80;
+    private static final int GRPC_UNIMPLEMENTED = 12;
 
     private final OkHttpClient http;
     private final HttpUrl baseUrl;
@@ -80,6 +81,14 @@ public final class GrpcWebClient {
 
     public GrpcWebResponse execute(Call call) throws IOException {
         try (Response response = call.execute()) {
+            if (response.code() == 404) {
+                // gRPC HTTP-to-status rule: HTTP 404 is UNIMPLEMENTED. The stand answers a plain 404
+                // for every method of a service the backend does not register.
+                Map<String, String> notFound = new HashMap<String, String>();
+                putAll(notFound, response.headers());
+                notFound.put("grpc-status", String.valueOf(GRPC_UNIMPLEMENTED));
+                return new GrpcWebResponse(GRPC_UNIMPLEMENTED, null, notFound, new byte[0]);
+            }
             if (response.code() != 200) {
                 throw new IOException("HTTP " + response.code() + " " + response.message());
             }

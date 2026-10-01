@@ -58,6 +58,33 @@ public class RpcErrorsTest {
 
 
     @Test
+    public void unimplementedWithoutErrorCodeIsMethodInvalid() {
+        RpcError error = RpcErrors.fromResponse(response(12, null));
+        assertEquals(400, error.code);
+        assertEquals("METHOD_INVALID", error.text);
+        RpcError withMessage = RpcErrors.fromResponse(response(12, "no such method"));
+        assertEquals(400, withMessage.code);
+        assertEquals("METHOD_INVALID", withMessage.text);
+    }
+
+
+    @Test
+    public void unimplementedWithMethodInvalidErrorCodeIs400() {
+        RpcError error = RpcErrors.fromResponse(response(12, null, "error-code", "METHOD_INVALID"));
+        assertEquals(400, error.code);
+        assertEquals("METHOD_INVALID", error.text);
+    }
+
+
+    @Test
+    public void unimplementedWithOtherErrorCodeKeepsServerTextAnd501() {
+        RpcError error = RpcErrors.fromResponse(response(12, null, "error-code", "FEATURE_OFF"));
+        assertEquals(501, error.code);
+        assertEquals("FEATURE_OFF", error.text);
+    }
+
+
+    @Test
     public void failedPreconditionWithoutMigrateDcIs406() {
         assertMapped(9, 406);
     }

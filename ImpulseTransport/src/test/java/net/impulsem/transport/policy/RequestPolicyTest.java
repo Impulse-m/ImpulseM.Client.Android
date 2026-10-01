@@ -197,6 +197,17 @@ public class RequestPolicyTest {
     }
 
 
+    // An unimplemented method is final: delivered as it is, for every flag set and failure count.
+    @Test
+    public void methodInvalidIsDeliveredAndNeverRetried() {
+        int[] flagSets = {0, RequestPolicy.FLAG_FAIL_ON_SERVER_ERRORS, RequestPolicy.FLAG_DO_NOT_WAIT_FLOOD_WAIT};
+        for (int flags : flagSets) {
+            RequestPolicy.Decision decision = RequestPolicy.onError(flags, Generic, new RpcError(400, "METHOD_INVALID"), 3);
+            assertEquals(RequestPolicy.Action.DELIVER, decision.action);
+        }
+    }
+
+
     // ConnectionsManager.cpp 2616-2635: download retryMax is 6, so the sixth failure delivers -123 RETRY_LIMIT.
     @Test
     public void downloadNetworkFailureStopsAtSixAttempts() {

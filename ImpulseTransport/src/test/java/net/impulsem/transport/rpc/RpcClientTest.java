@@ -292,6 +292,20 @@ public class RpcClientTest {
 
 
     @Test
+    public void http404IsFinalMethodInvalid() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(404).setBody("not found"));
+
+        RpcOutcome outcome = client.callBlocking(resetAuthorizations());
+
+        assertNull(outcome.tlResult);
+        assertFalse(outcome.forceLogout);
+        assertEquals(400, outcome.error.code);
+        assertEquals("METHOD_INVALID", outcome.error.text);
+        assertEquals(1, server.getRequestCount());
+    }
+
+
+    @Test
     public void qrTicketIsCapturedAndEchoed() throws Exception {
         server.enqueue(error(16, "SESSION_REVOKED", "x-impulse-qr-exporter-ticket", "tk1"));
         server.enqueue(ok(new byte[0]));

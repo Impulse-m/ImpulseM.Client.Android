@@ -45,6 +45,16 @@ public final class RpcErrors {
         Map<String, String> metadata = response.metadata;
         int code = mapCode(response.grpcStatus, metadata != null && metadata.containsKey("migrate-dc"));
         String text = metadata == null ? null : metadata.get("error-code");
+        if (response.grpcStatus == 12) {
+            // An unregistered method: Telegram answers 400 METHOD_INVALID. A server-sent error-code
+            // other than METHOD_INVALID wins and keeps 501.
+            if (isEmpty(text)) {
+                text = "METHOD_INVALID";
+            }
+            if ("METHOD_INVALID".equals(text)) {
+                code = 400;
+            }
+        }
         if (isEmpty(text)) {
             text = response.grpcMessage;
         }
