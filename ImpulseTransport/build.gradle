@@ -16,6 +16,7 @@ dependencies {
 
 test {
     systemProperty 'impulse.live', System.getProperty('impulse.live', 'false')
+    systemProperty 'impulse.live.long', System.getProperty('impulse.live.long', 'false')
     testLogging {
         events 'failed'
         exceptionFormat 'full'

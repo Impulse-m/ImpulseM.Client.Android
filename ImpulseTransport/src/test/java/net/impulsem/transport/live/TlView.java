@@ -76,6 +76,17 @@ public final class TlView {
     }
 
 
+    /** Decodes a bare TL object (for example a transcoded Updates container). */
+    public Map<String, Object> decodeObject(byte[] tl) {
+        TlReader reader = new TlReader(tl, 0, tl.length);
+        Map<String, Object> value = readObject(reader);
+        if (reader.remaining() != 0) {
+            throw new IllegalStateException(reader.remaining() + " trailing bytes");
+        }
+        return value;
+    }
+
+
     private Map<String, Object> readObject(TlReader reader) {
         int id = reader.readInt32();
         ConstructorSpec spec = byId.get(id);
