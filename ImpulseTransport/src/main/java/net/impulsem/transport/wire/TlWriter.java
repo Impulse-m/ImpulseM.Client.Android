@@ -77,6 +77,9 @@ public final class TlWriter {
 
 
     public void patchInt32(int position, int value) {
+        if (position < 0 || position + 4 > size) {
+            throw new IllegalArgumentException("patch position out of range: " + position);
+        }
         buffer[position] = (byte) value;
         buffer[position + 1] = (byte) (value >>> 8);
         buffer[position + 2] = (byte) (value >>> 16);

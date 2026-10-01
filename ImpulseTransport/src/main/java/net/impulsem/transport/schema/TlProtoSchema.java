@@ -10,17 +10,18 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
 
 public final class TlProtoSchema {
 
+    public final int layer;
+
     private static final String Resource = "/impulse/tl-proto-229.json.gz";
 
     private static volatile TlProtoSchema instance;
-
-    public final int layer;
 
     private final Map<Integer, ConstructorSpec> constructors = new HashMap<Integer, ConstructorSpec>();
     private final Map<String, TypeSpec> types = new HashMap<String, TypeSpec>();
@@ -184,7 +185,7 @@ public final class TlProtoSchema {
 
 
     private static ParamSpec.Kind parseKind(String kind) {
-        String normalized = kind.toLowerCase(java.util.Locale.ROOT);
+        String normalized = kind.toLowerCase(Locale.ROOT);
         if (normalized.equals("int")) {
             return ParamSpec.Kind.INT;
         } else if (normalized.equals("long")) {
