@@ -17,8 +17,14 @@ dependencies {
 test {
     systemProperty 'impulse.live', System.getProperty('impulse.live', 'false')
     systemProperty 'impulse.live.long', System.getProperty('impulse.live.long', 'false')
+    System.properties.each { String key, Object value ->
+        if (key.startsWith('driver.')) {
+            systemProperty key, value
+        }
+    }
     testLogging {
         events 'failed'
+        showStandardStreams = Boolean.getBoolean('impulse.live')
         exceptionFormat 'full'
     }
 }

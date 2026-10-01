@@ -121,6 +121,28 @@ final class LiveAccounts {
     }
 
 
+    /** Rebuilds an account from a session saved by an earlier run; the user id comes with the tokens. */
+    Account restoreAccount(
+        String phone,
+        String code,
+        SessionTokens saved
+    ) {
+        Account account = new Account(phone, code);
+        account.store.save(saved);
+        account.tokens = new TokenManager(account.store, grpc, Clock.SYSTEM);
+        account.rpc = new RpcClient(transcoder, grpc, account.tokens);
+        account.userId = saved.userId;
+        return account;
+    }
+
+
+    /** The current session of the account, for saving between runs. */
+    SessionTokens currentSession(Account account) {
+        SessionStore store = account.store;
+        return store.load();
+    }
+
+
     /** Resolves the other account by phone, to learn its access hash. */
     Map<String, Object> importContact(
         Account account,
