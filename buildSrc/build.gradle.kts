@@ -47,4 +47,6 @@ dependencies {
     implementation("com.github.javaparser:javaparser-core:3.25.4")
     implementation("com.squareup:kotlinpoet:1.15.0")
     implementation("com.google.code.gson:gson:2.11.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

@@ -132,6 +132,10 @@ android {
         disable 'BlockedPrivateApi'
     }
 
+    buildFeatures {
+        resValues true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
@@ -145,6 +149,15 @@ android {
         targetSdkVersion 36
 
         vectorDrawables.generatedDensities = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi']
+
+        // The product name is written once, in gradle.properties; every UI-visible brand string derives from it.
+        def impulsemAppName = project.findProperty("IMPULSEM_APP_NAME")
+        if (impulsemAppName == null) {
+            throw new GradleException("IMPULSEM_APP_NAME is not set in gradle.properties")
+        }
+        buildConfigField "String", "IMPULSEM_APP_NAME", "\"" + impulsemAppName + "\""
+        resValue "string", "AppName", impulsemAppName
+        resValue "string", "AppNameBeta", impulsemAppName + " Beta"
 
         buildConfigField "String", "IMPULSEM_ENDPOINT", "\"" + (project.findProperty("IMPULSEM_ENDPOINT") ?: "https://rpc.impulsem.net") + "\""
 

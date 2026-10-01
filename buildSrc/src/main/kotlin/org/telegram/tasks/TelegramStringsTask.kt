@@ -41,6 +41,9 @@ abstract class TelegramStringsTask : DefaultTask() {
     @get:Input
     abstract val resourcePackageName: Property<String>
 
+    @get:Input
+    abstract val brandName: Property<String>
+
     @get:InputFiles
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val stringsXml: ConfigurableFileCollection
@@ -309,7 +312,8 @@ abstract class TelegramStringsTask : DefaultTask() {
             generateLocalization(
                 inputFiles = files,
                 outputFile = assetsDir.resolve(assetName),
-                hashesByName = hashesByName
+                hashesByName = hashesByName,
+                brand = brandName.get()
             )
         }
 
@@ -345,7 +349,8 @@ abstract class TelegramStringsTask : DefaultTask() {
     private fun generateLocalization(
         inputFiles: List<File>,
         outputFile: File,
-        hashesByName: Map<String, Int>
+        hashesByName: Map<String, Int>,
+        brand: String
     ) {
         val entriesByName = LinkedHashMap<String, LocalizationEntry>()
 
@@ -366,7 +371,7 @@ abstract class TelegramStringsTask : DefaultTask() {
                 entriesByName[name] = LocalizationEntry(
                     name = name,
                     hash = hash,
-                    value = normalizeXmlString(node.text())
+                    value = BrandText.replace(normalizeXmlString(node.text()), brand)
                 )
             }
         }

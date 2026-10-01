@@ -61,6 +61,9 @@ class TelegramBuildAppPlugin : Plugin<Project> {
                 )
 
                 resourcePackageName.set((variant as ApplicationVariant).applicationId)
+
+                // The single source of the product name; a rename must invalidate this task.
+                brandName.set(project.providers.gradleProperty("IMPULSEM_APP_NAME"))
             }
 
             variant.sources.res?.addGeneratedSourceDirectory(

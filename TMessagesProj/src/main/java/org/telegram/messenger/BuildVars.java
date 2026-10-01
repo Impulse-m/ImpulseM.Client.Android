@@ -27,7 +27,7 @@ public class BuildVars {
     public static String BUILD_VERSION_STRING = BuildConfig.BUILD_VERSION_STRING;
 
     public static final String BRAND_PACKAGE = "net.impulsem.messenger";
-    public static final String BRAND_NAME = "ImpulseM";
+    public static final String BRAND_NAME = BuildConfig.IMPULSEM_APP_NAME;
 
     public static int APP_ID = 3;
     public static String APP_HASH = "85e6b3be52309e397e6b4b2d688c7ca4";

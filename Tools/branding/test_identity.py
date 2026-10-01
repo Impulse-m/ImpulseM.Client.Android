@@ -37,16 +37,17 @@ class IdentityTest(unittest.TestCase):
         self.assertIn("APP_PACKAGE=" + brand.PACKAGE, brand.read(brand.ROOT / "gradle.properties").splitlines())
 
 
-    def test_app_name_in_every_locale(self) -> None:
-        found: int = 0
+    def test_app_name_comes_from_one_variable(self) -> None:
+        self.assertIn("IMPULSEM_APP_NAME=" + brand.NAME, brand.read(brand.ROOT / "gradle.properties").splitlines())
+        gradle: str = brand.read(brand.ROOT / "TMessagesProj" / "build.gradle")
+        self.assertRegex(gradle, r'resValue\s+"string",\s*"AppName"')
+        self.assertRegex(gradle, r'resValue\s+"string",\s*"AppNameBeta"')
+        self.assertRegex(gradle, r'buildConfigField\s+"String",\s*"IMPULSEM_APP_NAME"')
+        defining: list[str] = []
         for strings in sorted(brand.RES.glob("values*/strings.xml")):
-            text: str = brand.read(strings)
-            for key, expected in (("AppName", brand.NAME), ("AppNameBeta", brand.NAME_BETA)):
-                match: re.Match[str] | None = re.search(r'<string name="' + key + r'">([^<]*)</string>', text)
-                if match is not None:
-                    found += 1
-                    self.assertEqual(expected, match.group(1), str(strings) + ": " + key)
-        self.assertGreaterEqual(found, 11)
+            if re.search(r'<string\s+name="AppName(Beta)?"', brand.read(strings)):
+                defining.append(strings.relative_to(brand.ROOT).as_posix())
+        self.assertEqual([], defining)
 
 
     def test_no_telegram_identifiers(self) -> None:
@@ -62,7 +63,8 @@ class IdentityTest(unittest.TestCase):
     def test_brand_constants(self) -> None:
         build_vars: str = brand.read(brand.JAVA / "org" / "telegram" / "messenger" / "BuildVars.java")
         self.assertIn('public static final String BRAND_PACKAGE = "' + brand.PACKAGE + '";', build_vars)
-        self.assertIn('public static final String BRAND_NAME = "' + brand.NAME + '";', build_vars)
+        self.assertIn("public static final String BRAND_NAME = BuildConfig.IMPULSEM_APP_NAME;", build_vars)
+        self.assertNotIn('BRAND_NAME = "', build_vars)
 
 
     def test_deep_link_hosts(self) -> None:
