@@ -8,6 +8,7 @@ import net.impulsem.transport.realtime.CentrifugoListener;
 import net.impulsem.transport.realtime.GapTracker;
 import net.impulsem.transport.realtime.Publication;
 import net.impulsem.transport.realtime.PublicationRouter;
+import net.impulsem.transport.realtime.SyncPlanner;
 import net.impulsem.transport.rpc.RpcClient;
 import net.impulsem.transport.rpc.SessionLostException;
 
@@ -20,6 +21,7 @@ import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
 import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLClassStore;
+import org.telegram.tgnet.TLDataSourceType;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.tl.TL_update;
 
@@ -53,8 +55,9 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
     private final ChannelLaneManager lanes;
     private final Object lock = new Object();
 
-    private long laneUserId;
-    private boolean wasOnline = true;
+    private final SyncPlanner planner = new SyncPlanner();
+    /** Runs every sync one at a time; kept apart from the executor of the Centrifugo client. */
+    private final ScheduledThreadPoolExecutor syncExecutor;
     private boolean started;
 
 
@@ -110,6 +113,8 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         ScheduledThreadPoolExecutor timers = new ScheduledThreadPoolExecutor(2, namedThreads("impulse-realtime-" + account));
         timers.setRemoveOnCancelPolicy(true);
         this.executor = timers;
+        this.syncExecutor = new ScheduledThreadPoolExecutor(1, namedThreads("impulse-realtime-sync-" + account));
+        this.syncExecutor.setRemoveOnCancelPolicy(true);
         OkHttpClient http = ImpulseConnection.httpClient()
             .newBuilder()
             .readTimeout(0L, TimeUnit.MILLISECONDS)
@@ -127,7 +132,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             }
             started = true;
         }
-        executor.scheduleWithFixedDelay(new Runnable() {
+        syncExecutor.scheduleWithFixedDelay(new Runnable() {
             @Override
             public void run() {
                 sync();
@@ -136,49 +141,39 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
     }
 
 
-    /** Connects when logged in and online, disconnects otherwise, and keeps the user lane on the current user. */
-    void sync() {
+    /** Connects when logged in and online, disconnects otherwise, and keeps the user lane on the current user. Runs only on syncExecutor. */
+    private void sync() {
         try {
-            long userId = connection.currentUserId();
-            boolean loggedIn = userId != 0L && connection.hasSession();
-            boolean online = ApplicationLoader.isNetworkOnline();
-            boolean reconnect;
-            long previousUser;
-            synchronized (lock) {
-                reconnect = online && !wasOnline;
-                wasOnline = online;
-                previousUser = laneUserId;
-                laneUserId = loggedIn ? userId : 0L;
+            SyncPlanner.Plan plan = planner.plan(
+                connection.currentUserId(),
+                connection.hasSession(),
+                ApplicationLoader.isNetworkOnline()
+            );
+            if (plan.dropUserLane != 0L) {
+                client.unsubscribe(PublicationRouter.UserPrefix + plan.dropUserLane);
             }
-            if (previousUser != 0L && previousUser != laneUserId) {
-                client.unsubscribe(PublicationRouter.UserPrefix + previousUser);
+            if (plan.stopLanes) {
                 lanes.stop();
             }
-            if (!loggedIn) {
-                client.disconnect();
-                lanes.stop();
-                return;
-            }
-            if (!online) {
-                client.disconnect();
-                return;
-            }
-            client.subscribe(PublicationRouter.UserPrefix + userId, null);
-            lanes.start();
-            if (reconnect) {
-                // Skip the reconnect backoff when the network comes back.
+            if (plan.disconnect) {
                 client.disconnect();
             }
-            client.connect();
+            if (plan.subscribeUserLane != 0L) {
+                client.subscribe(PublicationRouter.UserPrefix + plan.subscribeUserLane, null);
+                lanes.start();
+            }
+            if (plan.connect) {
+                client.connect();
+            }
         } catch (RuntimeException e) {
             FileLog.e(e);
         }
     }
 
 
-    /** Runs sync now on the realtime thread instead of waiting for the periodic check. */
+    /** Queues a sync now instead of waiting for the periodic check. */
     void syncSoon() {
-        executor.execute(new Runnable() {
+        syncExecutor.execute(new Runnable() {
             @Override
             public void run() {
                 sync();
@@ -273,6 +268,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             Transcoder transcoder = connection.transcoder();
             byte[] tl = transcoder.decodeUpdates(proto, null);
             buffer = new NativeByteBuffer(tl.length);
+            buffer.setDataSourceType(TLDataSourceType.NETWORK);
             buffer.writeBytes(tl);
             buffer.position(0);
             int constructor = buffer.readInt32(true);
@@ -307,9 +303,9 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         int date
     ) {
         TL_update.TL_updateChannelTooLong update = new TL_update.TL_updateChannelTooLong();
-        update.flags = 1;
+        update.flags = pts > 0 ? 1 : 0;
         update.channel_id = channelId;
-        update.pts = pts;
+        update.pts = pts > 0 ? pts : 0;
         final TLRPC.TL_updates updates = new TLRPC.TL_updates();
         updates.updates.add(update);
         updates.date = date;
