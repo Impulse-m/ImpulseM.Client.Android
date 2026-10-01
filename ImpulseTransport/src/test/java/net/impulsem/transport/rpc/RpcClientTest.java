@@ -12,6 +12,13 @@ import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.impulsem.transport.auth.Clock;
 import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
@@ -22,7 +29,10 @@ import net.impulsem.transport.schema.TlProtoSchema;
 import net.impulsem.transport.wire.ProtoWriter;
 import net.impulsem.transport.wire.TlReader;
 import net.impulsem.transport.wire.TlWriter;
+import okhttp3.Call;
 import okhttp3.OkHttpClient;
+import okhttp3.mockwebserver.Dispatcher;
+import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.After;
@@ -345,5 +355,226 @@ public class RpcClientTest {
         } catch (IOException expected) {
             assertNotNull(expected);
         }
+    }
+
+
+    private static final String RefreshPath = "/impulse.auth.AuthService/RefreshSession";
+    private static final String TokenPath = "/impulse.sync.SyncService/GetCentrifugoToken";
+
+
+    private void awaitRequests(int count) throws Exception {
+        long deadline = System.currentTimeMillis() + 5000;
+        while (server.getRequestCount() < count) {
+            if (System.currentTimeMillis() > deadline) {
+                fail("server never saw request " + count);
+            }
+            Thread.sleep(10);
+        }
+    }
+
+
+    private Future<RpcOutcome> executeInBackground(
+        ExecutorService pool,
+        final Call call
+    ) {
+        return pool.submit(new Callable<RpcOutcome>() {
+            @Override
+            public RpcOutcome call() throws Exception {
+                return client.execute(call);
+            }
+        });
+    }
+
+
+    private Dispatcher lateFailureDispatcher(
+        final AtomicInteger oldCalls,
+        final AtomicInteger refreshes,
+        final AtomicInteger newCalls
+    ) {
+        return new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                if (RefreshPath.equals(request.getPath())) {
+                    refreshes.incrementAndGet();
+                    return ok(refreshResponse("new", "r2", 5L));
+                }
+                String auth = request.getHeader("authorization");
+                if ("Bearer old".equals(auth)) {
+                    MockResponse response = error(16, "AUTH_KEY_UNREGISTERED");
+                    if (oldCalls.incrementAndGet() == 1) {
+                        response.setHeadersDelay(800, TimeUnit.MILLISECONDS);
+                    }
+                    return response;
+                }
+                if ("Bearer new".equals(auth)) {
+                    newCalls.incrementAndGet();
+                    return ok(utf8("t"));
+                }
+                return new MockResponse().setResponseCode(500);
+            }
+        };
+    }
+
+
+    @Test
+    public void lateFailureRetriesWithNewBearerWithoutSecondRefresh() throws Exception {
+        AtomicInteger oldCalls = new AtomicInteger();
+        AtomicInteger refreshes = new AtomicInteger();
+        AtomicInteger newCalls = new AtomicInteger();
+        server.setDispatcher(lateFailureDispatcher(oldCalls, refreshes, newCalls));
+        ExecutorService pool = Executors.newFixedThreadPool(1);
+        Future<RpcOutcome> late = executeInBackground(pool, client.prepare(resetAuthorizations()));
+        awaitRequests(1);
+
+        RpcOutcome early = client.callBlocking(resetAuthorizations());
+        RpcOutcome lateOutcome = late.get(10, TimeUnit.SECONDS);
+        pool.shutdown();
+
+        assertNull(early.error);
+        assertNull(lateOutcome.error);
+        assertEquals(1, refreshes.get());
+        assertEquals(2, newCalls.get());
+        assertEquals(2, oldCalls.get());
+    }
+
+
+    @Test
+    public void callImpulseLateFailureSkipsSecondRefresh() throws Exception {
+        AtomicInteger oldCalls = new AtomicInteger();
+        AtomicInteger refreshes = new AtomicInteger();
+        AtomicInteger newCalls = new AtomicInteger();
+        server.setDispatcher(lateFailureDispatcher(oldCalls, refreshes, newCalls));
+        ExecutorService pool = Executors.newFixedThreadPool(1);
+        Future<byte[]> late = pool.submit(new Callable<byte[]>() {
+            @Override
+            public byte[] call() throws Exception {
+                return client.callImpulse(TokenPath, new byte[0]);
+            }
+        });
+        awaitRequests(1);
+
+        assertArrayEquals(utf8("t"), client.callImpulse(TokenPath, new byte[0]));
+        assertArrayEquals(utf8("t"), late.get(10, TimeUnit.SECONDS));
+        pool.shutdown();
+        assertEquals(1, refreshes.get());
+    }
+
+
+    @Test
+    public void cancelBeforeExecuteSendsNothing() throws Exception {
+        Call call = client.prepare(resetAuthorizations());
+        call.cancel();
+        try {
+            client.execute(call);
+            fail("expected IOException");
+        } catch (IOException expected) {
+            assertEquals("Canceled", expected.getMessage());
+        }
+        assertEquals(0, server.getRequestCount());
+    }
+
+
+    @Test
+    public void cancelDuringFirstAttemptAborts() throws Exception {
+        server.enqueue(ok(new byte[0]).setHeadersDelay(3, TimeUnit.SECONDS));
+        ExecutorService pool = Executors.newFixedThreadPool(1);
+        Call call = client.prepare(resetAuthorizations());
+        Future<RpcOutcome> running = executeInBackground(pool, call);
+        awaitRequests(1);
+
+        call.cancel();
+
+        try {
+            running.get(2, TimeUnit.SECONDS);
+            fail("expected cancellation");
+        } catch (ExecutionException e) {
+            assertTrue(e.getCause() instanceof IOException);
+            assertEquals("Canceled", e.getCause().getMessage());
+        }
+        pool.shutdown();
+    }
+
+
+    @Test
+    public void cancelDuringRefreshNeverSendsRetry() throws Exception {
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        server.enqueue(ok(refreshResponse("new", "r2", 5L)).setHeadersDelay(800, TimeUnit.MILLISECONDS));
+        ExecutorService pool = Executors.newFixedThreadPool(1);
+        Call call = client.prepare(resetAuthorizations());
+        Future<RpcOutcome> running = executeInBackground(pool, call);
+        awaitRequests(2);
+
+        call.cancel();
+
+        try {
+            running.get(5, TimeUnit.SECONDS);
+            fail("expected cancellation");
+        } catch (ExecutionException e) {
+            assertEquals("Canceled", e.getCause().getMessage());
+        }
+        pool.shutdown();
+        assertEquals(2, server.getRequestCount());
+    }
+
+
+    @Test
+    public void cancelReachesTheRetryAttempt() throws Exception {
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        server.enqueue(ok(new byte[0]).setHeadersDelay(3, TimeUnit.SECONDS));
+        ExecutorService pool = Executors.newFixedThreadPool(1);
+        Call call = client.prepare(resetAuthorizations());
+        Future<RpcOutcome> running = executeInBackground(pool, call);
+        awaitRequests(3);
+
+        call.cancel();
+
+        try {
+            running.get(2, TimeUnit.SECONDS);
+            fail("expected cancellation");
+        } catch (ExecutionException e) {
+            assertEquals("Canceled", e.getCause().getMessage());
+        }
+        pool.shutdown();
+    }
+
+
+    @Test
+    public void callImpulseForceLogoutThrowsSessionLost() throws Exception {
+        server.enqueue(error(16, "SESSION_REVOKED"));
+        try {
+            client.callImpulse(TokenPath, new byte[0]);
+            fail("expected SessionLostException");
+        } catch (SessionLostException expected) {
+            assertEquals("SESSION_REVOKED", expected.error.text);
+        }
+    }
+
+
+    @Test
+    public void callImpulseFailedRefreshThrowsSessionLost() throws Exception {
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        server.enqueue(error(3, "AUTH_TOKEN_INVALID"));
+        try {
+            client.callImpulse(TokenPath, new byte[0]);
+            fail("expected SessionLostException");
+        } catch (SessionLostException expected) {
+            assertNull(store.tokens);
+        }
+    }
+
+
+    @Test
+    public void refreshKeepsActivePendingToken() throws Exception {
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        server.enqueue(ok(new byte[0]));
+        tokens.setPendingToken("pend");
+
+        RpcOutcome outcome = client.callBlocking(resetAuthorizations());
+
+        assertNull(outcome.error);
+        assertEquals("pend", tokens.bearer());
+        assertEquals("new", store.tokens.accessToken);
     }
 }

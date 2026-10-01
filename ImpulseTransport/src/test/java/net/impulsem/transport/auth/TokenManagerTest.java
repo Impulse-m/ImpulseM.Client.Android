@@ -31,7 +31,7 @@ import org.junit.Test;
 
 public class TokenManagerTest {
 
-    static final class MemoryStore implements SessionStore {
+    static class MemoryStore implements SessionStore {
 
         volatile SessionTokens tokens;
         volatile int saves;
@@ -268,5 +268,60 @@ public class TokenManagerTest {
         manager.clear();
         assertFalse(manager.needsProactiveRefresh());
         assertFalse(manager.hasSession());
+    }
+
+
+    @Test
+    public void refreshDoesNotClearActivePendingToken() throws Exception {
+        manager.setPendingToken("pending");
+        server.enqueue(ok(authorizationProto(42L, "a2", "r2")));
+        assertTrue(manager.refreshBlocking());
+        assertEquals("pending", manager.bearer());
+        assertEquals("a2", store.tokens.accessToken);
+        clock.now += 5 * 60 * 1000L;
+        assertEquals("a2", manager.bearer());
+    }
+
+
+    @Test
+    public void noProactiveRefreshWhilePendingTokenActive() {
+        long nowSeconds = clock.now / 1000;
+        store.tokens = new SessionTokens(jwt(nowSeconds + 10), "r", 1L);
+        manager = newManager();
+        assertTrue(manager.needsProactiveRefresh());
+        manager.setPendingToken("pending");
+        assertFalse(manager.needsProactiveRefresh());
+        clock.now += 5 * 60 * 1000L;
+        assertTrue(manager.needsProactiveRefresh());
+    }
+
+
+    @Test
+    public void onLoginTokensUpdatesMemoryEvenWhenSaveThrows() {
+        store = new MemoryStore() {
+            @Override
+            public synchronized void save(SessionTokens value) {
+                throw new IllegalStateException("disk full");
+            }
+        };
+        manager = newManager();
+        try {
+            manager.onLoginTokens("a9", "r9", 9L);
+            org.junit.Assert.fail("expected IllegalStateException");
+        } catch (IllegalStateException expected) {
+            assertEquals("a9", manager.bearer());
+            assertTrue(manager.hasSession());
+        }
+    }
+
+
+    @Test
+    public void nonPositiveExpIsUnreadable() {
+        store.tokens = new SessionTokens(jwt(0), "r", 1L);
+        manager = newManager();
+        assertFalse(manager.needsProactiveRefresh());
+        store.tokens = new SessionTokens(jwt(-5), "r", 1L);
+        manager = newManager();
+        assertFalse(manager.needsProactiveRefresh());
     }
 }

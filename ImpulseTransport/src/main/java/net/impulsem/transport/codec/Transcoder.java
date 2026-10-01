@@ -78,6 +78,11 @@ public final class Transcoder {
     }
 
 
+    public TlProtoSchema schema() {
+        return schema;
+    }
+
+
     public EncodedRequest encodeRequest(byte[] tl) {
         try {
             TlReader reader = new TlReader(tl, 0, tl.length);

@@ -22,6 +22,22 @@ public final class TokenManager {
     private static final long PendingLifetimeMillis = 5 * 60 * 1000L;
     private static final long ProactiveMarginSeconds = 60L;
 
+    private static final class Pending {
+
+        final String token;
+        final long expiresAt;
+
+
+        Pending(
+            String token,
+            long expiresAt
+        ) {
+            this.token = token;
+            this.expiresAt = expiresAt;
+        }
+    }
+
+
     private final SessionStore store;
     private final GrpcWebClient client;
     private final Clock clock;
@@ -33,8 +49,7 @@ public final class TokenManager {
     private IOException lastRefreshFailure;
 
     private volatile SessionTokens tokens;
-    private volatile String pendingToken;
-    private volatile long pendingExpiresAt;
+    private volatile Pending pending;
     private volatile String qrTicket;
 
 
@@ -52,12 +67,9 @@ public final class TokenManager {
 
     /** The pending token if set and unexpired, else the access token, else null. */
     public String bearer() {
-        String pending = pendingToken;
-        if (pending != null) {
-            if (clock.nowMillis() < pendingExpiresAt) {
-                return pending;
-            }
-            pendingToken = null;
+        String active = activePendingToken();
+        if (active != null) {
+            return active;
         }
         SessionTokens current = tokens;
         return current == null ? null : current.accessToken;
@@ -71,16 +83,42 @@ public final class TokenManager {
     ) {
         SessionTokens value = new SessionTokens(access, refresh, userId);
         synchronized (this) {
-            store.save(value);
             tokens = value;
-            pendingToken = null;
+            pending = null;
+            store.save(value);
         }
     }
 
 
+    /** Persists a refreshed pair. Unlike onLoginTokens it leaves an active pending 2FA token alone. */
+    private void onRefreshedTokens(SessionTokens value) {
+        synchronized (this) {
+            tokens = value;
+            store.save(value);
+        }
+    }
+
+
+    /** The pending token if set and unexpired; an expired one is dropped only if nobody replaced it meanwhile. */
+    private String activePendingToken() {
+        Pending seen = pending;
+        if (seen == null) {
+            return null;
+        }
+        if (clock.nowMillis() < seen.expiresAt) {
+            return seen.token;
+        }
+        synchronized (this) {
+            if (pending == seen) {
+                pending = null;
+            }
+        }
+        return null;
+    }
+
+
     public void setPendingToken(String jwt) {
-        pendingExpiresAt = clock.nowMillis() + PendingLifetimeMillis;
-        pendingToken = jwt;
+        pending = new Pending(jwt, clock.nowMillis() + PendingLifetimeMillis);
     }
 
 
@@ -103,7 +141,7 @@ public final class TokenManager {
         synchronized (this) {
             store.clear();
             tokens = null;
-            pendingToken = null;
+            pending = null;
             qrTicket = null;
         }
     }
@@ -113,6 +151,9 @@ public final class TokenManager {
     public boolean needsProactiveRefresh() {
         SessionTokens current = tokens;
         if (current == null || current.accessToken == null || current.refreshToken == null) {
+            return false;
+        }
+        if (activePendingToken() != null) {
             return false;
         }
         long exp = expirySeconds(current.accessToken);
@@ -205,7 +246,7 @@ public final class TokenManager {
             throw new IOException("RefreshSession response has no tokens");
         }
         long userId = authorization.userId != 0 ? authorization.userId : current.userId;
-        onLoginTokens(authorization.sessionToken, authorization.refreshToken, userId);
+        onRefreshedTokens(new SessionTokens(authorization.sessionToken, authorization.refreshToken, userId));
         return true;
     }
 
@@ -235,7 +276,8 @@ public final class TokenManager {
             if (exp == null || !exp.isJsonPrimitive()) {
                 return -1;
             }
-            return exp.getAsLong();
+            long value = exp.getAsLong();
+            return value > 0 ? value : -1;
         } catch (Exception e) {
             return -1;
         }
