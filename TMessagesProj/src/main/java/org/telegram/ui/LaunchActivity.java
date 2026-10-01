@@ -88,6 +88,7 @@ import androidx.core.view.ViewCompat;
 
 import com.google.android.gms.common.api.Status;
 import com.google.common.primitives.Longs;
+import com.google.firebase.FirebaseApp;
 import com.google.firebase.appindexing.Action;
 import com.google.firebase.appindexing.FirebaseUserActions;
 import com.google.firebase.appindexing.builders.AssistActionBuilder;
@@ -1751,7 +1752,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                     if (error) {
                         Toast.makeText(this, "Unsupported content", Toast.LENGTH_SHORT).show();
                     }
-                } else if ("org.telegram.messenger.CREATE_STICKER_PACK".equals(intent.getAction())) {
+                } else if ((BuildVars.BRAND_PACKAGE + ".CREATE_STICKER_PACK").equals(intent.getAction())) {
                     try {
                         importingStickers = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
                         importingStickersEmoji = intent.getStringArrayListExtra("STICKER_EMOJIS");
@@ -1892,7 +1893,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                 .setActionToken(intent.getStringExtra(EXTRA_ACTION_TOKEN))
                                 .setActionStatus(success ? Action.Builder.STATUS_TYPE_COMPLETED : Action.Builder.STATUS_TYPE_FAILED)
                                 .build();
-                            FirebaseUserActions.getInstance(this).end(assistAction);
+                            if (!FirebaseApp.getApps(this).isEmpty()) {
+                                FirebaseUserActions.getInstance(this).end(assistAction);
+                            }
                             intent.removeExtra(EXTRA_ACTION_TOKEN);
                         }
                         return true;
@@ -2802,7 +2805,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                     .setActionToken(intent.getStringExtra(EXTRA_ACTION_TOKEN))
                                     .setActionStatus(success ? Action.Builder.STATUS_TYPE_COMPLETED : Action.Builder.STATUS_TYPE_FAILED)
                                     .build();
-                            FirebaseUserActions.getInstance(this).end(assistAction);
+                            if (!FirebaseApp.getApps(this).isEmpty()) {
+                                FirebaseUserActions.getInstance(this).end(assistAction);
+                            }
                             intent.removeExtra(EXTRA_ACTION_TOKEN);
                         }
                         if (code != null || UserConfig.getInstance(currentAccount).isClientActivated()) {
@@ -2857,9 +2862,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                                             NotificationCenter.getInstance(intentAccount[0]).postNotificationName(NotificationCenter.closeChats);
                                             push_user_id = userId;
                                             String mimeType = cursor.getString(cursor.getColumnIndex(ContactsContract.Data.MIMETYPE));
-                                            if (TextUtils.equals(mimeType, "vnd.android.cursor.item/vnd.org.telegram.messenger.android.call")) {
+                                            if (TextUtils.equals(mimeType, "vnd.android.cursor.item/vnd." + BuildVars.BRAND_PACKAGE + ".android.call")) {
                                                 audioCallUser = true;
-                                            } else if (TextUtils.equals(mimeType, "vnd.android.cursor.item/vnd.org.telegram.messenger.android.call.video")) {
+                                            } else if (TextUtils.equals(mimeType, "vnd.android.cursor.item/vnd." + BuildVars.BRAND_PACKAGE + ".android.call.video")) {
                                                 videoCallUser = true;
                                             }
                                         }
@@ -2870,7 +2875,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                             }
                         }
                     }
-                } else if (intent.getAction().equals("org.telegram.messenger.OPEN_ACCOUNT")) {
+                } else if (intent.getAction().equals(BuildVars.BRAND_PACKAGE + ".OPEN_ACCOUNT")) {
                     open_settings = 1;
                 } else if (intent.getAction().equals("new_dialog")) {
                     open_new_dialog = 1;

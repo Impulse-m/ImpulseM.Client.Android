@@ -1694,7 +1694,13 @@ public class PushListenerController {
             Utilities.globalQueue.postRunnable(() -> {
                 try {
                     SharedConfig.pushStringGetTimeStart = SystemClock.elapsedRealtime();
-                    FirebaseApp.initializeApp(ApplicationLoader.applicationContext);
+                    if (FirebaseApp.initializeApp(ApplicationLoader.applicationContext) == null) {
+                        SharedConfig.pushStringStatus = "__FIREBASE_NOT_CONFIGURED__";
+                        if (BuildVars.LOGS_ENABLED) {
+                            FileLog.d("Firebase is not configured, push registration skipped");
+                        }
+                        return;
+                    }
                     FirebaseMessaging.getInstance().getToken()
                             .addOnCompleteListener(task -> {
                                 SharedConfig.pushStringGetTimeEnd = SystemClock.elapsedRealtime();

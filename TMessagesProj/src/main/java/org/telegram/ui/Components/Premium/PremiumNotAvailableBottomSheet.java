@@ -12,6 +12,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
@@ -52,7 +53,7 @@ public class PremiumNotAvailableBottomSheet extends BottomSheet {
         buttonTextView.setText(LocaleController.getString(R.string.InstallOfficialApp));
         buttonTextView.setOnClickListener(v -> {
             try {
-                v.getContext().startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=org.telegram.messenger")));
+                v.getContext().startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(BuildVars.PLAYSTORE_APP_URL)));
             } catch (ActivityNotFoundException e) {
                 FileLog.e(e);
             }
