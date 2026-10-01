@@ -23,7 +23,8 @@ public class TranscoderEdgeCaseTest {
     private static final int BoolFalse = 0xbc799737;
     private static final int VectorId = 0x1cb5c415;
 
-    private static final int InputMediaPhotoExternalId = -440664550;
+    private static final int InputMessagesFilterPhoneCallsId = 0x80c99768;
+    private static final int InputMediaPhotoExternalId =-440664550;
     private static final int CommunityForbiddenId = -46343496;
     private static final int ChatParticipantId = 954703838;
     private static final int AuthLoggedOutId = -1012759713;
@@ -126,6 +127,24 @@ public class TranscoderEdgeCaseTest {
         absent.writeInt32(RequestPeerTypeUserId);
         absent.writeInt32(0);
         assertBothWays("RequestPeerType", absent.toByteArray(), wrap(1, new ProtoWriter()));
+    }
+
+
+    @Test
+    public void trueFlagWithExplicitFalseStaysClear() {
+        ProtoWriter explicitFalse = new ProtoWriter();
+        explicitFalse.writeVarintField(1, 0);
+        TlWriter clear = new TlWriter();
+        clear.writeInt32(InputMessagesFilterPhoneCallsId);
+        clear.writeInt32(0);
+        assertArrayEquals(clear.toByteArray(), transcoder.protoToTlObject("MessagesFilter", wrap(11, explicitFalse), null));
+
+        ProtoWriter explicitTrue = new ProtoWriter();
+        explicitTrue.writeVarintField(1, 1);
+        TlWriter set = new TlWriter();
+        set.writeInt32(InputMessagesFilterPhoneCallsId);
+        set.writeInt32(1);
+        assertArrayEquals(set.toByteArray(), transcoder.protoToTlObject("MessagesFilter", wrap(11, explicitTrue), null));
     }
 
 

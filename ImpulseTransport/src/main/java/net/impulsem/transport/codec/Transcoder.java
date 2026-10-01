@@ -736,6 +736,10 @@ public final class Transcoder {
         if (occurrences == null || occurrences.isEmpty()) {
             return false;
         }
+        if (param.kind == ParamSpec.Kind.TRUE) {
+            // optional bool: an explicit false on the wire is the flag cleared, as in the reference mapper.
+            return occurrences.get(occurrences.size() - 1).value != 0;
+        }
         if (param.kind == ParamSpec.Kind.VECTOR && isPackable(param.elem.kind)) {
             for (Occurrence occurrence : occurrences) {
                 if (occurrence.wire != WireBytes || occurrence.length > 0) {
