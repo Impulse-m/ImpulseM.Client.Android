@@ -189,25 +189,26 @@ public class DeviceDriver {
 
 
     /**
-     * Asserts that the messages with the prefix {@code driver.prefix} are exactly "prefix 1" to "prefix count"
+     * Asserts that the messages with the prefix {@code driver.prefix} are exactly prefix + sep + 1 to count
      * ({@code driver.count}), once each and in that order.
      */
     private void burst(LiveAccounts.Account b) throws IOException {
         String prefix = System.getProperty("driver.prefix", "burst");
+        String separator = System.getProperty("driver.sep", " ");
         int count = Integer.parseInt(System.getProperty("driver.count", "5"));
         List<Object> messages = historyList(b);
         List<String> seen = new ArrayList<String>();
         for (int i = messages.size() - 1; i >= 0; i--) {
             Map<String, Object> message = asMap(messages.get(i));
             Object text = message.get("message");
-            if (text instanceof String && ((String) text).startsWith(prefix + " ")) {
+            if (text instanceof String && ((String) text).startsWith(prefix)) {
                 seen.add((String) text);
                 System.out.println("DRIVER burst id=" + message.get("id") + " out=" + message.get("out") + " text=" + text);
             }
         }
         List<String> want = new ArrayList<String>();
         for (int i = 1; i <= count; i++) {
-            want.add(prefix + " " + i);
+            want.add(prefix + separator + i);
         }
         assertEquals(want, seen);
         System.out.println("DRIVER burst order ok, no duplicates");
