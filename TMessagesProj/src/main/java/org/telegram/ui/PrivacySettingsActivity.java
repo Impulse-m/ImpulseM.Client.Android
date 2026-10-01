@@ -37,12 +37,12 @@ import androidx.annotation.Keep;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.ContactsController;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
@@ -796,6 +796,7 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
         } else {
             webSessionsRow = -1;
             botsDetailRow = -1;
+            // TODO(impulsem-unimplemented): payment shipping info (no empty bots section)
             botsAndWebsitesShadowRow = hasBotsRows ? rowCount++ : -1;
         }
         contactsSectionRow = rowCount++;

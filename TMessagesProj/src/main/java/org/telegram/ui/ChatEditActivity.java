@@ -48,7 +48,6 @@ import android.widget.ScrollView;
 
 import androidx.annotation.NonNull;
 
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.ChatObject;
@@ -56,6 +55,7 @@ import org.telegram.messenger.ContactsController;
 import org.telegram.messenger.Emoji;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.ImageLocation;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
@@ -942,7 +942,8 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
                 });
             }
 
-            if (ChatObject.isChannelAndNotMegaGroup(currentChat) && !ChatObject.isCommunity(currentChat)) {
+            // TODO(impulsem-unimplemented): boosts (channel auto-translation needs boost levels)
+            if (ImpulseFeatures.BOOSTS && ChatObject.isChannelAndNotMegaGroup(currentChat) && !ChatObject.isCommunity(currentChat)) {
                 final long dialogId = -currentChat.id;
                 autoTranslationCell = new TextCell(context, 23, false, true, resourceProvider);
                 autoTranslationCell.setBackground(Theme.getSelectorDrawable(true));
@@ -964,6 +965,11 @@ public class ChatEditActivity extends BaseFragment implements ImageUpdater.Image
                         autoTranslationCell.setChecked(newValue);
                     }
                     getMessagesController().getBoostsController().getBoostsStats(dialogId, boostsStatus -> {
+                        if (boostsStatus == null) {
+                            loading[0] = false;
+                            progressDialog.dismiss();
+                            return;
+                        }
                         if (currentChat.level != boostsStatus.level) {
                             currentChat.level = boostsStatus.level;
                             getMessagesController().putChat(currentChat, false);

@@ -48,11 +48,11 @@ import androidx.annotation.Nullable;
 import androidx.core.graphics.Insets;
 import androidx.core.view.WindowInsetsCompat;
 
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.Emoji;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
 import org.telegram.messenger.MediaDataController;
@@ -1383,7 +1383,9 @@ public class RichEditor extends BaseFragment implements NotificationCenter.Notif
 
     private void onAiStyleSelection() {
         // TODO(impulsem-unimplemented): AI compose
-        if (!ImpulseFeatures.AI_COMPOSE) return;
+        if (!ImpulseFeatures.AI_COMPOSE) {
+            return;
+        }
         final RichEditorListView.SelectionEdit edit = listView.beginSelectionEdit();
         if (edit == null) return;
         final TL_iv.RichMessage rich = edit.extractRichMessage();

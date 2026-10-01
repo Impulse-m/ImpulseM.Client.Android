@@ -115,7 +115,6 @@ import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
 import org.json.JSONObject;
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
 import org.telegram.messenger.ApplicationLoader;
@@ -130,6 +129,7 @@ import org.telegram.messenger.FileStreamLoadOperation;
 import org.telegram.messenger.ImageLoader;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.ImageReceiver;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
 import org.telegram.messenger.MediaDataController;
@@ -5100,6 +5100,10 @@ public class ArticleViewer extends IArticleViewer implements NotificationCenter.
     private boolean showRestrictedToastOnResume;
     private void showRestrictedWebsiteToast() {
         showRestrictedToastOnResume = false;
+        // TODO(impulsem-unimplemented): browser settings
+        if (!ImpulseFeatures.BROWSER_SETTINGS) {
+            return;
+        }
         if (!attachedToWindow || LaunchActivity.instance == null || LaunchActivity.instance.isFinishing()) return;
         final FrameLayout container;
         if (pages[0].isWeb()) {

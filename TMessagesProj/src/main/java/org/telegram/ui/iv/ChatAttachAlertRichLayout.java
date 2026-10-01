@@ -26,11 +26,11 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.Emoji;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
@@ -176,6 +176,10 @@ public class ChatAttachAlertRichLayout extends ChatAttachAlert.AttachAlertLayout
         @Override public void onRedo() { listView.redo(); }
         @Override public void onEmoji() { toggleEmojiPopup(); }
         @Override public void onAi() {
+            // TODO(impulsem-unimplemented): AI compose
+            if (!ImpulseFeatures.AI_COMPOSE) {
+                return;
+            }
             new RichAIComposeSheet(getContext(), currentAccount, resourcesProvider, richMessage -> listView.addRichMessage(richMessage)).show();
         }
         @Override public void onAttach() { listView.pendingMediaRow = null; openAttach(DEFAULT_ATTACH_LAYOUTS, 0); }
@@ -190,7 +194,9 @@ public class ChatAttachAlertRichLayout extends ChatAttachAlert.AttachAlertLayout
         @Override public void onQuote() { listView.toggleQuoteOnSelection(); updateFormattingButtons(); }
         @Override public void onAiStyle() {
             // TODO(impulsem-unimplemented): AI compose
-            if (!ImpulseFeatures.AI_COMPOSE) return;
+            if (!ImpulseFeatures.AI_COMPOSE) {
+                return;
+            }
             final RichEditorListView.SelectionEdit edit = listView.beginSelectionEdit();
             if (edit == null) return;
             final TL_iv.RichMessage rich = edit.extractRichMessage();

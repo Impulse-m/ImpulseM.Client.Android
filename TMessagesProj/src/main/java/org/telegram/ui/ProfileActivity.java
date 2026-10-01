@@ -129,7 +129,6 @@ import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
 import org.telegram.PhoneFormat.PhoneFormat;
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -149,6 +148,7 @@ import org.telegram.messenger.FlagSecureReason;
 import org.telegram.messenger.ImageLoader;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.ImageReceiver;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LanguageDetector;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
@@ -3667,7 +3667,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                 button2.addView(bottomButton[a], LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.MATCH_PARENT, Gravity.CENTER));
                 bottomButtonContainer[a].addView(button2, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, 60, Gravity.CENTER_HORIZONTAL));
                 bottomButtonsContainer.addView(bottomButtonContainer[a], LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.BOTTOM | Gravity.FILL_HORIZONTAL));
-                if (a == 1 || !getMessagesController().storiesEnabled()) {
+                // TODO(impulsem-unimplemented): stories posting
+                if (a == 1 || !ImpulseFeatures.STORIES_POSTING || !getMessagesController().storiesEnabled()) {
                     bottomButtonContainer[a].setTranslationY(dp(72));
                 }
             }
@@ -3791,7 +3792,8 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             @Override
             protected void onBottomButtonVisibilityChange() {
                 super.onBottomButtonVisibilityChange();
-                if (myProfile && bottomButtonContainer[0] != null && sharedMediaLayout != null) {
+                // TODO(impulsem-unimplemented): stories posting
+                if (myProfile && ImpulseFeatures.STORIES_POSTING && bottomButtonContainer[0] != null && sharedMediaLayout != null) {
                     bottomButtonContainer[0].setTranslationY(dp(72) * (1f - sharedMediaLayout.getBottomButtonStoriesVisibility()));
                 }
             }
@@ -5146,7 +5148,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             emptyView.setVisibility(View.GONE);
             frameLayout.addView(emptyView);
 
-            searchAdapter.loadFaqWebPage();
+            // TODO(impulsem-unimplemented): help section
+            if (ImpulseFeatures.HELP_SECTION) {
+                searchAdapter.loadFaqWebPage();
+            }
         }
 
         if (banFromGroup != 0) {
@@ -10688,10 +10693,11 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     faqRow = rowCount++;
                     policyRow = rowCount++;
                 }
+                // TODO(impulsem-unimplemented): help section
+                if (ImpulseFeatures.HELP_SECTION && (BuildVars.LOGS_ENABLED || BuildVars.DEBUG_PRIVATE_VERSION)) {
+                    helpSectionCell = rowCount++;
+                }
                 if (BuildVars.LOGS_ENABLED || BuildVars.DEBUG_PRIVATE_VERSION) {
-                    if (ImpulseFeatures.HELP_SECTION) {
-                        helpSectionCell = rowCount++;
-                    }
                     debugHeaderRow = rowCount++;
                 }
                 if (BuildVars.LOGS_ENABLED) {
@@ -14533,7 +14539,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                             String url = data.readString(false);
                             MessagesController.FaqSearchResult result = new MessagesController.FaqSearchResult(title, path, url);
                             result.num = num;
-                            recentSearches.add(result);
+                            // TODO(impulsem-unimplemented): help section
+                            if (ImpulseFeatures.HELP_SECTION) {
+                                recentSearches.add(result);
+                            }
                         } else if (type == 1) {
                             SearchResult result = resultHashMap.get(data.readInt32(false));
                             if (result != null) {
@@ -14832,6 +14841,10 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
         }
 
         public void loadFaqWebPage() {
+            // TODO(impulsem-unimplemented): help section
+            if (!ImpulseFeatures.HELP_SECTION) {
+                return;
+            }
             faqWebPage = MessagesController.getInstance(currentAccount).faqWebPage;
             if (faqWebPage != null) {
                 faqSearchArray.addAll(MessagesController.getInstance(currentAccount).faqSearchArray);

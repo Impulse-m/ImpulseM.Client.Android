@@ -75,7 +75,6 @@ import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
 import org.telegram.messenger.ApplicationLoader;
@@ -84,6 +83,7 @@ import org.telegram.messenger.DialogObject;
 import org.telegram.messenger.FileLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.ImageReceiver;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
 import org.telegram.messenger.MediaDataController;
@@ -1999,6 +1999,7 @@ public class SharedMediaLayout extends FrameLayout implements NotificationCenter
 
                 if (tab == TAB_BOT_PREVIEWS && user != null && user.bot && user.bot_has_main_app && user.bot_can_edit && botPreviewsContainer != null) {
                     ItemOptions.makeOptions(profileActivity, photoVideoOptionsItem)
+                        // TODO(impulsem-unimplemented): stories posting
                         .addIf(ImpulseFeatures.STORIES_POSTING && botPreviewsContainer.getItemsCount() < profileActivity.getMessagesController().botPreviewMediasMax, R.drawable.msg_addbot, getString(R.string.ProfileBotAddPreview), () -> {
                             StoryRecorder.getInstance(profileActivity.getParentActivity(), profileActivity.getCurrentAccount()).openBot(dialog_id, botPreviewsContainer.getCurrentLang(), null);
                         })
@@ -7519,7 +7520,8 @@ public class SharedMediaLayout extends FrameLayout implements NotificationCenter
                     emptyView.button.setVisibility(View.GONE);
                 } else {
                     emptyView.setStickerType(StickerEmptyView.STICKER_TYPE_ALBUM);
-                    emptyView.button.setVisibility(!isSearchingStories() ? View.VISIBLE : View.GONE);
+                    // TODO(impulsem-unimplemented): stories posting
+                    emptyView.button.setVisibility(ImpulseFeatures.STORIES_POSTING && !isSearchingStories() ? View.VISIBLE : View.GONE);
                     emptyView.button.setText(addPostText(), false);
                 }
 
@@ -7550,7 +7552,8 @@ public class SharedMediaLayout extends FrameLayout implements NotificationCenter
                 } else {
                     mediaPages[a].emptyView.stickerView.setVisibility(View.VISIBLE);
                     mediaPages[a].emptyView.setStickerType(StickerEmptyView.STICKER_TYPE_ALBUM);
-                    mediaPages[a].emptyView.button.setVisibility(View.VISIBLE);
+                    // TODO(impulsem-unimplemented): stories posting
+                    mediaPages[a].emptyView.button.setVisibility(ImpulseFeatures.STORIES_POSTING ? View.VISIBLE : View.GONE);
                     mediaPages[a].emptyView.button.setText(addPostText(), false);
                 }
                 mediaPages[a].emptyView.title.setText(getString(R.string.NoArchivedStoriesTitle));

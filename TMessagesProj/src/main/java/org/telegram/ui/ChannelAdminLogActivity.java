@@ -87,6 +87,7 @@ import org.telegram.messenger.FileLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.ImageReceiver;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
@@ -3289,7 +3290,10 @@ public class ChannelAdminLogActivity extends BaseFragment implements Notificatio
                     public void didClickImage(ChatActionCell cell) {
                         MessageObject message = cell.getMessageObject();
                         if (message.type == MessageObject.TYPE_ACTION_WALLPAPER) {
-                            presentFragment(new ChannelColorActivity(getDialogId()).setOnApplied(ChannelAdminLogActivity.this));
+                            // TODO(impulsem-unimplemented): boosts (channel appearance)
+                            if (ImpulseFeatures.BOOSTS) {
+                                presentFragment(new ChannelColorActivity(getDialogId()).setOnApplied(ChannelAdminLogActivity.this));
+                            }
                             return;
                         }
                         PhotoViewer.getInstance().setParentActivity(ChannelAdminLogActivity.this);

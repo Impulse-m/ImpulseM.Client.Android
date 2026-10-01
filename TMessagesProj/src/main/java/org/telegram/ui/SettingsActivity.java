@@ -62,7 +62,6 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.PhoneFormat.PhoneFormat;
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.AuthTokensHelper;
@@ -74,6 +73,7 @@ import org.telegram.messenger.FileLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.ImageLoader;
 import org.telegram.messenger.ImageLocation;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaDataController;
@@ -734,8 +734,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         }
         // TODO(impulsem-unimplemented): help section
         if (ImpulseFeatures.HELP_SECTION) {
-            if (items.get(items.size() - 1).viewType != UniversalAdapter.VIEW_TYPE_SHADOW)
+            if (items.get(items.size() - 1).viewType != UniversalAdapter.VIEW_TYPE_SHADOW) {
                 items.add(UItem.asShadow(null));
+            }
 
             items.add(UItem.asHeader(getString(R.string.SettingsHelp)));
             items.add(SettingCell.Factory.of(17, IconBackgroundColors.ORANGE.top, IconBackgroundColors.ORANGE.bottom, R.drawable.settings_ask, getString(R.string.AskAQuestion)));
@@ -745,19 +746,27 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         }
 
         if (SharedSettings.experimentalSettingsAllowed.get()) {
-            items.add(UItem.asShadow(null));
+            if (items.get(items.size() - 1).viewType != UniversalAdapter.VIEW_TYPE_SHADOW) {
+                items.add(UItem.asShadow(null));
+            }
             items.add(UItem.asHeader("Experimental"));
             items.add(SettingCell.Factory.of(24, 0xFFF45255, 0xFFDF3955, 0, getString(R.string.RoundVideoSettings)));
         }
 
         if (BuildVars.LOGS_ENABLED || BuildVars.DEBUG_PRIVATE_VERSION) {
-            items.add(UItem.asShadow(null));
+            if (items.get(items.size() - 1).viewType != UniversalAdapter.VIEW_TYPE_SHADOW) {
+                items.add(UItem.asShadow(null));
+            }
             items.add(UItem.asHeader(getString(R.string.SettingsDebug)));
             items.add(SettingCell.Factory.of(20, 0xFF55CA47, 0xFF27B434, 0, getString(R.string.DebugSendLogs)));
             items.add(SettingCell.Factory.of(21, 0xFF55CA47, 0xFF27B434, 0, getString(R.string.DebugSendLastLogs)));
             items.add(SettingCell.Factory.of(22, 0xFFF45255, 0xFFDF3955, 0, getString(R.string.DebugClearLogs)));
         }
 
+        // The version footer is itself a shadow, so drop a trailing plain one to avoid a double divider.
+        if (items.get(items.size() - 1).viewType == UniversalAdapter.VIEW_TYPE_SHADOW) {
+            items.remove(items.size() - 1);
+        }
         items.add(UItem.asCustomShadow(versionView));
     }
 

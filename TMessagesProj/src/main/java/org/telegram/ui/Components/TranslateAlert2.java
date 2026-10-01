@@ -51,9 +51,9 @@ import com.google.common.base.Charsets;
 
 import org.json.JSONArray;
 import org.json.JSONTokener;
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.Emoji;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LanguageDetector;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessageObject;

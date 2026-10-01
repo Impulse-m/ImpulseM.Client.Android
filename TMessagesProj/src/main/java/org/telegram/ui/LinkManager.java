@@ -10,13 +10,13 @@ import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BirthdayController;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.ContactsController;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaDataController;
@@ -224,6 +224,10 @@ public class LinkManager {
         }
 
         if ("post".equalsIgnoreCase(first)) {
+            // TODO(impulsem-unimplemented): stories posting
+            if (!ImpulseFeatures.STORIES_POSTING) {
+                return true;
+            }
             int mode = StoryRecorder.MODE_PHOTO;
             if ("video".equalsIgnoreCase(second))
                 mode = StoryRecorder.MODE_VIDEO;
@@ -1221,6 +1225,16 @@ public class LinkManager {
             return true;
         }
 
+        // TODO(impulsem-unimplemented): help section
+        if (!ImpulseFeatures.HELP_SECTION && (
+            "ask-question".equalsIgnoreCase(first) ||
+            "ask-a-question".equalsIgnoreCase(first) ||
+            "faq".equalsIgnoreCase(first) ||
+            "features".equalsIgnoreCase(first) ||
+            "privacy-policy".equalsIgnoreCase(first)
+        )) {
+            return true;
+        }
         if ("ask-question".equalsIgnoreCase(first) || "ask-a-question".equalsIgnoreCase(first)) {
             AlertsCreator.createSupportAlert(getLastFragment(), null).show();
             return true;
@@ -1392,7 +1406,9 @@ public class LinkManager {
 
     private boolean handleAiStyle(String slug) {
         // TODO(impulsem-unimplemented): AI compose
-        if (!ImpulseFeatures.AI_COMPOSE) return true;
+        if (!ImpulseFeatures.AI_COMPOSE) {
+            return true;
+        }
         if (TextUtils.isEmpty(slug)) return false;
         final TL_aicompose.getTone req = new TL_aicompose.getTone();
         final TL_aicompose.inputAiComposeToneSlug input = new TL_aicompose.inputAiComposeToneSlug();

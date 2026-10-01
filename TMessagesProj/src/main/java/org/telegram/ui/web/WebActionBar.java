@@ -42,6 +42,7 @@ import androidx.core.graphics.ColorUtils;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.Emoji;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
@@ -245,7 +246,10 @@ public class WebActionBar extends FrameLayout {
                     o.add(R.drawable.menu_views_recent, getString(R.string.WebHistory), click.run(history_item));
                 }
                 o.add(R.drawable.menu_browser_bookmarks, getString(R.string.WebBookmarks), click.run(bookmarks_item));
-                o.add(R.drawable.msg_settings_old, getString(R.string.Settings), click.run(settings_item));
+                // TODO(impulsem-unimplemented): browser settings
+                if (ImpulseFeatures.BROWSER_SETTINGS) {
+                    o.add(R.drawable.msg_settings_old, getString(R.string.Settings), click.run(settings_item));
+                }
             }
             o.setOnDismiss(() -> {
                 isMenuShown = false;

@@ -94,7 +94,6 @@ import com.google.firebase.appindexing.FirebaseUserActions;
 import com.google.firebase.appindexing.builders.AssistActionBuilder;
 
 import org.telegram.PhoneFormat.PhoneFormat;
-import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.AnimationNotificationsLocker;
@@ -118,6 +117,7 @@ import org.telegram.messenger.FingerprintController;
 import org.telegram.messenger.FlagSecureReason;
 import org.telegram.messenger.GenericProvider;
 import org.telegram.messenger.GiftAuctionController;
+import org.telegram.messenger.ImpulseFeatures;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.LocationController;
@@ -6138,11 +6138,19 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     @Override
     public boolean canSelectStories() {
+        // TODO(impulsem-unimplemented): stories posting
+        if (!ImpulseFeatures.STORIES_POSTING) {
+            return false;
+        }
         return photoPathsArray != null && photoPathsArray.size() == 1 || videoPath != null;
     }
 
     @Override
     public boolean didSelectStories(DialogsActivity dialogsFragment) {
+        // TODO(impulsem-unimplemented): stories posting
+        if (!ImpulseFeatures.STORIES_POSTING) {
+            return false;
+        }
         StoryEntry entry = null;
         if (photoPathsArray != null && !photoPathsArray.isEmpty()) {
             entry = StoryEntry.fromMedia(photoPathsArray);

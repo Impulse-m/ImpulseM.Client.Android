@@ -183,6 +183,8 @@ public class RichEditorToolbar extends FrameLayout {
         bottomPanel.addView(aiButton, LayoutHelper.createLinear(44, 44, 0, Gravity.LEFT | Gravity.CENTER_VERTICAL, 0, 0, 8, 0));
         ScaleStateListAnimator.apply(aiButton);
         aiButton.setContentDescription("AI");
+        // TODO(impulsem-unimplemented): AI compose
+        aiButton.setVisibility(ImpulseFeatures.AI_COMPOSE ? View.VISIBLE : View.GONE);
         aiButton.setOnClickListener(v -> delegate.onAi());
 
         final FrameLayout blocksContainer2 = new FrameLayout(context);
