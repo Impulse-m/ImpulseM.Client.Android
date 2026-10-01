@@ -76,6 +76,7 @@ class IdentityTest(unittest.TestCase):
     def test_firebase_plugin_removed(self) -> None:
         self.assertNotIn("com.google.gms.google-services", brand.read(brand.ROOT / "TMessagesProj_App" / "build.gradle"))
         self.assertFalse((brand.ROOT / "TMessagesProj_App" / "google-services.json").exists())
+        self.assertNotIn("com.google.gms.google-services", brand.read(brand.ROOT / "TMessagesProj" / "build.gradle"))
 
 
 if __name__ == "__main__":

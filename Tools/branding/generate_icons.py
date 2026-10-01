@@ -1,8 +1,9 @@
 """Generates every ImpulseM logo asset from brand.py. Re-running reproduces identical files."""
 
+import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 import brand
 
@@ -188,10 +189,72 @@ def write_logo_rasters() -> None:
         webp.unlink()
 
 
+WATERMARK_TEXT: str = "IMPULSEM"
+WATERMARK_SIZE: int = 248
+WATERMARK_CANVAS: int = 352
+WATERMARK_ANGLE: float = 45.0
+WATERMARK_FONT: Path = brand.ASSETS / "fonts" / "rextrabold.ttf"
+WATERMARK_FONT_SIZE: float = 33.0
+WATERMARK_TRACK: float = 11.0
+WATERMARK_TEXT_LENGTH: float = 250.0
+WATERMARK_ARC_RADIUS: float = 368.0
+WATERMARK_ARC_CENTER: tuple[float, float] = (176.0, -185.0)
+WATERMARK_CAP_RATIO: float = 0.711
+
+
+def measure_watermark(font: ImageFont.FreeTypeFont, text: str, track: float) -> tuple[list[float], float]:
+    advances: list[float] = [font.getlength(letter) for letter in text]
+    return advances, sum(advances) + track * (len(text) - 1)
+
+
+def render_watermark(text: str) -> Image.Image:
+    """Round-video watermark: white letters on a circular arc, tilted 45 degrees, 248x248 RGBA."""
+    scale: int = SUPERSAMPLE // 2
+    font_size: float = WATERMARK_FONT_SIZE
+    track: float = WATERMARK_TRACK
+    font: ImageFont.FreeTypeFont = ImageFont.truetype(str(WATERMARK_FONT), round(font_size * scale))
+    advances, length = measure_watermark(font, text, track * scale)
+    fit: float = WATERMARK_TEXT_LENGTH * scale / length
+    if fit < 1.0:
+        font_size *= fit
+        track *= fit
+        font = ImageFont.truetype(str(WATERMARK_FONT), round(font_size * scale))
+        advances, length = measure_watermark(font, text, track * scale)
+    canvas_size: int = WATERMARK_CANVAS * scale
+    canvas: Image.Image = Image.new("L", (canvas_size, canvas_size), 0)
+    cap: float = font_size * scale * WATERMARK_CAP_RATIO
+    side: int = round(font_size * scale * 3)
+    center_x: float = WATERMARK_ARC_CENTER[0] * scale
+    center_y: float = WATERMARK_ARC_CENTER[1] * scale
+    radius: float = WATERMARK_ARC_RADIUS * scale
+    pen: float = -length / 2.0
+    for letter, advance in zip(text, advances):
+        glyph: Image.Image = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(glyph).text((side / 2.0 - advance / 2.0, side / 2.0 + cap / 2.0), letter, font=font, fill=255, anchor="ls")
+        angle: float = (pen + advance / 2.0) / radius
+        glyph = glyph.rotate(math.degrees(angle), resample=Image.BICUBIC)
+        x: float = center_x + radius * math.sin(angle)
+        y: float = center_y + radius * math.cos(angle)
+        canvas.paste(255, (round(x - side / 2.0), round(y - side / 2.0)), glyph)
+        pen += advance + track * scale
+    canvas = canvas.rotate(WATERMARK_ANGLE, resample=Image.BICUBIC)
+    margin: int = (WATERMARK_CANVAS - WATERMARK_SIZE) // 2 * scale
+    canvas = canvas.crop((margin, margin, margin + WATERMARK_SIZE * scale, margin + WATERMARK_SIZE * scale))
+    alpha: Image.Image = canvas.resize((WATERMARK_SIZE, WATERMARK_SIZE), Image.LANCZOS)
+    white: Image.Image = alpha.point(lambda value: 255 if value > 0 else 0)
+    return Image.merge("RGBA", (white, white, white, alpha))
+
+
+def write_watermark() -> None:
+    folder: Path = brand.RES / "raw"
+    render_watermark(WATERMARK_TEXT).save(folder / "round_blur_overlay_text.png", optimize=True)
+
+
 def main() -> None:
     write_launcher_pngs()
     write_vectors()
     write_logo_rasters()
+    write_watermark()
 
 
 if __name__ == "__main__":
