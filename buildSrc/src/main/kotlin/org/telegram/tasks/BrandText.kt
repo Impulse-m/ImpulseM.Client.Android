@@ -66,4 +66,16 @@ object BrandText {
             }
         }
     }
+
+
+    /**
+     * The app names, which the build defines through resValue instead of strings.xml. LocaleController resolves an
+     * R.string id only through the localization assets, so every asset must carry these entries as well.
+     */
+    fun appNames(brand: String): Map<String, String> {
+        return linkedMapOf(
+            "AppName" to brand,
+            "AppNameBeta" to "$brand Beta"
+        )
+    }
 }

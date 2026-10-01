@@ -188,4 +188,13 @@ class BrandTextTest {
     fun keepsFormatStringPlaceholders() {
         assertEquals("%1\$s joined ImpulseM", BrandText.replace("%1\$s joined Telegram", "ImpulseM"))
     }
+
+
+    @Test
+    fun appNamesFollowTheBrand() {
+        assertEquals(
+            mapOf("AppName" to "Acme", "AppNameBeta" to "Acme Beta"),
+            BrandText.appNames("Acme")
+        )
+    }
 }

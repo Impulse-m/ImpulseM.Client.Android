@@ -376,6 +376,17 @@ abstract class TelegramStringsTask : DefaultTask() {
             }
         }
 
+        // Without these entries getString(R.string.AppName) renders as "LOC_ERR:null".
+        for ((name, value) in BrandText.appNames(brand)) {
+            entriesByName.getOrPut(name) {
+                LocalizationEntry(
+                    name = name,
+                    hash = name.hashCode(),
+                    value = value
+                )
+            }
+        }
+
         val entries = entriesByName.values
             .sortedWith { first, second ->
                 Integer.compareUnsigned(first.hash, second.hash)
