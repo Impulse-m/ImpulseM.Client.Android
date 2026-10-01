@@ -60,6 +60,7 @@ import androidx.dynamicanimation.animation.SpringAnimation;
 import androidx.dynamicanimation.animation.SpringForce;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BotWebViewVibrationEffect;
 import org.telegram.messenger.FileLog;
@@ -1703,7 +1704,7 @@ public class PasscodeView extends FrameLayout implements NotificationCenter.Noti
             title.setTextColor(0xFFFFFFFF);
             title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 19);
             title.setTypeface(AndroidUtilities.bold());
-            title.setText("Unlock to use Telegram");
+            title.setText("Unlock to use " + BuildVars.BRAND_NAME);
             title.setGravity(Gravity.CENTER);
             container1.addView(title, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER, 0, 0, 0, 8));
 
