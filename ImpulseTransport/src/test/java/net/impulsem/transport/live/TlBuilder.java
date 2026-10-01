@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import net.impulsem.transport.schema.ConstructorSpec;
+import net.impulsem.transport.schema.LegacySpec;
 import net.impulsem.transport.schema.MethodSpec;
 import net.impulsem.transport.schema.ParamSpec;
 import net.impulsem.transport.schema.TlProtoSchema;
@@ -58,6 +59,26 @@ public final class TlBuilder {
             }
         }
         throw new IllegalArgumentException("unknown constructor " + predicate);
+    }
+
+
+    /** Builds a request with the layout of an older layer, by its legacy method id. */
+    public static TlBuilder legacyMethod(int id) {
+        LegacySpec spec = TlProtoSchema.load().legacyMethod(id);
+        if (spec == null) {
+            throw new IllegalArgumentException("unknown legacy method " + Integer.toHexString(id));
+        }
+        return new TlBuilder(spec.name, spec.id, spec.params);
+    }
+
+
+    /** Builds an object with the layout of an older layer, by its legacy constructor id. */
+    public static TlBuilder legacyObject(int id) {
+        LegacySpec spec = TlProtoSchema.load().legacyConstructor(id);
+        if (spec == null) {
+            throw new IllegalArgumentException("unknown legacy constructor " + Integer.toHexString(id));
+        }
+        return new TlBuilder(spec.name, spec.id, spec.params);
     }
 
 

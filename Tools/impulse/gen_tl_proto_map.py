@@ -16,6 +16,7 @@ SCHEMA_PATH: Path = REPO_ROOT / "TMessagesProj_AppTests" / "tlscheme" / "229.jso
 PROTOS_DIR: Path = TOOLS_DIR / "protos"
 OUT_JSON: Path = REPO_ROOT / "ImpulseTransport" / "src" / "main" / "resources" / "impulse" / "tl-proto-229.json.gz"
 OUT_MD: Path = TOOLS_DIR / "coverage-229.md"
+HISTORY_DIR: Path = REPO_ROOT / "TMessagesProj_AppTests" / "tlscheme"
 
 LAYER: int = 229
 EXCLUDED_CONSTRUCTORS: List[str] = ["boolFalse", "boolTrue", "true", "vector"]
@@ -155,6 +156,216 @@ def result_of(
     return {"kind": "object", "type": tlResult}
 
 
+def param_shape(entry: Param) -> Dict[str, Any]:
+    """The layout-relevant part of a param: everything except proto field numbers."""
+    shape: Dict[str, Any] = {"kind": entry["kind"]}
+    if "type" in entry:
+        shape["type"] = entry["type"]
+    if "elem" in entry:
+        shape["elem"] = param_shape(entry["elem"])
+    if "flag" in entry:
+        shape["flag"] = list(entry["flag"])
+    if "name" in entry:
+        shape["name"] = entry["name"]
+    return shape
+
+
+def parse_legacy_params(
+    tlParams: List[Dict[str, str]],
+    where: str,
+) -> List[Param]:
+    parsed: List[Param] = []
+    for p in tlParams:
+        entry: Param = parse_tl_type(p["type"], where + "." + p["name"])
+        entry["name"] = p["name"]
+        parsed.append(entry)
+    return parsed
+
+
+def kinds_compatible(
+    legacy: Param,
+    current: Param,
+) -> Optional[str]:
+    """None when the upgrader can convert legacy into current, else the reason it cannot."""
+    legacyKind: str = legacy["kind"]
+    currentKind: str = current["kind"]
+    if legacyKind == currentKind:
+        if legacyKind == "object" and legacy["type"] != current["type"]:
+            return "object type %s -> %s" % (legacy["type"], current["type"])
+        if legacyKind == "vector":
+            return kinds_compatible(legacy["elem"], current["elem"])
+        return None
+    if legacyKind == "int" and currentKind in ("double", "long"):
+        return None
+    return "kind %s -> %s" % (legacyKind, currentKind)
+
+
+def vector_adapter_ok(
+    legacy: Param,
+    current: Param,
+) -> bool:
+    """Vector<int> to Vector<InputMessage>: ids are wrapped as inputMessageID."""
+    return (
+        legacy["kind"] == "vector"
+        and current["kind"] == "vector"
+        and legacy["elem"]["kind"] == "int"
+        and current["elem"]["kind"] == "object"
+        and current["elem"]["type"] == "InputMessage"
+    )
+
+
+def unknown_object_type(
+    param: Param,
+    knownTypes: Set[str],
+) -> Optional[str]:
+    """The first object type used by a legacy param (nested elements included) that has no current constructor."""
+    if param["kind"] == "object" and param["type"] not in knownTypes:
+        return param["type"]
+    if param["kind"] == "vector":
+        return unknown_object_type(param["elem"], knownTypes)
+    return None
+
+
+def object_to_vector_ok(
+    legacy: Param,
+    current: Param,
+) -> bool:
+    """T to Vector<T>: the single object becomes a one-element vector (account.createTheme settings)."""
+    return (
+        legacy["kind"] == "object"
+        and current["kind"] == "vector"
+        and current["elem"]["kind"] == "object"
+        and current["elem"]["type"] == legacy["type"]
+    )
+
+
+def classify_params(
+    legacyParams: List[Param],
+    currentParams: List[Param],
+    zeroParamTypes: Set[str],
+    knownTypes: Optional[Set[str]] = None,
+) -> Tuple[str, Optional[str]]:
+    """Returns (class, problem): class is alias or upgrade, problem is None when the upgrader supports it."""
+    identical: bool = [param_shape(p) for p in legacyParams] == [param_shape(p) for p in currentParams]
+    problem: Optional[str] = None
+    if knownTypes is not None:
+        for p in legacyParams:
+            missing: Optional[str] = unknown_object_type(p, knownTypes)
+            if missing is not None:
+                return ("alias" if identical else "upgrade"), "param %s: type %s no longer exists" % (p["name"], missing)
+    legacyByName: Dict[str, Param] = {p["name"]: p for p in legacyParams if p["kind"] != "flags"}
+    for cur in currentParams:
+        if cur["kind"] == "flags":
+            continue
+        old: Optional[Param] = legacyByName.get(cur["name"])
+        if old is None:
+            if "flag" not in cur and cur["kind"] == "object" and cur["type"] not in zeroParamTypes:
+                problem = "param %s: no zero-param constructor of %s" % (cur["name"], cur["type"])
+                break
+            continue
+        if vector_adapter_ok(old, cur) or object_to_vector_ok(old, cur):
+            continue
+        reason: Optional[str] = kinds_compatible(old, cur)
+        if reason is not None:
+            problem = "param %s: %s" % (cur["name"], reason)
+            break
+    return ("alias" if identical else "upgrade"), problem
+
+
+def legacy_param(entry: Param) -> Param:
+    """A param as stored in the legacy table: layout only."""
+    out: Param = {"kind": entry["kind"], "name": entry["name"]}
+    if "type" in entry:
+        out["type"] = entry["type"]
+    if "elem" in entry:
+        elem: Param = dict(entry["elem"])
+        elem.setdefault("name", "")
+        out["elem"] = legacy_param(elem)
+    if "flag" in entry:
+        out["flag"] = entry["flag"]
+    return out
+
+
+def load_history() -> List[Tuple[int, Dict[str, Any]]]:
+    layers: List[Tuple[int, Dict[str, Any]]] = []
+    for path in HISTORY_DIR.glob("*.json"):
+        if path.stem.isdigit() and int(path.stem) < LAYER:
+            layers.append((int(path.stem), json.loads(path.read_text(encoding="utf-8"))))
+    layers.sort(key=lambda item: item[0])
+    return layers
+
+
+def build_legacy(
+    schema: Dict[str, Any],
+    mapping: Dict[str, Any],
+    history: List[Tuple[int, Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Legacy ids (not in the current layer) whose predicate or method name still exists in it."""
+    currentCtors: Dict[str, Dict[str, Any]] = {c["predicate"]: c for c in mapping["constructors"]}
+    currentMethods: Dict[str, Dict[str, Any]] = {m["method"]: m for m in mapping["methods"]}
+    currentIds: Set[int] = {int(c["id"]) for c in schema["constructors"]} | {int(m["id"]) for m in schema["methods"]}
+    zeroParamTypes: Set[str] = {c["type"] for c in mapping["constructors"] if not c["params"]}
+    knownTypes: Set[str] = {c["type"] for c in mapping["constructors"]}
+    ctorEntries: Dict[int, Dict[str, Any]] = {}
+    methodEntries: Dict[int, Dict[str, Any]] = {}
+    skipped: int = 0
+    for layer, doc in history:
+        for item in doc["constructors"]:
+            name: str = item["predicate"]
+            target: Optional[Dict[str, Any]] = currentCtors.get(name)
+            oldId: int = int(item["id"])
+            if target is None or oldId in currentIds or item["type"] != target["type"]:
+                continue
+            try:
+                params: List[Param] = parse_legacy_params(item["params"], "constructor %s layer %d" % (name, layer))
+            except ValueError:
+                skipped += 1
+                continue
+            cls, problem = classify_params(params, target["params"], zeroParamTypes, knownTypes)
+            ctorEntries[oldId] = legacy_entry(oldId, name, layer, params, target["id"], cls, problem)
+        for item in doc["methods"]:
+            name = item["method"]
+            methodTarget: Optional[Dict[str, Any]] = currentMethods.get(name)
+            oldId = int(item["id"])
+            if methodTarget is None or oldId in currentIds:
+                continue
+            try:
+                params = parse_legacy_params(item["params"], "method %s layer %d" % (name, layer))
+            except ValueError:
+                skipped += 1
+                continue
+            cls, problem = classify_params(params, methodTarget["params"], zeroParamTypes, knownTypes)
+            methodEntries[oldId] = legacy_entry(oldId, name, layer, params, methodTarget["id"], cls, problem)
+    return {
+        "constructors": [ctorEntries[k] for k in sorted(ctorEntries)],
+        "methods": [methodEntries[k] for k in sorted(methodEntries)],
+        "skipped": skipped,
+    }
+
+
+def legacy_entry(
+    oldId: int,
+    name: str,
+    layer: int,
+    params: List[Param],
+    targetId: int,
+    cls: str,
+    problem: Optional[str],
+) -> Dict[str, Any]:
+    entry: Dict[str, Any] = {
+        "id": oldId,
+        "name": name,
+        "layer": layer,
+        "params": [legacy_param(p) for p in params],
+        "target_id": targetId,
+        "class": cls,
+        "supported": problem is None,
+    }
+    if problem is not None:
+        entry["problem"] = problem
+    return entry
+
+
 def load_overlay_fields(path: Path) -> Set[Tuple[str, str, str]]:
     """Returns (file, message, field) for every kind=field overlay entry."""
     doc: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
@@ -275,6 +486,14 @@ def write_report(
     lines.append("- Mapped types: %d (polymorphic: %d)" % (len(mapping["types"]), len([t for t in mapping["types"] if t["polymorphic"]])))
     lines.append("- Schema methods: %d" % len(schema["methods"]))
     lines.append("- Mapped methods: %d" % len(mapping["methods"]))
+    legacy: Dict[str, Any] = mapping.get("legacy", {"constructors": [], "methods": []})
+    legacyAll: List[Dict[str, Any]] = legacy["constructors"] + legacy["methods"]
+    lines.append("- Legacy constructors: %d, legacy methods: %d" % (len(legacy["constructors"]), len(legacy["methods"])))
+    lines.append("- Legacy aliases: %d, upgrades: %d (unsupported: %d)" % (
+        len([e for e in legacyAll if e["class"] == "alias"]),
+        len([e for e in legacyAll if e["class"] == "upgrade"]),
+        len([e for e in legacyAll if not e["supported"]]),
+    ))
     lines.append("")
     lines.append("## Excluded constructors")
     lines.append("")
@@ -325,6 +544,7 @@ def write_report(
 def generate(outJson: Path = OUT_JSON, outMd: Path = OUT_MD) -> Dict[str, Any]:
     schema: Dict[str, Any] = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     mapping, extra = build(schema)
+    mapping["legacy"] = build_legacy(schema, mapping, load_history())
     data: bytes = json.dumps(mapping, sort_keys=True, separators=(",", ":")).encode("utf-8")
     outJson.parent.mkdir(parents=True, exist_ok=True)
     outJson.write_bytes(gzip.compress(data, compresslevel=9, mtime=0))

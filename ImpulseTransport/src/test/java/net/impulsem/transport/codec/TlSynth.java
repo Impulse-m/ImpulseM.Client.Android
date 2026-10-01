@@ -1,6 +1,7 @@
 package net.impulsem.transport.codec;
 
 import net.impulsem.transport.schema.ConstructorSpec;
+import net.impulsem.transport.schema.LegacySpec;
 import net.impulsem.transport.schema.MethodSpec;
 import net.impulsem.transport.schema.ParamSpec;
 import net.impulsem.transport.schema.TlProtoSchema;
@@ -42,6 +43,18 @@ final class TlSynth {
 
 
     byte[] method(MethodSpec spec, boolean allFlags) {
+        TlWriter writer = new TlWriter();
+        writer.writeInt32(spec.id);
+        writeParams(writer, spec.params, allFlags, 0);
+        return writer.toByteArray();
+    }
+
+
+    /** A legacy-layout constructor or method call (its own id, its own params). */
+    byte[] legacy(
+        LegacySpec spec,
+        boolean allFlags
+    ) {
         TlWriter writer = new TlWriter();
         writer.writeInt32(spec.id);
         writeParams(writer, spec.params, allFlags, 0);

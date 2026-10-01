@@ -461,7 +461,7 @@ public class LiveRpcTest {
 
 
     /** About 40 KB of seeded block noise, 400 px so the server derives the x size, so the bytes are identical on every run. */
-    private static byte[] deterministicJpeg() throws IOException {
+    static byte[] deterministicJpeg() throws IOException {
         int side = 400;
         BufferedImage image = new BufferedImage(side, side, BufferedImage.TYPE_INT_RGB);
         Random noise = new Random(42L);

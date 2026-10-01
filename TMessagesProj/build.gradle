@@ -290,3 +290,4 @@ task checkVisibility {
 }
 
 preBuild.dependsOn checkVisibility
+preBuild.dependsOn ':ImpulseTransport:checkClientConstructors'
