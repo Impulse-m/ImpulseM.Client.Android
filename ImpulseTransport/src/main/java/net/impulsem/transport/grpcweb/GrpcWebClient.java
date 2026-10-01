@@ -41,6 +41,17 @@ public final class GrpcWebClient {
         byte[] protoMessage,
         Map<String, String> headers
     ) {
+        return newCall(path, protoMessage, headers, null);
+    }
+
+
+    /** The tag is readable later through {@code call.request().tag()}. */
+    public Call newCall(
+        String path,
+        byte[] protoMessage,
+        Map<String, String> headers,
+        Object tag
+    ) {
         byte[] framed = new byte[5 + protoMessage.length];
         framed[0] = 0;
         framed[1] = (byte) (protoMessage.length >>> 24);
@@ -56,7 +67,8 @@ public final class GrpcWebClient {
             .post(RequestBody.create(framed, CONTENT_TYPE))
             .header("x-grpc-web", "1")
             .header("te", "trailers")
-            .header("accept", "application/grpc-web+proto");
+            .header("accept", "application/grpc-web+proto")
+            .tag(tag);
         if (headers != null) {
             for (Map.Entry<String, String> entry : headers.entrySet()) {
                 builder.header(entry.getKey(), entry.getValue());
