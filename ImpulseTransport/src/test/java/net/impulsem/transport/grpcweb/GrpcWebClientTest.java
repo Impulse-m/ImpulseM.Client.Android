@@ -181,6 +181,7 @@ public class GrpcWebClientTest {
         assertEquals("/impulse.sync.SyncService/GetCentrifugoToken", recorded.getPath());
         assertEquals("application/grpc-web+proto", recorded.getHeader("content-type"));
         assertEquals("1", recorded.getHeader("x-grpc-web"));
+        assertEquals("trailers", recorded.getHeader("te"));
         assertEquals("Bearer tok", recorded.getHeader("authorization"));
         assertEquals("5", recorded.getHeader("x-takeout-id"));
         assertArrayEquals(frame(0, message), recorded.getBody().readByteArray());
@@ -199,5 +200,62 @@ public class GrpcWebClientTest {
     public void grpcMessageNullWhenAbsent() throws Exception {
         enqueue(200, trailer("grpc-status: 0\r\n"));
         assertNull(run(new byte[0]).grpcMessage);
+    }
+
+
+    @Test
+    public void grpcMessagePercentDecoding() throws Exception {
+        enqueue(200, new byte[0], "grpc-status", "13", "grpc-message", "bad%21");
+        assertEquals("bad!", run(new byte[0]).grpcMessage);
+        enqueue(200, new byte[0], "grpc-status", "13", "grpc-message", "a%20b%21c");
+        assertEquals("a b!c", run(new byte[0]).grpcMessage);
+    }
+
+
+    @Test
+    public void trailerFrameErrorOverridesHeaderOk() throws Exception {
+        enqueue(
+            200,
+            trailer("grpc-status: 16\r\nerror-code: AUTH_KEY_UNREGISTERED\r\n"),
+            "grpc-status", "0"
+        );
+        GrpcWebResponse response = run(new byte[0]);
+        assertEquals(16, response.grpcStatus);
+        assertEquals("AUTH_KEY_UNREGISTERED", response.metadata.get("error-code"));
+    }
+
+
+    @Test
+    public void headerErrorNotOverwrittenByTrailerFrameOk() throws Exception {
+        enqueue(200, trailer("grpc-status: 0\r\n"), "grpc-status", "8", "error-code", "FLOOD_WAIT_1");
+        GrpcWebResponse response = run(new byte[0]);
+        assertEquals(8, response.grpcStatus);
+        assertEquals("FLOOD_WAIT_1", response.metadata.get("error-code"));
+    }
+
+
+    @Test
+    public void trailerFrameNonZeroWinsOverHeaderNonZero() throws Exception {
+        enqueue(200, trailer("grpc-status: 16\r\n"), "grpc-status", "8");
+        assertEquals(16, run(new byte[0]).grpcStatus);
+    }
+
+
+    @Test
+    public void trailerFrameFollowedByDataFrameStillParses() throws Exception {
+        enqueue(
+            200,
+            concat(frame(0, new byte[] {1}), trailer("grpc-status: 0\r\n"), frame(0, new byte[] {2}))
+        );
+        GrpcWebResponse response = run(new byte[0]);
+        assertEquals(0, response.grpcStatus);
+        assertArrayEquals(new byte[] {1, 2}, response.body);
+    }
+
+
+    @Test(expected = IOException.class)
+    public void nonNumericGrpcStatusThrows() throws Exception {
+        enqueue(200, new byte[0], "grpc-status", "abc");
+        run(new byte[0]);
     }
 }

@@ -55,6 +55,7 @@ public final class GrpcWebClient {
             .url(url)
             .post(RequestBody.create(framed, CONTENT_TYPE))
             .header("x-grpc-web", "1")
+            .header("te", "trailers")
             .header("accept", "application/grpc-web+proto");
         if (headers != null) {
             for (Map.Entry<String, String> entry : headers.entrySet()) {
@@ -108,11 +109,15 @@ public final class GrpcWebClient {
         Headers headers
     ) {
         for (int i = 0; i < headers.size(); i++) {
-            metadata.put(headers.name(i).toLowerCase(Locale.ROOT), headers.value(i));
+            put(metadata, headers.name(i).toLowerCase(Locale.ROOT), headers.value(i));
         }
     }
 
 
+    /**
+     * A trailer frame is not required to be last: it is merged into the metadata and parsing
+     * continues, so data frames that follow it are still appended to the body.
+     */
     private static void parseFrames(
         byte[] raw,
         ByteArrayOutputStream data,
@@ -155,7 +160,41 @@ public final class GrpcWebClient {
             }
             String key = line.substring(0, colon).trim().toLowerCase(Locale.ROOT);
             String value = line.substring(colon + 1).trim();
-            metadata.put(key, value);
+            put(metadata, key, value);
+        }
+    }
+
+
+    /**
+     * Stores a metadata entry. Error wins: a grpc-status of 0 never overwrites a non-zero
+     * grpc-status that came from an earlier source. Sources are merged in the order HTTP headers,
+     * trailer frame, HTTP/2 trailers, so a later non-zero value overrides an earlier non-zero one.
+     */
+    private static void put(
+        Map<String, String> metadata,
+        String key,
+        String value
+    ) {
+        if ("grpc-status".equals(key) && isZeroStatus(value) && isNonZeroStatus(metadata.get(key))) {
+            return;
+        }
+        metadata.put(key, value);
+    }
+
+
+    private static boolean isZeroStatus(String value) {
+        return value != null && value.trim().equals("0");
+    }
+
+
+    private static boolean isNonZeroStatus(String value) {
+        if (value == null) {
+            return false;
+        }
+        try {
+            return Integer.parseInt(value.trim()) != 0;
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 
