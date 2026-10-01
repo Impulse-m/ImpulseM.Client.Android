@@ -74,4 +74,40 @@ class BrandTextTest {
     fun brandIsInsertedLiterally() {
         assertEquals("A\$1 B", BrandText.replace("Telegram B", "A\$1"))
     }
+
+
+    @Test
+    fun replacesUppercaseWithUppercaseBrand() {
+        assertEquals("INVITE TO IMPULSEM", BrandText.replace("INVITE TO TELEGRAM", "ImpulseM"))
+        assertEquals("CONVIDAR PARA O XYZ", BrandText.replace("CONVIDAR PARA O TELEGRAM", "Xyz"))
+    }
+
+
+    @Test
+    fun replacesCompoundWords() {
+        assertEquals("Controleer je ImpulseMberichten", BrandText.replace("Controleer je Telegramberichten", "ImpulseM"))
+    }
+
+
+    @Test
+    fun keepsHandlesAndUrlPaths() {
+        assertEquals("write to @Telegram now", BrandText.replace("write to @Telegram now", "ImpulseM"))
+        assertEquals("@TelegramBot", BrandText.replace("@TelegramBot", "ImpulseM"))
+        assertEquals("https://t.me/Telegram", BrandText.replace("https://t.me/Telegram", "ImpulseM"))
+        assertEquals("https://t.me/TelegramNews", BrandText.replace("https://t.me/TelegramNews", "ImpulseM"))
+        assertEquals("Telegram.org", BrandText.replace("Telegram.org", "ImpulseM"))
+    }
+
+
+    @Test
+    fun keepsTelegramTipsWhileReplacingNeighbours() {
+        assertEquals("https://t.me/TelegramTipsDE", BrandText.replace("https://t.me/TelegramTipsDE", "ImpulseM"))
+        assertEquals("ImpulseM https://t.me/TelegramTips ImpulseMberichten", BrandText.replace("Telegram https://t.me/TelegramTips Telegramberichten", "ImpulseM"))
+    }
+
+
+    @Test
+    fun replacesBrandInsideMarkdownEmphasis() {
+        assertEquals("by subscribing to __ImpulseM Premium.__", BrandText.replace("by subscribing to __Telegram Premium.__", "ImpulseM"))
+    }
 }

@@ -16,3 +16,5 @@ TMessagesProj_AppHuawei/afat/
 TMessagesProj/jni/ffmpeg/build_android
 branding-out/
 __pycache__/
+
+buildSrc/.kotlin/
