@@ -75,6 +75,7 @@ import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.tl.TL_account;
 import org.telegram.tgnet.tl.TL_keyboard;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.ActionBar.ThemeColors;
 import org.telegram.ui.BubbleActivity;
 import org.telegram.ui.Components.AvatarDrawable;
 import org.telegram.ui.Components.Forum.ForumUtilities;
@@ -4589,7 +4590,7 @@ public class NotificationsController extends BaseController implements Notificat
                     .setGroupSummary(true)
                     .setShowWhen(true)
                     .setWhen(((long) lastMessageObject.messageOwner.date) * 1000)
-                    .setColor(0xff11acfa);
+                    .setColor(ThemeColors.TELEGRAM_COLOR);
 
             long[] vibrationPattern = null;
             Uri sound = null;
@@ -5587,7 +5588,7 @@ public class NotificationsController extends BaseController implements Notificat
                     .setContentText(text.toString())
                     .setAutoCancel(true)
                     .setNumber(dialogKey.story ? storyPushMessages.size() : messageObjects.size())
-                    .setColor(0xff11acfa)
+                    .setColor(ThemeColors.TELEGRAM_COLOR)
                     .setGroupSummary(false)
                     .setWhen(date)
                     .setShowWhen(true)
