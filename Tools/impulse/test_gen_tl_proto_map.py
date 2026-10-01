@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Set, Tuple
 
 import gen_tl_proto_map
 
@@ -144,6 +144,87 @@ class GenTlProtoMapTest(unittest.TestCase):
                 elif p["kind"] != "flags":
                     self.assertIn("field", p)
         self.assertIn("derived_from", self.reportText)
+
+    def legacyEntry(self, kind: str, legacyId: int) -> Dict[str, Any]:
+        signed: int = legacyId - (1 << 32) if legacyId >= (1 << 31) else legacyId
+        for e in self.mapping["legacy"][kind]:
+            if e["id"] == signed:
+                return e
+        self.fail("legacy %s not found: %x" % (kind, legacyId))
+
+    def test_legacy_critical_methods(self) -> None:
+        expected: Dict[int, Tuple[str, int]] = {
+            0x25939651: ("updates.getDifference", 0x19c2f763),
+            0x4222fa74: ("messages.getMessages", 0x63c66506),
+            0x93d7b347: ("channels.getMessages", 0xad8c9a23),
+            0x519bc2b1: ("messages.uploadMedia", 0x14967978),
+            0x80eee427: ("auth.signUp", 0xaac7b717),
+        }
+        for legacyId, (name, targetId) in expected.items():
+            entry: Dict[str, Any] = self.legacyEntry("methods", legacyId)
+            self.assertEqual(entry["name"], name)
+            self.assertEqual(entry["target_id"] & 0xffffffff, targetId, name)
+            self.assertEqual(entry["class"], "upgrade", name)
+            self.assertTrue(entry["supported"], name)
+            self.assertEqual(self.method(name)["id"], entry["target_id"])
+
+    def test_legacy_name_mismatch_resolved_by_id(self) -> None:
+        self.assertEqual(self.legacyEntry("methods", 0x418d4e0b)["name"], "account.deleteAccount")
+        self.assertEqual(self.legacyEntry("methods", 0x8d9d742b)["name"], "account.getTheme")
+
+    def test_legacy_alias_classification(self) -> None:
+        self.assertEqual(self.legacyEntry("methods", 0x6c50051c)["class"], "alias")
+        self.assertEqual(self.legacyEntry("methods", 0x24b524c5)["class"], "alias")
+
+    def test_legacy_nested_constructors(self) -> None:
+        video: Dict[str, Any] = self.legacyEntry("constructors", 0x0ef02ce6)
+        self.assertEqual(video["name"], "documentAttributeVideo")
+        self.assertEqual(video["target_id"] & 0xffffffff, 0x43c57c48)
+        self.assertEqual(video["class"], "upgrade")
+        self.assertEqual([p["name"] for p in video["params"] if p["name"] == "duration"], ["duration"])
+        self.assertEqual(self.legacyEntry("constructors", 0xffa0a496)["target_id"] & 0xffffffff, 0x32da9e9c)
+
+    def test_legacy_never_shadows_current_ids(self) -> None:
+        current: Set[int] = {c["id"] for c in self.mapping["constructors"]} | {m["id"] for m in self.mapping["methods"]}
+        for kind in ("constructors", "methods"):
+            for e in self.mapping["legacy"][kind]:
+                self.assertNotIn(e["id"], current)
+                self.assertIn(e["target_id"], current)
+        ids: List[int] = [e["id"] for e in self.mapping["legacy"]["constructors"]]
+        self.assertEqual(ids, sorted(ids))
+
+    def test_legacy_theme_settings_object_becomes_vector(self) -> None:
+        for legacyId in (0x8432c21f, 0x5cb367d5):
+            entry: Dict[str, Any] = self.legacyEntry("methods", legacyId)
+            self.assertTrue(entry["supported"], entry["name"])
+
+    def test_legacy_classification_rules(self) -> None:
+        alias, problem = gen_tl_proto_map.classify_params(
+            [{"kind": "int", "name": "a"}],
+            [{"kind": "int", "name": "a"}],
+            set(),
+        )
+        self.assertEqual((alias, problem), ("alias", None))
+        cls, problem = gen_tl_proto_map.classify_params(
+            [{"kind": "string", "name": "a"}],
+            [{"kind": "int", "name": "a"}],
+            set(),
+        )
+        self.assertEqual(cls, "upgrade")
+        self.assertIn("string -> int", problem)
+        cls, problem = gen_tl_proto_map.classify_params(
+            [],
+            [{"kind": "object", "name": "x", "type": "Foo"}],
+            set(),
+        )
+        self.assertIn("zero-param", problem)
+        cls, problem = gen_tl_proto_map.classify_params(
+            [{"kind": "vector", "name": "gone", "elem": {"kind": "object", "type": "Vanished", "name": ""}}],
+            [],
+            set(),
+            {"Foo"},
+        )
+        self.assertIn("Vanished no longer exists", problem)
 
     def test_deterministic(self) -> None:
         second: Path = Path(self.tmp.name) / "map2.json.gz"

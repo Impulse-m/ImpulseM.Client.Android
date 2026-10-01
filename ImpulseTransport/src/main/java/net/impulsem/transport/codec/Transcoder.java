@@ -50,6 +50,7 @@ public final class Transcoder {
     private static final int InvokeWithReCaptcha = -1380249708;
 
     private final TlProtoSchema schema;
+    private final TlUpgrader upgrader;
 
 
     private static final class Occurrence {
@@ -75,6 +76,7 @@ public final class Transcoder {
 
     public Transcoder(TlProtoSchema schema) {
         this.schema = schema;
+        this.upgrader = new TlUpgrader(schema);
     }
 
 
@@ -93,11 +95,19 @@ public final class Transcoder {
                     takeoutId = Long.valueOf(reader.readInt64());
                 } else if (!skipWrapper(id, reader)) {
                     MethodSpec method = schema.method(id);
+                    TlReader source = reader;
+                    if (method == null && upgrader.isLegacyMethod(id)) {
+                        // The id is from an older layer: rewrite the call as layer 229 TL first.
+                        byte[] upgraded = upgrader.upgradeMethodBody(id, reader);
+                        source = new TlReader(upgraded, 0, upgraded.length);
+                        method = schema.method(source.readInt32());
+                    }
                     if (method == null) {
                         throw new TranscodeException("unknown method id " + Integer.toHexString(id));
                     }
                     ProtoWriter writer = new ProtoWriter();
-                    encodeParams(reader, method.params, writer, 0);
+                    encodeParams(source, method.params, writer, 0);
+                    requireConsumed(source);
                     requireConsumed(reader);
                     return new EncodedRequest(method.id, method.path, writer.toByteArray(), takeoutId);
                 }
@@ -188,8 +198,18 @@ public final class Transcoder {
     }
 
 
+    /** The little-endian constructor id at the start of a TL request, or 0 when it is shorter than four bytes. */
+    public static int leadingId(byte[] tl) {
+        if (tl.length < 4) {
+            return 0;
+        }
+        return (tl[0] & 0xFF) | ((tl[1] & 0xFF) << 8) | ((tl[2] & 0xFF) << 16) | ((tl[3] & 0xFF) << 24);
+    }
+
+
+    /** True for current methods and for legacy ids that {@link #encodeRequest} upgrades. */
     public boolean hasMethod(int methodId) {
-        return schema.method(methodId) != null;
+        return schema.method(methodId) != null || schema.legacyMethod(methodId) != null;
     }
 
 
@@ -273,6 +293,11 @@ public final class Transcoder {
         checkDepth(depth);
         int id = reader.readInt32();
         ConstructorSpec constructor = schema.constructor(id);
+        if (constructor == null && upgrader.isLegacyConstructor(id)) {
+            // The id is from an older layer: upgrade this object in place, then continue with it.
+            byte[] upgraded = upgrader.upgradeObjectBody(id, reader, type);
+            return objectToProto(type, new TlReader(upgraded, 0, upgraded.length), depth);
+        }
         if (constructor == null) {
             throw new TranscodeException("unknown constructor " + Integer.toHexString(id) + " while reading " + type);
         }

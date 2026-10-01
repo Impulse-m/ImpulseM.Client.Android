@@ -31,6 +31,8 @@ public final class TlProtoSchema {
     private final Map<String, TypeSpec> types = new HashMap<String, TypeSpec>();
     private final Map<Integer, MethodSpec> methods = new HashMap<Integer, MethodSpec>();
     private final Map<String, List<ConstructorSpec>> constructorsByType = new HashMap<String, List<ConstructorSpec>>();
+    private final Map<Integer, LegacySpec> legacyConstructors = new HashMap<Integer, LegacySpec>();
+    private final Map<Integer, LegacySpec> legacyMethods = new HashMap<Integer, LegacySpec>();
 
 
     private TlProtoSchema(JsonObject root) {
@@ -52,6 +54,17 @@ public final class TlProtoSchema {
         for (JsonElement element : root.getAsJsonArray("methods")) {
             MethodSpec spec = parseMethod(element.getAsJsonObject());
             methods.put(spec.id, spec);
+        }
+        if (root.has("legacy")) {
+            JsonObject legacy = root.getAsJsonObject("legacy");
+            for (JsonElement element : legacy.getAsJsonArray("constructors")) {
+                LegacySpec spec = parseLegacy(element.getAsJsonObject(), false);
+                legacyConstructors.put(spec.id, spec);
+            }
+            for (JsonElement element : legacy.getAsJsonArray("methods")) {
+                LegacySpec spec = parseLegacy(element.getAsJsonObject(), true);
+                legacyMethods.put(spec.id, spec);
+            }
         }
     }
 
@@ -83,6 +96,28 @@ public final class TlProtoSchema {
 
     public MethodSpec method(int id) {
         return methods.get(id);
+    }
+
+
+    /** A constructor id of an older layer, or null (also null for ids that are current). */
+    public LegacySpec legacyConstructor(int id) {
+        return legacyConstructors.get(id);
+    }
+
+
+    /** A method id of an older layer, or null (also null for ids that are current). */
+    public LegacySpec legacyMethod(int id) {
+        return legacyMethods.get(id);
+    }
+
+
+    public Collection<LegacySpec> legacyConstructors() {
+        return Collections.unmodifiableCollection(legacyConstructors.values());
+    }
+
+
+    public Collection<LegacySpec> legacyMethods() {
+        return Collections.unmodifiableCollection(legacyMethods.values());
     }
 
 
@@ -187,6 +222,26 @@ public final class TlProtoSchema {
             result.elem = parseParam(resultJson.getAsJsonObject("elem"));
         }
         spec.result = result;
+        return spec;
+    }
+
+
+    private static LegacySpec parseLegacy(
+        JsonObject json,
+        boolean method
+    ) {
+        LegacySpec spec = new LegacySpec();
+        spec.id = json.get("id").getAsInt();
+        spec.name = json.get("name").getAsString();
+        spec.layer = json.get("layer").getAsInt();
+        spec.method = method;
+        spec.targetId = json.get("target_id").getAsInt();
+        spec.alias = "alias".equals(json.get("class").getAsString());
+        spec.supported = json.get("supported").getAsBoolean();
+        spec.problem = string(json, "problem");
+        for (JsonElement element : json.getAsJsonArray("params")) {
+            spec.params.add(parseParam(element.getAsJsonObject()));
+        }
         return spec;
     }
 

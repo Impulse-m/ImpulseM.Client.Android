@@ -4,7 +4,6 @@ import android.os.SystemClock;
 
 import net.impulsem.transport.auth.Clock;
 import net.impulsem.transport.auth.TokenManager;
-import net.impulsem.transport.codec.LegacyRequests;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.errors.RpcError;
 import net.impulsem.transport.grpcweb.GrpcWebClient;
@@ -565,8 +564,8 @@ public final class ImpulseConnection {
             finishError(pending, 500, "TRANSPORT_UNAVAILABLE");
             return;
         }
-        byte[] data = LegacyRequests.upgrade(entry.data);
-        int methodId = data.length >= 4 ? LegacyRequests.readInt32(data) : 0;
+        byte[] data = entry.data;
+        int methodId = Transcoder.leadingId(data);
         if (!transcoder.hasMethod(methodId)) {
             log("method 0x" + Integer.toHexString(methodId) + " is not in the mapping");
             finishError(pending, 400, "METHOD_INVALID");
