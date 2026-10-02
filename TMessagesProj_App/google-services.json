@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "699166495141",
+    "project_id": "impulsem-3b5c9",
+    "storage_bucket": "impulsem-3b5c9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:699166495141:android:74ef24cc6f01942f59d84c",
+        "android_client_info": {
+          "package_name": "net.impulsem.messenger"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA2cEbsWXD6Zm7TWLWQ9cfCUKy9DtN6zLE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:699166495141:android:003b7d91b1a6995759d84c",
+        "android_client_info": {
+          "package_name": "net.impulsem.messenger.beta"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA2cEbsWXD6Zm7TWLWQ9cfCUKy9DtN6zLE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
