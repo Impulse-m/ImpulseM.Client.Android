@@ -21,7 +21,7 @@ TMessagesProj/jni/ffmpeg/build_android
 branding-out/
 __pycache__/
 
-buildSrc/.kotlin/
+.kotlin/
 
 # Local agent state and generated documentation
 .superpowers/
