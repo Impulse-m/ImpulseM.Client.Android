@@ -13,6 +13,7 @@ def verify_native_libraries(path: Path, variant: str) -> None:
         "libtmessages.49.so",
         "liblkjingle_peerconnection_so.so",
         "liblivekit_uniffi.so",
+        "libgojni.so",
     }
     with ZipFile(path) as package:
         entries: set[str] = set(package.namelist())
