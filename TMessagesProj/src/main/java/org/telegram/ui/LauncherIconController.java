@@ -34,7 +34,12 @@ public class LauncherIconController {
     }
 
     public enum LauncherIcon {
-        DEFAULT("DefaultIcon", R.drawable.icon_background_sa, R.mipmap.icon_foreground_sa, R.string.AppIconDefault);
+        DEFAULT(
+            "DefaultIcon",
+            R.drawable.ic_launcher_background_impulsem,
+            R.drawable.ic_launcher_foreground_impulsem,
+            R.string.AppIconDefault
+        );
 
         public final String key;
         public final int background;

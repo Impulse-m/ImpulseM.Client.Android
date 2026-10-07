@@ -5782,7 +5782,7 @@ public class MediaDataController extends BaseController {
                             canvas.drawRoundRect(bitmapRect, bitmap.getWidth(), bitmap.getHeight(), roundPaint);
                             canvas.restore();
                         }
-                        Drawable drawable = ApplicationLoader.applicationContext.getResources().getDrawable(R.drawable.book_logo);
+                        Drawable drawable = ApplicationLoader.applicationContext.getResources().getDrawable(R.drawable.ic_impulsem_logo);
                         int w = AndroidUtilities.dp(15);
                         int left = size - w - AndroidUtilities.dp(2);
                         int top = size - w - AndroidUtilities.dp(2);

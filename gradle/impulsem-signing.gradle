@@ -1,0 +1,56 @@
+Properties localProperties = new Properties()
+File localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.isFile()) {
+    localPropertiesFile.withInputStream { InputStream stream ->
+        localProperties.load(stream)
+    }
+}
+
+File credentialsFile = rootProject.file(
+    providers.gradleProperty('impulsem.signing.properties').getOrElse(
+        localProperties.getProperty('impulsem.signing.properties', 'signing.local.properties')
+    )
+)
+Properties credentials = new Properties()
+if (credentialsFile.isFile()) {
+    credentialsFile.withInputStream { InputStream stream ->
+        credentials.load(stream)
+    }
+}
+
+// An absent private key must never fall back to the public Telegram keystore.
+File privateKeystore = rootProject.file(
+    credentials.getProperty('storeFile', 'TMessagesProj/config/impulsem-release.keystore')
+)
+android {
+    signingConfigs {
+        debug {
+            storeFile privateKeystore
+            storePassword credentials.getProperty('storePassword')
+            keyAlias credentials.getProperty('keyAlias')
+            keyPassword credentials.getProperty('keyPassword')
+        }
+        release {
+            storeFile privateKeystore
+            storePassword credentials.getProperty('storePassword')
+            keyAlias credentials.getProperty('keyAlias')
+            keyPassword credentials.getProperty('keyPassword')
+        }
+    }
+}
+
+tasks.named('preBuild').configure {
+    doFirst {
+        for (String name : ['storeFile', 'storePassword', 'keyAlias', 'keyPassword']) {
+            if (!credentials.getProperty(name)?.trim()) {
+                throw new GradleException(
+                    'Configure private APK signing in local.properties using '
+                        + 'impulsem.signing.properties. See the README compilation guide.'
+                )
+            }
+        }
+        if (!privateKeystore.isFile()) {
+            throw new GradleException('The configured ImpulseM signing keystore does not exist.')
+        }
+    }
+}

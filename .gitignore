@@ -4,6 +4,10 @@ build/
 obj/
 *.iml
 local.properties
+signing.local.properties
+*.keystore
+*.jks
+*.p12
 TMessagesProj/.cxx/
 TMessagesProj/jniLibs/
 TMessagesProj/jniRes/

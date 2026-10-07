@@ -188,6 +188,7 @@ public class VoIPFragment implements
     private int speakerPhoneIconResId;
     private ImageView speakerPhoneIcon;
     private int selectedRating;
+    private boolean ratingVisible;
     private UserSelectorBottomSheet addPeopleSheet;
 
     LinearLayout emojiLayout;
@@ -1851,9 +1852,13 @@ public class VoIPFragment implements
                 }
                 break;
             case VoIPService.STATE_ENDED:
-                boolean hasRate = service != null && service.hasRate();
+                boolean hasRate = ratingVisible || (service != null && service.hasRate());
                 currentUserTextureView.saveCameraLastBitmap();
-                if (hasRate && !isFinished) {
+                if (hasRate && !ratingVisible && !isFinished) {
+                    // Rating outlives the service; later media/layout events must not dismiss or reset it.
+                    ratingVisible = true;
+                    final long ratedCallId = service.privateCall.id;
+                    final long ratedCallAccessHash = service.privateCall.access_hash;
                     final boolean uiVisibleLocal = uiVisible;
                     if (uiVisibleLocal) {
                         int[] locEndCall = new int[2];
@@ -1870,7 +1875,7 @@ public class VoIPFragment implements
                         AndroidUtilities.runOnUIThread(() -> endCloseLayout.switchToClose(v -> {
                             AndroidUtilities.runOnUIThread(() -> windowView.finish());
                             if (selectedRating > 0) {
-                                service.sendCallRating(selectedRating);
+                                VoIPHelper.sendCallRating(ratedCallId, ratedCallAccessHash, currentAccount, selectedRating);
                             }
                         }, true), 2);
                     } else {
@@ -1888,7 +1893,7 @@ public class VoIPFragment implements
                         endCloseLayout.switchToClose(v -> {
                             AndroidUtilities.runOnUIThread(() -> windowView.finish());
                             if (selectedRating > 0) {
-                                service.sendCallRating(selectedRating);
+                                VoIPHelper.sendCallRating(ratedCallId, ratedCallAccessHash, currentAccount, selectedRating);
                             }
                         }, false);
                     }
@@ -1927,8 +1932,12 @@ public class VoIPFragment implements
                         previewDialog.dismiss(false, false);
                     }
                     notificationsLayout.animate().alpha(0f).setDuration(250).start();
-                } else {
-                    AndroidUtilities.runOnUIThread(() -> windowView.finish(), 200);
+                } else if (!hasRate) {
+                    AndroidUtilities.runOnUIThread(() -> {
+                        if (!ratingVisible) {
+                            windowView.finish();
+                        }
+                    }, 200);
                 }
                 break;
             case VoIPService.STATE_FAILED:
@@ -1989,10 +1998,18 @@ public class VoIPFragment implements
                     } else if (TextUtils.equals(lastError, Instance.ERROR_CONNECTION_SERVICE)) {
                         showErrorDialog(LocaleController.getString(R.string.VoipErrorUnknown));
                     } else {
-                        AndroidUtilities.runOnUIThread(() -> windowView.finish(), 1000);
+                        AndroidUtilities.runOnUIThread(() -> {
+                            if (!ratingVisible) {
+                                windowView.finish();
+                            }
+                        }, 1000);
                     }
                 } else {
-                    AndroidUtilities.runOnUIThread(() -> windowView.finish(), 1000);
+                    AndroidUtilities.runOnUIThread(() -> {
+                        if (!ratingVisible) {
+                            windowView.finish();
+                        }
+                    }, 1000);
                 }
                 break;
         }
@@ -3042,7 +3059,7 @@ public class VoIPFragment implements
                 service.setVideoState(false, Instance.VIDEO_STATE_ACTIVE);
             }
             updateViewState();
-        } else if (VoIPService.getSharedState() == null) {
+        } else if (VoIPService.getSharedState() == null && !ratingVisible) {
             windowView.finish();
         }
 

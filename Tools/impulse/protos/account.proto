@@ -328,8 +328,8 @@ message SendVerifyEmailCodeRequest {
 message VerifyEmailRequest {
   v1.EmailVerifyPurpose purpose = 1;
   v1.EmailVerification verification = 2;
-  // ImpulseM extension (#204): Fork-only email payload retained on the canon request until the transport contract is separated.
-  string email = 3;
+  reserved 3;
+  reserved "email";
 }
 
 message InitTakeoutSessionRequest {

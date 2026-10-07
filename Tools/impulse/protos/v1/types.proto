@@ -8206,10 +8206,8 @@ message PhoneJoinAsPeers {
 message PhonePhoneCall {
   v1.PhoneCall phone_call = 1;
   repeated v1.User users = 2;
-  // ImpulseM extension (no issue): LiveKit access token for ImpulseM voice and video transport.
-  optional string livekit_token = 4;
-  // ImpulseM extension (no issue): LiveKit media endpoint for ImpulseM voice and video transport.
-  optional string livekit_url = 3;
+  reserved 3, 4;
+  reserved "livekit_url", "livekit_token";
 }
 
 message PhoneCall {

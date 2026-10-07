@@ -12,6 +12,7 @@ import net.impulsem.transport.wire.TlReader;
 import net.impulsem.transport.wire.TlWriter;
 
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -28,6 +29,7 @@ public final class Transcoder {
     private static final int BoolTrue = 0x997275b5;
     private static final int BoolFalse = 0xbc799737;
     private static final int VectorId = 0x1cb5c415;
+    private static final byte[] AndroidLanguagePack = "android".getBytes(StandardCharsets.UTF_8);
 
     private static final int WireVarint = 0;
     private static final int WireFixed64 = 1;
@@ -106,7 +108,7 @@ public final class Transcoder {
                         throw new TranscodeException("unknown method id " + Integer.toHexString(id));
                     }
                     ProtoWriter writer = new ProtoWriter();
-                    encodeParams(source, method.params, writer, 0);
+                    encodeParams(source, method.params, writer, 0, method.method.startsWith("langpack."));
                     requireConsumed(source);
                     requireConsumed(reader);
                     return new EncodedRequest(method.id, method.path, writer.toByteArray(), takeoutId);
@@ -305,7 +307,7 @@ public final class Transcoder {
             throw new TranscodeException("constructor " + constructor.predicate + " is " + constructor.type + ", expected " + type);
         }
         ProtoWriter body = new ProtoWriter();
-        encodeParams(reader, constructor.params, body, depth);
+        encodeParams(reader, constructor.params, body, depth, false);
         TypeSpec typeSpec = schema.type(type);
         if (typeSpec != null && typeSpec.polymorphic) {
             if (constructor.arm == null) {
@@ -323,7 +325,8 @@ public final class Transcoder {
         TlReader reader,
         List<ParamSpec> params,
         ProtoWriter writer,
-        int depth
+        int depth,
+        boolean defaultAndroidLanguagePack
     ) {
         Map<String, Integer> registers = new HashMap<String, Integer>();
         for (ParamSpec param : params) {
@@ -340,7 +343,14 @@ public final class Transcoder {
                     continue;
                 }
             }
-            encodeValue(reader, param, writer, depth);
+            if (defaultAndroidLanguagePack && param.kind == ParamSpec.Kind.STRING && param.name.equals("lang_pack")) {
+                // MTProto supplied the client pack implicitly. gRPC-Web requires it on every request,
+                // including old Android requests upgraded to layer 229 with an empty pack.
+                byte[] value = reader.readBytes();
+                writer.writeBytesField(param.field, value.length == 0 ? AndroidLanguagePack : value);
+            } else {
+                encodeValue(reader, param, writer, depth);
+            }
         }
     }
 

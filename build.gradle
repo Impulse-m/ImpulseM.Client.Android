@@ -26,7 +26,32 @@ repositories {
 //   drop:  latin/optional/, maths/optional/  (~290 KB; \textbf/\textit/\mathds fall back)
 //          licences/                          (~20 KB; pure license text files)
 subprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            url 'https://jitpack.io'
+            content {
+                includeGroup 'com.github.davidliu'
+            }
+        }
+    }
+
     plugins.withId('com.android.application') {
+        androidComponents {
+            onVariants(selector().withBuildType('debug')) { variant ->
+                // Match the native library's debug ABIs, including transitive SDK libraries.
+                if (project.hasProperty('IMPULSEM_DEBUG_ABIS')) {
+                    Set<String> debugAbis = IMPULSEM_DEBUG_ABIS.split(',').collect { it.trim() }.toSet()
+                    for (String abi : ['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64']) {
+                        if (!debugAbis.contains(abi)) {
+                            variant.packaging.jniLibs.excludes.add("lib/${abi}/**")
+                        }
+                    }
+                }
+            }
+        }
+
         android {
             androidResources {
                 ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~:!optional:!licences:!*stmary*:!*eufb*'

@@ -463,7 +463,6 @@ public class VoIPHelper {
 	}
 
 	public static void sendCallRating(final long callID, final long accessHash, final int account, int rating) {
-		final int currentAccount = UserConfig.selectedAccount;
 		final TL_phone.setCallRating req = new TL_phone.setCallRating();
 		req.rating = rating;
 		req.comment = "";
@@ -474,7 +473,7 @@ public class VoIPHelper {
 		ConnectionsManager.getInstance(account).sendRequest(req, (response, error) -> {
 			if (response instanceof TLRPC.TL_updates) {
 				TLRPC.TL_updates updates = (TLRPC.TL_updates) response;
-				MessagesController.getInstance(currentAccount).processUpdates(updates, false);
+				MessagesController.getInstance(account).processUpdates(updates, false);
 			}
 		});
 	}

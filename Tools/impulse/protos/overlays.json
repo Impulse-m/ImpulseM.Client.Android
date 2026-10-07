@@ -13,17 +13,6 @@
       "issue": "204"
     },
     {
-      "kind": "field",
-      "file": "account.proto",
-      "message": "VerifyEmailRequest",
-      "name": "email",
-      "type": "string",
-      "optional": false,
-      "canon": "account.verifyEmail#32da4cf purpose:EmailVerifyPurpose verification:EmailVerification = account.EmailVerified (api.tl LAYER 229:2359)",
-      "reason": "Fork-only email payload retained on the canon request until the transport contract is separated.",
-      "issue": "204"
-    },
-    {
       "kind": "message",
       "file": "account.proto",
       "name": "GetContactSignUpNotificationResponse",
@@ -183,28 +172,6 @@
       "optional": false,
       "canon": "auth.authorization#2ea2c0d4 flags:# setup_password_required:flags.1?true otherwise_relogin_days:flags.1?int tmp_sessions:flags.0?int future_auth_token:flags.2?bytes user:User = auth.Authorization (api.tl LAYER 229:238)",
       "reason": "JWT session mechanism: Canon carries identity in the MTProto auth_key established by the DH handshake -- in the TRANSPORT, not in the response body, which is why auth.authorization has no token field. ImpulseM's client transport is gRPC, which has no auth_key, so the signed session token has nowhere else to arrive. This follows from the board's transport decision, not from a shortcut.",
-      "issue": null
-    },
-    {
-      "kind": "field",
-      "file": "v1/types.proto",
-      "message": "PhonePhoneCall",
-      "name": "livekit_token",
-      "type": "string",
-      "optional": true,
-      "canon": "phone.phoneCall#ec82e140 phone_call:PhoneCall users:Vector<User> = phone.PhoneCall (api.tl LAYER 229:1047)",
-      "reason": "LiveKit access token for ImpulseM voice and video transport.",
-      "issue": null
-    },
-    {
-      "kind": "field",
-      "file": "v1/types.proto",
-      "message": "PhonePhoneCall",
-      "name": "livekit_url",
-      "type": "string",
-      "optional": true,
-      "canon": "phone.phoneCall#ec82e140 phone_call:PhoneCall users:Vector<User> = phone.PhoneCall (api.tl LAYER 229:1047)",
-      "reason": "LiveKit media endpoint for ImpulseM voice and video transport.",
       "issue": null
     }
   ]

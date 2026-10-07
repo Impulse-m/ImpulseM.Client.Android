@@ -29,6 +29,8 @@ dependencies {
     implementation 'com.huawei.hms:location:6.4.0.300'
 }
 
+apply from: rootProject.file('gradle/impulsem-signing.gradle')
+
 android {
     compileSdkVersion 36
     buildToolsVersion '36.0.0'
@@ -55,21 +57,6 @@ android {
         localeFilters += ["zz"]
     }
 
-    signingConfigs {
-        debug {
-            storeFile file("../TMessagesProj/config/release.keystore")
-            storePassword RELEASE_STORE_PASSWORD
-            keyAlias RELEASE_KEY_ALIAS
-            keyPassword RELEASE_KEY_PASSWORD
-        }
-
-        release {
-            storeFile file("../TMessagesProj/config/release.keystore")
-            storePassword RELEASE_STORE_PASSWORD
-            keyAlias RELEASE_KEY_ALIAS
-            keyPassword RELEASE_KEY_PASSWORD
-        }
-    }
 
     buildTypes {
         debug {
