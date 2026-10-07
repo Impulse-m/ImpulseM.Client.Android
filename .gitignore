@@ -18,3 +18,14 @@ branding-out/
 __pycache__/
 
 buildSrc/.kotlin/
+
+# Local agent state and generated documentation
+.superpowers/
+.claude/
+.codex/
+.agents/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+/docs/
+/Tools/impulse/coverage-229.md
