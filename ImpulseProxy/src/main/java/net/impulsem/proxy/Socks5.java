@@ -7,6 +7,7 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 
 
@@ -29,6 +30,8 @@ public final class Socks5 {
 
 
     private static final int ConnectTimeoutMillis = 10000;
+    private static final int HandshakeTimeoutMillis = 10000;
+    private static final int MaxCredentialBytes = 255;
 
 
     private Socks5() {
@@ -42,10 +45,23 @@ public final class Socks5 {
         String host,
         int port
     ) throws IOException {
-        Socket socket = open(socks, user, password);
+        return connect(socks, user, password, host, port, HandshakeTimeoutMillis);
+    }
+
+
+    static Socket connect(
+        InetSocketAddress socks,
+        String user,
+        String password,
+        String host,
+        int port,
+        int handshakeTimeoutMillis
+    ) throws IOException {
+        Socket socket = open(socks, user, password, handshakeTimeoutMillis);
         try {
             request(socket, 1, host, port);
             readReply(socket);
+            socket.setSoTimeout(0);
             return socket;
         } catch (IOException e) {
             socket.close();
@@ -59,14 +75,13 @@ public final class Socks5 {
         String user,
         String password
     ) throws IOException {
-        Socket socket = open(socks, user, password);
+        Socket socket = open(socks, user, password, HandshakeTimeoutMillis);
         try {
             request(socket, 3, "0.0.0.0", 0);
-            InetSocketAddress bound = readReply(socket);
-            InetSocketAddress relay = bound.getAddress().isAnyLocalAddress()
-                ? new InetSocketAddress(socks.getAddress(), bound.getPort())
-                : bound;
-            return new UdpAssociation(socket, relay);
+            int port = readReply(socket);
+            socket.setSoTimeout(0);
+            // The relay host is always the proxy host; the reply address is never resolved.
+            return new UdpAssociation(socket, new InetSocketAddress(socks.getAddress(), port));
         } catch (IOException e) {
             socket.close();
             throw e;
@@ -120,12 +135,17 @@ public final class Socks5 {
     private static Socket open(
         InetSocketAddress socks,
         String user,
-        String password
+        String password,
+        int handshakeTimeoutMillis
     ) throws IOException {
+        byte[] userBytes = credentialBytes(user);
+        byte[] passwordBytes = credentialBytes(password);
         Socket socket = new Socket();
         try {
             socket.connect(socks, ConnectTimeoutMillis);
             socket.setTcpNoDelay(true);
+            // Bounds every handshake read; connect() and associate() clear it once the reply is in.
+            socket.setSoTimeout(handshakeTimeoutMillis);
             OutputStream out = socket.getOutputStream();
             DataInputStream in = new DataInputStream(socket.getInputStream());
             out.write(new byte[] {5, 1, 2});
@@ -133,8 +153,6 @@ public final class Socks5 {
             if (in.readUnsignedByte() != 5 || in.readUnsignedByte() != 2) {
                 throw new IOException("SOCKS5 server refused username/password auth");
             }
-            byte[] userBytes = user.getBytes(StandardCharsets.UTF_8);
-            byte[] passwordBytes = password.getBytes(StandardCharsets.UTF_8);
             ByteArrayOutputStream auth = new ByteArrayOutputStream();
             auth.write(1);
             auth.write(userBytes.length);
@@ -155,6 +173,15 @@ public final class Socks5 {
     }
 
 
+    private static byte[] credentialBytes(String value) throws IOException {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > MaxCredentialBytes) {
+            throw new IOException("SOCKS5 credentials too long");
+        }
+        return bytes;
+    }
+
+
     private static void request(
         Socket socket,
         int command,
@@ -171,29 +198,31 @@ public final class Socks5 {
     }
 
 
-    private static InetSocketAddress readReply(Socket socket) throws IOException {
+    /** Reads a SOCKS5 reply, discards the bound address and returns the bound port. */
+    private static int readReply(Socket socket) throws IOException {
         DataInputStream in = new DataInputStream(socket.getInputStream());
-        in.readUnsignedByte();
+        if (in.readUnsignedByte() != 5) {
+            throw new IOException("Malformed SOCKS5 reply");
+        }
         int reply = in.readUnsignedByte();
         in.readUnsignedByte();
         int type = in.readUnsignedByte();
-        InetAddress address;
-        if (type == 1 || type == 4) {
-            byte[] raw = new byte[type == 1 ? 4 : 16];
-            in.readFully(raw);
-            address = InetAddress.getByAddress(raw);
+        int addressLength;
+        if (type == 1) {
+            addressLength = 4;
+        } else if (type == 4) {
+            addressLength = 16;
         } else if (type == 3) {
-            byte[] name = new byte[in.readUnsignedByte()];
-            in.readFully(name);
-            address = InetAddress.getByName(new String(name, StandardCharsets.UTF_8));
+            addressLength = in.readUnsignedByte();
         } else {
             throw new IOException("Malformed SOCKS5 reply");
         }
+        in.readFully(new byte[addressLength]);
         int port = in.readUnsignedShort();
         if (reply != 0) {
             throw new IOException("SOCKS5 request failed: " + reply);
         }
-        return new InetSocketAddress(address, port);
+        return port;
     }
 
 
@@ -202,18 +231,45 @@ public final class Socks5 {
         String host,
         int port
     ) {
-        byte[] literal = ipv4Literal(host);
-        if (literal != null) {
-            out.write(1);
-            out.write(literal, 0, 4);
-        } else {
+        byte[] literal = ipLiteral(host);
+        if (literal == null) {
             byte[] name = host.getBytes(StandardCharsets.UTF_8);
             out.write(3);
             out.write(name.length);
             out.write(name, 0, name.length);
+        } else {
+            out.write(literal.length == 4 ? 1 : 4);
+            out.write(literal, 0, literal.length);
         }
         out.write((port >> 8) & 0xff);
         out.write(port & 0xff);
+    }
+
+
+    /** Returns 4 bytes for an IPv4 literal, 16 for an IPv6 literal, or null for a domain name. */
+    private static byte[] ipLiteral(String host) {
+        if (host.indexOf(':') >= 0) {
+            return ipv6Literal(host);
+        }
+        return ipv4Literal(host);
+    }
+
+
+    private static byte[] ipv6Literal(String host) {
+        // Only hex digits, colons and dots: getByName then parses a literal and never reaches DNS.
+        for (int i = 0; i < host.length(); i++) {
+            char c = host.charAt(i);
+            boolean allowed = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+                || c == ':' || c == '.';
+            if (!allowed) {
+                return null;
+            }
+        }
+        try {
+            return InetAddress.getByName(host).getAddress();
+        } catch (UnknownHostException e) {
+            return null;
+        }
     }
 
 

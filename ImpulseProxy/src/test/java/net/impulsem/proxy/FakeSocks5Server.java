@@ -15,9 +15,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 
-/** SOCKS5 (RFC 1928/1929) test server: CONNECT echoes bytes, UDP ASSOCIATE echoes datagrams back with the same header. */
+/**
+ * SOCKS5 (RFC 1928/1929) test server: CONNECT echoes bytes, UDP ASSOCIATE echoes datagrams
+ * back with the same header.
+ */
 final class FakeSocks5Server implements Closeable {
     final AtomicReference<String> lastTarget = new AtomicReference<String>();
+    volatile byte[] connectReply = new byte[] {5, 0, 0, 1, 127, 0, 0, 1, 0, 0};
 
     private final ServerSocket server;
     private final String user;
@@ -87,7 +91,8 @@ final class FakeSocks5Server implements Closeable {
             in.readFully(gotUser);
             byte[] gotPassword = new byte[in.readUnsignedByte()];
             in.readFully(gotPassword);
-            boolean ok = user.equals(new String(gotUser, StandardCharsets.UTF_8)) && password.equals(new String(gotPassword, StandardCharsets.UTF_8));
+            boolean ok = user.equals(new String(gotUser, StandardCharsets.UTF_8))
+                && password.equals(new String(gotPassword, StandardCharsets.UTF_8));
             out.write(new byte[] {1, (byte) (ok ? 0 : 1)});
             if (!ok) {
                 socket.close();
@@ -99,7 +104,7 @@ final class FakeSocks5Server implements Closeable {
             String target = readAddress(in);
             lastTarget.set(target);
             if (command == 1) {
-                out.write(new byte[] {5, 0, 0, 1, 127, 0, 0, 1, 0, 0});
+                out.write(connectReply);
                 pump(in, out);
             } else {
                 final DatagramSocket relay = new DatagramSocket(0, InetAddress.getLoopbackAddress());

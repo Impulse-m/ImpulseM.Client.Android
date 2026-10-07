@@ -31,7 +31,7 @@ public final class TurnEndpoint {
         boolean tcp = false;
         int query = rest.indexOf('?');
         if (query >= 0) {
-            tcp = rest.substring(query + 1).toLowerCase(Locale.ROOT).contains("transport=tcp");
+            tcp = isTcpQuery(rest.substring(query + 1));
             rest = rest.substring(0, query);
         }
         String host;
@@ -49,6 +49,10 @@ public final class TurnEndpoint {
                 portText = rest.substring(close + 2);
             }
         } else {
+            // More than one colon means an unbracketed IPv6 literal, which has no unambiguous port.
+            if (rest.indexOf(':') != rest.lastIndexOf(':')) {
+                return null;
+            }
             int colon = rest.lastIndexOf(':');
             host = colon >= 0 ? rest.substring(0, colon) : rest;
             portText = colon >= 0 ? rest.substring(colon + 1) : null;
@@ -73,5 +77,15 @@ public final class TurnEndpoint {
 
     public String localUrl(int localPort) {
         return "turn:127.0.0.1:" + localPort + "?transport=" + (tcp ? "tcp" : "udp");
+    }
+
+
+    private static boolean isTcpQuery(String query) {
+        for (String parameter : query.split("&")) {
+            if ("transport=tcp".equals(parameter.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
     }
 }

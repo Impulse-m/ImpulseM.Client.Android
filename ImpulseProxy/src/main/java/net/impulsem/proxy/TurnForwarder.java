@@ -11,20 +11,28 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 
-/** Loopback listener that relays one TURN endpoint through the Xray SOCKS5 inbound (TCP via CONNECT, UDP via UDP ASSOCIATE). */
+/**
+ * Loopback listener that relays one TURN endpoint through the Xray SOCKS5 inbound.
+ * TCP goes through CONNECT; UDP gets one SOCKS5 UDP association per local source.
+ */
 public final class TurnForwarder implements Closeable {
+    private static final int MaxUdpSources = 8;
+
     private final TurnEndpoint target;
     private final InetSocketAddress socks;
     private final String user;
     private final String password;
+    private final int maxUdpSources;
+    private final Map<SocketAddress, UdpSession> sessions = new ConcurrentHashMap<SocketAddress, UdpSession>();
+    private final Set<Socket> sockets = ConcurrentHashMap.<Socket>newKeySet();
     private volatile boolean closed;
     private ServerSocket tcpListener;
     private DatagramSocket udpLocal;
-    private DatagramSocket udpRelay;
-    private Socks5.UdpAssociation association;
-    private volatile SocketAddress udpClient;
 
 
     public TurnForwarder(
@@ -33,40 +41,49 @@ public final class TurnForwarder implements Closeable {
         String user,
         String password
     ) {
+        this(target, socks, user, password, MaxUdpSources);
+    }
+
+
+    TurnForwarder(
+        TurnEndpoint target,
+        InetSocketAddress socks,
+        String user,
+        String password,
+        int maxUdpSources
+    ) {
         this.target = target;
         this.socks = socks;
         this.user = user;
         this.password = password;
+        this.maxUdpSources = maxUdpSources;
     }
 
 
     public int start() throws IOException {
-        if (target.tcp) {
-            tcpListener = new ServerSocket(0, 8, InetAddress.getLoopbackAddress());
-            daemon("turn-tcp-accept", new Runnable() {
+        try {
+            if (target.tcp) {
+                tcpListener = new ServerSocket(0, 8, InetAddress.getLoopbackAddress());
+                daemon("turn-tcp-accept", new Runnable() {
+                    @Override
+                    public void run() {
+                        acceptTcp();
+                    }
+                });
+                return tcpListener.getLocalPort();
+            }
+            udpLocal = new DatagramSocket(0, InetAddress.getLoopbackAddress());
+            daemon("turn-udp-local", new Runnable() {
                 @Override
                 public void run() {
-                    acceptTcp();
+                    udpLocalLoop();
                 }
             });
-            return tcpListener.getLocalPort();
+            return udpLocal.getLocalPort();
+        } catch (IOException | RuntimeException e) {
+            close();
+            throw e;
         }
-        association = Socks5.associate(socks, user, password);
-        udpLocal = new DatagramSocket(0, InetAddress.getLoopbackAddress());
-        udpRelay = new DatagramSocket(0, InetAddress.getLoopbackAddress());
-        daemon("turn-udp-out", new Runnable() {
-            @Override
-            public void run() {
-                udpOut();
-            }
-        });
-        daemon("turn-udp-in", new Runnable() {
-            @Override
-            public void run() {
-                udpIn();
-            }
-        });
-        return udpLocal.getLocalPort();
     }
 
 
@@ -75,10 +92,20 @@ public final class TurnForwarder implements Closeable {
         closed = true;
         closeQuietly(tcpListener);
         closeQuietly(udpLocal);
-        closeQuietly(udpRelay);
-        if (association != null) {
-            closeQuietly(association.control);
+        for (Socket socket : sockets) {
+            closeTracked(socket);
         }
+        for (UdpSession session : sessions.values()) {
+            session.close();
+        }
+        sessions.clear();
+    }
+
+
+    /** Relay port of the session for this local source, or -1 when there is none. */
+    int relayPortFor(SocketAddress source) {
+        UdpSession session = sessions.get(source);
+        return session == null ? -1 : session.relaySocket.getLocalPort();
     }
 
 
@@ -88,6 +115,11 @@ public final class TurnForwarder implements Closeable {
             try {
                 client = tcpListener.accept();
             } catch (IOException e) {
+                return;
+            }
+            sockets.add(client);
+            if (closed) {
+                closeTracked(client);
                 return;
             }
             daemon("turn-tcp-conn", new Runnable() {
@@ -105,7 +137,13 @@ public final class TurnForwarder implements Closeable {
         try {
             upstream = Socks5.connect(socks, user, password, target.host, target.port);
         } catch (IOException e) {
-            closeQuietly(client);
+            closeTracked(client);
+            return;
+        }
+        sockets.add(upstream);
+        if (closed) {
+            closeTracked(upstream);
+            closeTracked(client);
             return;
         }
         daemon("turn-tcp-up", new Runnable() {
@@ -118,40 +156,18 @@ public final class TurnForwarder implements Closeable {
     }
 
 
-    private void udpOut() {
+    private void udpLocalLoop() {
         byte[] buffer = new byte[65535];
         while (!closed) {
             try {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 udpLocal.receive(packet);
-                SocketAddress source = packet.getSocketAddress();
-                // Pin the first sender (WebRTC's TURN socket); datagrams from any other local app are dropped.
-                if (udpClient == null) {
-                    udpClient = source;
-                } else if (!udpClient.equals(source)) {
+                UdpSession session = sessionFor(packet.getSocketAddress());
+                if (session == null) {
                     continue;
                 }
                 byte[] wrapped = Socks5.wrapUdp(target.host, target.port, packet.getData(), packet.getLength());
-                udpRelay.send(new DatagramPacket(wrapped, wrapped.length, association.relay));
-            } catch (IOException e) {
-                return;
-            }
-        }
-    }
-
-
-    private void udpIn() {
-        byte[] buffer = new byte[65535];
-        while (!closed) {
-            try {
-                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                udpRelay.receive(packet);
-                SocketAddress client = udpClient;
-                if (client == null) {
-                    continue;
-                }
-                byte[] data = Socks5.unwrapUdp(packet.getData(), packet.getLength());
-                udpLocal.send(new DatagramPacket(data, data.length, client));
+                session.send(wrapped);
             } catch (IOException e) {
                 if (closed) {
                     return;
@@ -161,7 +177,33 @@ public final class TurnForwarder implements Closeable {
     }
 
 
-    private static void pipe(
+    /** Returns the session for a local source, creating one if allowed; null means the datagram is dropped. */
+    private UdpSession sessionFor(SocketAddress source) throws IOException {
+        UdpSession existing = sessions.get(source);
+        if (existing != null) {
+            return existing;
+        }
+        if (sessions.size() >= maxUdpSources) {
+            return null;
+        }
+        UdpSession created = new UdpSession(source);
+        sessions.put(source, created);
+        if (closed || created.dead) {
+            sessions.remove(source, created);
+            created.close();
+            return null;
+        }
+        return created;
+    }
+
+
+    private void closeTracked(Socket socket) {
+        sockets.remove(socket);
+        closeQuietly(socket);
+    }
+
+
+    private void pipe(
         Socket from,
         Socket to
     ) {
@@ -177,8 +219,8 @@ public final class TurnForwarder implements Closeable {
         } catch (IOException e) {
             // Either side closed; tear the pair down below.
         } finally {
-            closeQuietly(from);
-            closeQuietly(to);
+            closeTracked(from);
+            closeTracked(to);
         }
     }
 
@@ -201,6 +243,99 @@ public final class TurnForwarder implements Closeable {
             closeable.close();
         } catch (IOException e) {
             // Nothing useful to do on close.
+        }
+    }
+
+
+    /** One SOCKS5 UDP association serving one local source. Datagrams flow only between that source and its relay. */
+    private final class UdpSession {
+        private final SocketAddress source;
+        private final Socks5.UdpAssociation association;
+        private final DatagramSocket relaySocket;
+        private volatile boolean dead;
+
+
+        UdpSession(SocketAddress source) throws IOException {
+            this.source = source;
+            this.association = Socks5.associate(socks, user, password);
+            DatagramSocket socket;
+            try {
+                socket = new DatagramSocket(0, InetAddress.getLoopbackAddress());
+            } catch (IOException e) {
+                closeQuietly(association.control);
+                throw e;
+            }
+            this.relaySocket = socket;
+            daemon("turn-udp-in", new Runnable() {
+                @Override
+                public void run() {
+                    receiveLoop();
+                }
+            });
+            daemon("turn-udp-watch", new Runnable() {
+                @Override
+                public void run() {
+                    watchControl();
+                }
+            });
+        }
+
+
+        void send(byte[] wrapped) throws IOException {
+            relaySocket.send(new DatagramPacket(wrapped, wrapped.length, association.relay));
+        }
+
+
+        void close() {
+            dead = true;
+            closeQuietly(relaySocket);
+            closeQuietly(association.control);
+            sessions.remove(source, this);
+        }
+
+
+        private void receiveLoop() {
+            byte[] buffer = new byte[65535];
+            while (!closed && !relaySocket.isClosed()) {
+                try {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    relaySocket.receive(packet);
+                    if (!isFromRelay(packet)) {
+                        continue;
+                    }
+                    byte[] data = Socks5.unwrapUdp(packet.getData(), packet.getLength());
+                    udpLocal.send(new DatagramPacket(data, data.length, source));
+                } catch (IOException e) {
+                    if (closed || relaySocket.isClosed()) {
+                        return;
+                    }
+                }
+            }
+        }
+
+
+        /** Accepts only the proxy's relay port, from loopback or the proxy's own address. */
+        private boolean isFromRelay(DatagramPacket packet) {
+            InetSocketAddress relay = association.relay;
+            if (packet.getPort() != relay.getPort()) {
+                return false;
+            }
+            InetAddress from = packet.getAddress();
+            return from.isLoopbackAddress() || from.equals(relay.getAddress());
+        }
+
+
+        private void watchControl() {
+            byte[] scratch = new byte[64];
+            try {
+                InputStream in = association.control.getInputStream();
+                while (in.read(scratch) >= 0) {
+                    // The proxy sends nothing more on the control connection; anything it sends is ignored.
+                }
+            } catch (IOException e) {
+                // Treated the same as EOF.
+            }
+            close();
         }
     }
 }

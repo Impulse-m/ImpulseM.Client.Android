@@ -47,4 +47,30 @@ public class TurnEndpointTest {
         assertNull(TurnEndpoint.parse("turn:host:notaport"));
         assertNull(TurnEndpoint.parse(null));
     }
+
+
+    @Test
+    public void unbracketedIpv6IsRejected() {
+        assertNull(TurnEndpoint.parse("turn:2001:db8::1"));
+    }
+
+
+    @Test
+    public void zeroPortIsRejected() {
+        assertNull(TurnEndpoint.parse("turn:h:0"));
+    }
+
+
+    @Test
+    public void transportParameterMatchesExactly() {
+        assertFalse(TurnEndpoint.parse("turn:h:3478?xtransport=tcp").tcp);
+    }
+
+
+    @Test
+    public void schemeAndTransportValueAreCaseInsensitive() {
+        TurnEndpoint endpoint = TurnEndpoint.parse("TURN:H:3478?transport=TCP");
+        assertEquals("H", endpoint.host);
+        assertTrue(endpoint.tcp);
+    }
 }
