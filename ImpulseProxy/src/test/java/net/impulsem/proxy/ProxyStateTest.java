@@ -83,4 +83,37 @@ public class ProxyStateTest {
         state.removeServer("a");
         assertNull(state.selectedId);
     }
+
+
+    @Test
+    public void removeServerWithNullIsNoOp() {
+        ProxyState state = new ProxyState();
+        state.addManual(Arrays.asList(server("a")));
+        state.selectedId = "a";
+        state.removeServer(null);
+        assertEquals(1, state.manual.size());
+        assertEquals("a", state.selectedId);
+    }
+
+
+    @Test
+    public void removeServerOfSubscriptionOnlyIdLeavesSelection() {
+        ProxyState state = new ProxyState();
+        state.replaceSubscription(subscription("s", server("b")));
+        state.selectedId = "b";
+        state.removeServer("b");
+        assertEquals("b", state.selectedId);
+        assertEquals(1, state.subscriptions.get(0).servers.size());
+    }
+
+
+    @Test
+    public void removingSubscriptionHoldingSelectionClearsIt() {
+        ProxyState state = new ProxyState();
+        state.replaceSubscription(subscription("s", server("b")));
+        state.addManual(Arrays.asList(server("a")));
+        state.selectedId = "b";
+        state.removeSubscription("s");
+        assertNull(state.selectedId);
+    }
 }

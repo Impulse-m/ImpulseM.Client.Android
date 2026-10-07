@@ -77,4 +77,23 @@ public class XrayConfigBuilderTest {
         );
         assertFalse(config.has("inbounds"));
     }
+
+
+    @Test(expected = IllegalArgumentException.class)
+    public void emptyPasswordIsRejected() {
+        XrayConfigBuilder.build(server(), new LocalInbounds(1, 2, "u", ""));
+    }
+
+
+    @Test(expected = IllegalArgumentException.class)
+    public void nullUserIsRejected() {
+        XrayConfigBuilder.build(server(), new LocalInbounds(1, 2, null, "p"));
+    }
+
+
+    @Test
+    public void originalTagIsNotInTheConfig() {
+        String config = XrayConfigBuilder.build(server(), new LocalInbounds(1, 2, "u", "p"));
+        assertFalse(config.contains("Name With Secrets?"));
+    }
 }

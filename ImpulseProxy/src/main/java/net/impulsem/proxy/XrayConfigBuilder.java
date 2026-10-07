@@ -20,6 +20,8 @@ public final class XrayConfigBuilder {
         ProxyServer server,
         LocalInbounds inbounds
     ) {
+        requireCredential(inbounds.user, "user");
+        requireCredential(inbounds.password, "password");
         JsonObject config = new JsonObject();
         JsonObject log = new JsonObject();
         log.addProperty("loglevel", "warning");
@@ -58,6 +60,16 @@ public final class XrayConfigBuilder {
         outbounds.add(taggedOutbound(server));
         config.add("outbounds", outbounds);
         return config.toString();
+    }
+
+
+    private static void requireCredential(
+        String value,
+        String name
+    ) {
+        if (value == null || value.isEmpty()) {
+            throw new IllegalArgumentException("Local inbound " + name + " must not be empty");
+        }
     }
 
 

@@ -59,12 +59,17 @@ public final class ProxyState {
 
 
     public void removeServer(String id) {
+        if (id == null) {
+            return;
+        }
+        boolean removed = false;
         for (int i = manual.size() - 1; i >= 0; i--) {
             if (manual.get(i).id.equals(id)) {
                 manual.remove(i);
+                removed = true;
             }
         }
-        if (id.equals(selectedId)) {
+        if (removed && id.equals(selectedId)) {
             selectedId = null;
         }
     }

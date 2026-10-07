@@ -59,4 +59,40 @@ public class SubscriptionMetaTest {
         };
         assertEquals("Injected", SubscriptionMeta.parse("base64:AAAA", null, null, decoder).title);
     }
+
+
+    @Test
+    public void invalidBase64TitleIsNull() {
+        assertNull(SubscriptionMeta.parse("base64:%%%", null, null).title);
+    }
+
+
+    @Test
+    public void emptyBase64TitleIsNull() {
+        assertNull(SubscriptionMeta.parse("base64:", null, null).title);
+    }
+
+
+    @Test
+    public void decoderExceptionGivesNullTitle() {
+        SubscriptionMeta.Base64Decoder decoder = new SubscriptionMeta.Base64Decoder() {
+            @Override
+            public byte[] decode(String text) {
+                throw new IllegalStateException("boom");
+            }
+        };
+        assertNull(SubscriptionMeta.parse("base64:AAAA", null, null, decoder).title);
+    }
+
+
+    @Test
+    public void nullDecoderResultGivesNullTitle() {
+        SubscriptionMeta.Base64Decoder decoder = new SubscriptionMeta.Base64Decoder() {
+            @Override
+            public byte[] decode(String text) {
+                return null;
+            }
+        };
+        assertNull(SubscriptionMeta.parse("base64:AAAA", null, null, decoder).title);
+    }
 }

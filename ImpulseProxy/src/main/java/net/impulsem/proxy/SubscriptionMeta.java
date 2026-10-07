@@ -16,6 +16,11 @@ public final class SubscriptionMeta {
     public final int updateIntervalHours;
 
 
+    public interface Base64Decoder {
+        byte[] decode(String text);
+    }
+
+
     public SubscriptionMeta(
         String title,
         long upload,
@@ -30,11 +35,6 @@ public final class SubscriptionMeta {
         this.total = total;
         this.expire = expire;
         this.updateIntervalHours = updateIntervalHours;
-    }
-
-
-    public interface Base64Decoder {
-        byte[] decode(String text);
     }
 
 
@@ -86,8 +86,12 @@ public final class SubscriptionMeta {
         if (value.startsWith("base64:")) {
             try {
                 byte[] bytes = decoder.decode(value.substring("base64:".length()));
-                return new String(bytes, StandardCharsets.UTF_8).trim();
-            } catch (IllegalArgumentException e) {
+                if (bytes == null) {
+                    return null;
+                }
+                String decoded = new String(bytes, StandardCharsets.UTF_8).trim();
+                return decoded.isEmpty() ? null : decoded;
+            } catch (RuntimeException e) {
                 return null;
             }
         }
