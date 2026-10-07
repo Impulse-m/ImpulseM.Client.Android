@@ -1,5 +1,6 @@
 import os
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -51,6 +52,10 @@ def main() -> None:
         int(os.environ["GITHUB_RUN_NUMBER"]),
         properties["APP_VERSION_NAME"],
     )
+    metadata["source_commit"] = subprocess.check_output(
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+        text=True,
+    ).strip()
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in metadata.items():
             output.write(f"{key}={value}\n")

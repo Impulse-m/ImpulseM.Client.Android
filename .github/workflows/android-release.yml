@@ -22,6 +22,7 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       title: ${{ steps.release.outputs.title }}
       prerelease: ${{ steps.release.outputs.prerelease }}
+      source_commit: ${{ steps.release.outputs.source_commit }}
     steps:
       - name: Check out source and native dependencies
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -153,7 +154,7 @@ jobs:
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
           RELEASE_TITLE: ${{ needs.build.outputs.title }}
           IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
-          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
         run: |
           cd dist
           sha256sum --check SHA256SUMS.txt
