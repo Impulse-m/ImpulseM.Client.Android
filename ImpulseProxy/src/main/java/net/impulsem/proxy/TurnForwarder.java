@@ -109,6 +109,11 @@ public final class TurnForwarder implements Closeable {
     }
 
 
+    int sessionCount() {
+        return sessions.size();
+    }
+
+
     private void acceptTcp() {
         while (!closed) {
             final Socket client;
@@ -177,11 +182,14 @@ public final class TurnForwarder implements Closeable {
     }
 
 
-    /** Returns the session for a local source, creating one if allowed; null means the datagram is dropped. */
+    /** Returns the session for a local source, creating one (evicting the idlest at the cap); null means drop. */
     private UdpSession sessionFor(SocketAddress source) throws IOException {
         UdpSession existing = sessions.get(source);
         if (existing != null) {
             return existing;
+        }
+        if (sessions.size() >= maxUdpSources) {
+            evictLeastRecentlyActive();
         }
         if (sessions.size() >= maxUdpSources) {
             return null;
@@ -194,6 +202,19 @@ public final class TurnForwarder implements Closeable {
             return null;
         }
         return created;
+    }
+
+
+    private void evictLeastRecentlyActive() {
+        UdpSession idlest = null;
+        for (UdpSession session : sessions.values()) {
+            if (idlest == null || session.lastActivity - idlest.lastActivity < 0) {
+                idlest = session;
+            }
+        }
+        if (idlest != null) {
+            idlest.close();
+        }
     }
 
 
@@ -253,6 +274,7 @@ public final class TurnForwarder implements Closeable {
         private final Socks5.UdpAssociation association;
         private final DatagramSocket relaySocket;
         private volatile boolean dead;
+        private volatile long lastActivity = System.nanoTime();
 
 
         UdpSession(SocketAddress source) throws IOException {
@@ -282,6 +304,8 @@ public final class TurnForwarder implements Closeable {
 
 
         void send(byte[] wrapped) throws IOException {
+            // Stamped before the send so a reply cannot be seen before the activity it answers.
+            lastActivity = System.nanoTime();
             relaySocket.send(new DatagramPacket(wrapped, wrapped.length, association.relay));
         }
 
@@ -304,6 +328,7 @@ public final class TurnForwarder implements Closeable {
                         continue;
                     }
                     byte[] data = Socks5.unwrapUdp(packet.getData(), packet.getLength());
+                    lastActivity = System.nanoTime();
                     udpLocal.send(new DatagramPacket(data, data.length, source));
                 } catch (IOException e) {
                     if (closed || relaySocket.isClosed()) {

@@ -150,7 +150,7 @@ public class TurnForwarderTest {
 
 
     @Test
-    public void udpSourceLimitIsEnforced() throws Exception {
+    public void udpSourceLimitEvictsOldestNotNewest() throws Exception {
         FakeSocks5Server socks = new FakeSocks5Server("u", "p");
         TurnForwarder forwarder = udpForwarder(socks, 2);
         DatagramSocket a = null;
@@ -166,7 +166,9 @@ public class TurnForwarderTest {
             sendText(b, "b", port);
             assertEquals("b", receiveText(b));
             sendText(c, "c", port);
-            expectSilence(c, 700);
+            assertEquals("c", receiveText(c));
+            assertEquals(-1, forwarder.relayPortFor(a.getLocalSocketAddress()));
+            assertEquals(2, forwarder.sessionCount());
         } finally {
             closeQuietly(a);
             closeQuietly(b);
@@ -174,6 +176,80 @@ public class TurnForwarderTest {
             forwarder.close();
             socks.close();
         }
+    }
+
+
+    @Test
+    public void udpEvictsLeastRecentlyActiveSourceAtCap() throws Exception {
+        FakeSocks5Server socks = new FakeSocks5Server("u", "p");
+        TurnForwarder forwarder = udpForwarder(socks, 2);
+        DatagramSocket a = null;
+        DatagramSocket b = null;
+        DatagramSocket c = null;
+        try {
+            int port = forwarder.start();
+            a = newClient();
+            b = newClient();
+            c = newClient();
+            sendText(a, "a1", port);
+            assertEquals("a1", receiveText(a));
+            sendText(b, "b1", port);
+            assertEquals("b1", receiveText(b));
+            sendText(a, "a2", port);
+            assertEquals("a2", receiveText(a));
+            // B is now the least recently active source, so it is the one evicted.
+            sendText(c, "c1", port);
+            assertEquals("c1", receiveText(c));
+            assertEquals(-1, forwarder.relayPortFor(b.getLocalSocketAddress()));
+            assertTrue(forwarder.relayPortFor(a.getLocalSocketAddress()) > 0);
+            assertTrue(forwarder.relayPortFor(c.getLocalSocketAddress()) > 0);
+            sendText(a, "a3", port);
+            assertEquals("a3", receiveText(a));
+            assertEquals(2, forwarder.sessionCount());
+        } finally {
+            closeQuietly(a);
+            closeQuietly(b);
+            closeQuietly(c);
+            forwarder.close();
+            socks.close();
+        }
+    }
+
+
+    @Test
+    public void udpSessionRecreatedAfterControlEof() throws Exception {
+        FakeSocks5Server socks = new FakeSocks5Server("u", "p");
+        TurnForwarder forwarder = udpForwarder(socks, 8);
+        DatagramSocket a = null;
+        try {
+            int port = forwarder.start();
+            a = newClient();
+            sendText(a, "first", port);
+            assertEquals("first", receiveText(a));
+            assertEquals(1, forwarder.sessionCount());
+            socks.closeUdpControls();
+            awaitSessionCount(forwarder, 0, 2000);
+            sendText(a, "second", port);
+            assertEquals("second", receiveText(a));
+            assertEquals(1, forwarder.sessionCount());
+        } finally {
+            closeQuietly(a);
+            forwarder.close();
+            socks.close();
+        }
+    }
+
+
+    private static void awaitSessionCount(
+        TurnForwarder forwarder,
+        int expected,
+        long timeoutMillis
+    ) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (forwarder.sessionCount() != expected && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertEquals(expected, forwarder.sessionCount());
     }
 
 

@@ -12,6 +12,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 
@@ -27,6 +28,7 @@ final class FakeSocks5Server implements Closeable {
     private final String user;
     private final String password;
     private volatile boolean closed;
+    private final CopyOnWriteArrayList<Socket> udpControls = new CopyOnWriteArrayList<Socket>();
 
 
     FakeSocks5Server(
@@ -49,6 +51,14 @@ final class FakeSocks5Server implements Closeable {
 
     InetSocketAddress address() {
         return new InetSocketAddress(InetAddress.getLoopbackAddress(), server.getLocalPort());
+    }
+
+
+    /** Closes the server side of every UDP ASSOCIATE control connection, as a proxy restart would. */
+    void closeUdpControls() throws IOException {
+        for (Socket control : udpControls) {
+            control.close();
+        }
     }
 
 
@@ -118,6 +128,7 @@ final class FakeSocks5Server implements Closeable {
                 }, "fake-socks-udp");
                 echo.setDaemon(true);
                 echo.start();
+                udpControls.add(socket);
                 while (in.read() >= 0) {
                     // Hold the association until the client closes the control connection.
                 }
