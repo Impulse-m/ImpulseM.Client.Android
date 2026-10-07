@@ -39,14 +39,15 @@ subprojects {
 
     plugins.withId('com.android.application') {
         androidComponents {
-            onVariants(selector().withBuildType('debug')) { variant ->
-                // Match the native library's debug ABIs, including transitive SDK libraries.
-                if (project.hasProperty('IMPULSEM_DEBUG_ABIS')) {
-                    Set<String> debugAbis = IMPULSEM_DEBUG_ABIS.split(',').collect { it.trim() }.toSet()
-                    for (String abi : ['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64']) {
-                        if (!debugAbis.contains(abi)) {
-                            variant.packaging.jniLibs.excludes.add("lib/${abi}/**")
-                        }
+            onVariants(selector().all()) { variant ->
+                // LiveKit's Rust library does not support 32-bit x86.
+                Set<String> packagedAbis = ['armeabi-v7a', 'arm64-v8a', 'x86_64'].toSet()
+                if (variant.buildType == 'debug' && project.hasProperty('IMPULSEM_DEBUG_ABIS')) {
+                    packagedAbis.retainAll(IMPULSEM_DEBUG_ABIS.split(',').collect { it.trim() })
+                }
+                for (String abi : ['armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64']) {
+                    if (!packagedAbis.contains(abi)) {
+                        variant.packaging.jniLibs.excludes.add("lib/${abi}/**")
                     }
                 }
             }

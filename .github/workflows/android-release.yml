@@ -107,6 +107,7 @@ jobs:
             exit 1
           fi
           apk="TMessagesProj_App/build/outputs/apk/afat/$VARIANT/app.apk"
+          python3 .github/scripts/verify_apk.py "$apk" "$VARIANT"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apk-signature.txt"
           actual_certificate="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-signature.txt")"
           if [ "$actual_certificate" != "$EXPECTED_CERTIFICATE" ]; then
