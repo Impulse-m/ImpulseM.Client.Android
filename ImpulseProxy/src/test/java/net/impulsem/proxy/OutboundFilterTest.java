@@ -71,4 +71,53 @@ public class OutboundFilterTest {
         assertEquals(0, result.servers.size());
         assertEquals(1, result.skipped);
     }
+
+
+    @Test
+    public void nonNumericPortIsSkipped() {
+        JsonArray outbounds = JsonParser.parseString(
+            "[{\"protocol\":\"vless\",\"settings\":{\"address\":\"h.example.com\",\"port\":\"x\"}}]"
+        ).getAsJsonArray();
+        OutboundFilter.Result result = OutboundFilter.filter(outbounds);
+        assertEquals(0, result.servers.size());
+        assertEquals(1, result.skipped);
+    }
+
+
+    @Test
+    public void vnextNotAnArrayIsSkipped() {
+        JsonArray outbounds = JsonParser.parseString(
+            "[{\"protocol\":\"vless\",\"settings\":{\"vnext\":{}}}]"
+        ).getAsJsonArray();
+        OutboundFilter.Result result = OutboundFilter.filter(outbounds);
+        assertEquals(0, result.servers.size());
+        assertEquals(1, result.skipped);
+    }
+
+
+    @Test
+    public void malformedProtocolIsSkipped() {
+        JsonArray outbounds = JsonParser.parseString(
+            "[{\"protocol\":123,\"settings\":{\"address\":\"h.example.com\",\"port\":1}},"
+            + "{\"protocol\":null,\"settings\":{\"address\":\"h.example.com\",\"port\":1}},"
+            + "{\"settings\":{\"address\":\"h.example.com\",\"port\":1}}]"
+        ).getAsJsonArray();
+        OutboundFilter.Result result = OutboundFilter.filter(outbounds);
+        assertEquals(0, result.servers.size());
+        assertEquals(3, result.skipped);
+    }
+
+
+    @Test
+    public void malformedOutboundDoesNotAbortTheFilter() {
+        JsonArray outbounds = JsonParser.parseString(
+            "[{\"protocol\":\"vless\",\"settings\":{\"address\":\"h.example.com\",\"port\":\"x\"}},"
+            + VnextReality
+            + "]"
+        ).getAsJsonArray();
+        OutboundFilter.Result result = OutboundFilter.filter(outbounds);
+        assertEquals(1, result.servers.size());
+        assertEquals("NL Amsterdam", result.servers.get(0).name);
+        assertEquals(1, result.skipped);
+    }
 }

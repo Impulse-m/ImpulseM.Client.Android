@@ -33,13 +33,7 @@ public final class OutboundFilter {
         List<ProxyServer> servers = new ArrayList<ProxyServer>();
         int skipped = 0;
         for (JsonElement element : outbounds) {
-            if (!element.isJsonObject()) {
-                skipped++;
-                continue;
-            }
-            JsonObject outbound = element.getAsJsonObject();
-            String protocol = outbound.has("protocol") ? outbound.get("protocol").getAsString() : "";
-            ProxyServer server = "vless".equals(protocol) ? ProxyServer.fromOutbound(outbound) : null;
+            ProxyServer server = toServer(element);
             if (server == null) {
                 skipped++;
             } else {
@@ -47,5 +41,23 @@ public final class OutboundFilter {
             }
         }
         return new Result(servers, skipped);
+    }
+
+
+    /** Returns null for anything that is not a usable VLESS outbound. */
+    private static ProxyServer toServer(JsonElement element) {
+        try {
+            if (!element.isJsonObject()) {
+                return null;
+            }
+            JsonObject outbound = element.getAsJsonObject();
+            JsonElement protocol = outbound.get("protocol");
+            if (protocol == null || !"vless".equals(protocol.getAsString())) {
+                return null;
+            }
+            return ProxyServer.fromOutbound(outbound);
+        } catch (ClassCastException | IllegalStateException | NumberFormatException | UnsupportedOperationException e) {
+            return null;
+        }
     }
 }

@@ -37,28 +37,40 @@ public final class ProxyServer {
     }
 
 
-    /** Returns null when the outbound has no usable address. */
+    /** Returns null when the outbound has no usable address or its fields have the wrong JSON types. */
     public static ProxyServer fromOutbound(JsonObject outbound) {
-        JsonObject settings = outbound.has("settings") && outbound.get("settings").isJsonObject()
-            ? outbound.getAsJsonObject("settings")
-            : new JsonObject();
-        JsonObject endpoint = settings;
-        if (settings.has("vnext") && settings.getAsJsonArray("vnext").size() > 0) {
-            endpoint = settings.getAsJsonArray("vnext").get(0).getAsJsonObject();
-        }
-        String host = endpoint.has("address") ? endpoint.get("address").getAsString() : "";
-        int port = endpoint.has("port") ? endpoint.get("port").getAsInt() : 0;
-        if (host.isEmpty() || port <= 0) {
+        try {
+            JsonObject settings = outbound.has("settings") && outbound.get("settings").isJsonObject()
+                ? outbound.getAsJsonObject("settings")
+                : new JsonObject();
+            JsonObject endpoint = settings;
+            if (settings.has("vnext") && settings.getAsJsonArray("vnext").size() > 0) {
+                endpoint = settings.getAsJsonArray("vnext").get(0).getAsJsonObject();
+            }
+            String host = endpoint.has("address") ? endpoint.get("address").getAsString() : "";
+            int port = endpoint.has("port") ? endpoint.get("port").getAsInt() : 0;
+            if (host.isEmpty() || port <= 0) {
+                return null;
+            }
+            JsonObject stream = outbound.has("streamSettings") && outbound.get("streamSettings").isJsonObject()
+                ? outbound.getAsJsonObject("streamSettings")
+                : new JsonObject();
+            String network = stream.has("network") ? stream.get("network").getAsString() : "tcp";
+            String security = stream.has("security") ? stream.get("security").getAsString() : "none";
+            String tag = outbound.has("tag") ? outbound.get("tag").getAsString().trim() : "";
+            String outboundJson = outbound.toString();
+            return new ProxyServer(
+                sha256(outboundJson),
+                tag.isEmpty() ? host : tag,
+                host,
+                port,
+                network,
+                security,
+                outboundJson
+            );
+        } catch (ClassCastException | IllegalStateException | NumberFormatException | UnsupportedOperationException e) {
             return null;
         }
-        JsonObject stream = outbound.has("streamSettings") && outbound.get("streamSettings").isJsonObject()
-            ? outbound.getAsJsonObject("streamSettings")
-            : new JsonObject();
-        String network = stream.has("network") ? stream.get("network").getAsString() : "tcp";
-        String security = stream.has("security") ? stream.get("security").getAsString() : "none";
-        String tag = outbound.has("tag") ? outbound.get("tag").getAsString().trim() : "";
-        String outboundJson = outbound.toString();
-        return new ProxyServer(sha256(outboundJson), tag.isEmpty() ? host : tag, host, port, network, security, outboundJson);
     }
 
 

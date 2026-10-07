@@ -20,14 +20,11 @@ public final class LibXrayClient {
 
 
     public JsonArray convertShareLinks(String text) throws XrayException {
+        String method = "convertShareLinksToXrayJson";
         JsonObject payload = new JsonObject();
         payload.addProperty("text", text);
-        JsonElement data = call("convertShareLinksToXrayJson", payload);
-        if (data == null || !data.isJsonObject()) {
-            return new JsonArray();
-        }
-        JsonArray outbounds = data.getAsJsonObject().getAsJsonArray("outbounds");
-        return outbounds == null ? new JsonArray() : outbounds;
+        JsonObject data = objectOf(method, call(method, payload));
+        return arrayOf(method, data, "outbounds");
     }
 
 
@@ -47,29 +44,33 @@ public final class LibXrayClient {
 
 
     public boolean isRunning() throws XrayException {
-        JsonElement data = call("getXrayState", null);
-        return data != null && data.isJsonObject() && data.getAsJsonObject().get("running").getAsBoolean();
+        String method = "getXrayState";
+        JsonObject data = objectOf(method, call(method, null));
+        return booleanOf(method, data.get("running"));
     }
 
 
     public int[] freePorts(int count) throws XrayException {
+        String method = "getFreePorts";
         JsonObject payload = new JsonObject();
         payload.addProperty("count", count);
-        JsonArray ports = call("getFreePorts", payload).getAsJsonObject().getAsJsonArray("ports");
+        JsonArray ports = arrayOf(method, objectOf(method, call(method, payload)), "ports");
         int[] result = new int[ports.size()];
         for (int i = 0; i < ports.size(); i++) {
-            result[i] = ports.get(i).getAsInt();
+            result[i] = intOf(method, ports.get(i));
         }
         return result;
     }
 
 
+    /** One delay per config in milliseconds; -1 when the config failed or has no result entry. */
     public long[] pingBatch(
         List<String> xrayJsons,
         String outboundTag,
         String url,
         int timeoutSeconds
     ) throws XrayException {
+        String method = "pingBatch";
         JsonArray configs = new JsonArray();
         for (String xrayJson : xrayJsons) {
             JsonObject item = new JsonObject();
@@ -81,11 +82,15 @@ public final class LibXrayClient {
         payload.add("configs", configs);
         payload.addProperty("timeout", timeoutSeconds);
         payload.addProperty("url", url);
-        JsonArray results = call("pingBatch", payload).getAsJsonObject().getAsJsonArray("results");
+        JsonArray results = arrayOf(method, objectOf(method, call(method, payload)), "results");
         long[] delays = new long[xrayJsons.size()];
         for (int i = 0; i < delays.length; i++) {
-            JsonObject result = results != null && i < results.size() ? results.get(i).getAsJsonObject() : null;
-            delays[i] = result != null && result.get("success").getAsBoolean() ? result.get("delay").getAsLong() : -1L;
+            if (i >= results.size()) {
+                delays[i] = -1L;
+                continue;
+            }
+            JsonObject result = objectOf(method, results.get(i));
+            delays[i] = booleanOf(method, result.get("success")) ? longOf(method, result.get("delay")) : -1L;
         }
         return delays;
     }
@@ -95,6 +100,76 @@ public final class LibXrayClient {
         JsonObject payload = new JsonObject();
         payload.addProperty("xrayJson", xrayJson);
         return payload;
+    }
+
+
+    private static XrayException malformed(String method) {
+        return new XrayException(method + ": malformed response");
+    }
+
+
+    private static JsonObject objectOf(
+        String method,
+        JsonElement element
+    ) throws XrayException {
+        if (element == null || !element.isJsonObject()) {
+            throw malformed(method);
+        }
+        return element.getAsJsonObject();
+    }
+
+
+    private static JsonArray arrayOf(
+        String method,
+        JsonObject object,
+        String key
+    ) throws XrayException {
+        JsonElement element = object.get(key);
+        if (element == null || !element.isJsonArray()) {
+            throw malformed(method);
+        }
+        return element.getAsJsonArray();
+    }
+
+
+    private static boolean booleanOf(
+        String method,
+        JsonElement element
+    ) throws XrayException {
+        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isBoolean()) {
+            throw malformed(method);
+        }
+        return element.getAsBoolean();
+    }
+
+
+    private static int intOf(
+        String method,
+        JsonElement element
+    ) throws XrayException {
+        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
+            throw malformed(method);
+        }
+        try {
+            return element.getAsInt();
+        } catch (NumberFormatException e) {
+            throw malformed(method);
+        }
+    }
+
+
+    private static long longOf(
+        String method,
+        JsonElement element
+    ) throws XrayException {
+        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
+            throw malformed(method);
+        }
+        try {
+            return element.getAsLong();
+        } catch (NumberFormatException e) {
+            throw malformed(method);
+        }
     }
 
 
@@ -110,14 +185,19 @@ public final class LibXrayClient {
         }
         JsonObject response;
         try {
-            response = JsonParser.parseString(runtime.invoke(request.toString())).getAsJsonObject();
+            JsonElement parsed = JsonParser.parseString(runtime.invoke(request.toString()));
+            if (!parsed.isJsonObject()) {
+                throw malformed(method);
+            }
+            response = parsed.getAsJsonObject();
         } catch (RuntimeException e) {
-            throw new XrayException(method + ": malformed response");
+            throw malformed(method);
         }
-        JsonElement success = response.get("success");
-        if (success == null || !success.getAsBoolean()) {
+        boolean success = booleanOf(method, response.get("success"));
+        if (!success) {
             JsonElement error = response.get("error");
-            throw new XrayException(method + ": " + (error == null ? "unknown error" : error.getAsString()));
+            boolean hasText = error != null && error.isJsonPrimitive();
+            throw new XrayException(method + ": " + (hasText ? error.getAsString() : "unknown error"));
         }
         return response.get("data");
     }

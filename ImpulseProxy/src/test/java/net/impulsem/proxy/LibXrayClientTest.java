@@ -85,4 +85,62 @@ public class LibXrayClientTest {
             client("{\"success\":true,\"data\":{\"ports\":[40001,40002]}}", sent).freePorts(2)
         );
     }
+
+
+    @Test(expected = XrayException.class)
+    public void freePortsWithoutDataThrows() throws Exception {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        client("{\"success\":true}", sent).freePorts(2);
+    }
+
+
+    @Test(expected = XrayException.class)
+    public void freePortsWithNonNumericPortThrows() throws Exception {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        client("{\"success\":true,\"data\":{\"ports\":[\"x\"]}}", sent).freePorts(1);
+    }
+
+
+    @Test
+    public void isRunningWithoutRunningFieldNamesMethod() {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        try {
+            client("{\"success\":true,\"data\":{}}", sent).isRunning();
+            fail();
+        } catch (XrayException e) {
+            assertEquals("getXrayState: malformed response", e.getMessage());
+        }
+    }
+
+
+    @Test(expected = XrayException.class)
+    public void nonBooleanSuccessThrows() throws Exception {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        client("{\"success\":\"yes\"}", sent).convertShareLinks("vless://x");
+    }
+
+
+    @Test(expected = XrayException.class)
+    public void nullRuntimeResponseThrows() throws Exception {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        client(null, sent).convertShareLinks("vless://x");
+    }
+
+
+    @Test(expected = XrayException.class)
+    public void pingBatchWithoutResultsThrows() throws Exception {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        client("{\"success\":true,\"data\":{}}", sent).pingBatch(Arrays.asList("{}"), "proxy", "https://example.com", 5);
+    }
+
+
+    @Test
+    public void pingBatchMissingEntriesAreMinusOne() throws Exception {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        long[] delays = client(
+            "{\"success\":true,\"data\":{\"results\":[{\"success\":true,\"delay\":120}]}}",
+            sent
+        ).pingBatch(Arrays.asList("{}", "{}"), "proxy", "https://example.com", 5);
+        assertArrayEquals(new long[] {120L, -1L}, delays);
+    }
 }
