@@ -1,0 +1,178 @@
+name: Android releases
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/master' }}
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      title: ${{ steps.release.outputs.title }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - name: Check out source and native dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Prepare release metadata
+        id: release
+        run: python3 .github/scripts/prepare_release.py
+
+      - name: Set up Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+      - name: Install Android build tools
+        run: |
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+
+      - name: Test the transport
+        run: >-
+          gradle :ImpulseTransport:test
+          --no-daemon --max-workers=2 --console=plain
+          -Dorg.gradle.parallel=false
+          '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g'
+
+      - name: Restore private signing files
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIGNING_PROPERTIES_BASE64: ${{ secrets.ANDROID_SIGNING_PROPERTIES_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo 'ANDROID_KEYSTORE_BASE64 is missing'
+            exit 1
+          fi
+          if [ -z "$SIGNING_PROPERTIES_BASE64" ]; then
+            echo 'ANDROID_SIGNING_PROPERTIES_BASE64 is missing'
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$RUNNER_TEMP/android-signing"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/release.keystore"
+          printf '%s' "$SIGNING_PROPERTIES_BASE64" | base64 --decode > "$RUNNER_TEMP/android-signing/signing.properties"
+          printf '\nstoreFile=%s\n' "$RUNNER_TEMP/android-signing/release.keystore" >> "$RUNNER_TEMP/android-signing/signing.properties"
+          printf 'impulsem.signing.properties=%s\n' "$RUNNER_TEMP/android-signing/signing.properties" >> local.properties
+
+      - name: Build signed APK
+        env:
+          BUILD_TASK: ${{ steps.release.outputs.task }}
+          VERSION_CODE: ${{ steps.release.outputs.version_code }}
+          VERSION_NAME: ${{ steps.release.outputs.version }}
+          CMAKE_BUILD_PARALLEL_LEVEL: '2'
+        run: |
+          gradle "$BUILD_TASK" \
+            "-PAPP_VERSION_CODE=$VERSION_CODE" \
+            "-PAPP_VERSION_NAME=$VERSION_NAME" \
+            --no-daemon --max-workers=2 --console=plain \
+            -Dorg.gradle.parallel=false \
+            '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g'
+
+      - name: Verify signature and package release files
+        env:
+          VARIANT: ${{ steps.release.outputs.variant }}
+          APK_NAME: ${{ steps.release.outputs.apk_name }}
+          EXPECTED_CERTIFICATE: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          if [ -z "$EXPECTED_CERTIFICATE" ]; then
+            echo 'ANDROID_SIGNING_CERT_SHA256 is missing'
+            exit 1
+          fi
+          apk="TMessagesProj_App/build/outputs/apk/afat/$VARIANT/app.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" > "$RUNNER_TEMP/apk-signature.txt"
+          actual_certificate="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-signature.txt")"
+          if [ "$actual_certificate" != "$EXPECTED_CERTIFICATE" ]; then
+            echo 'APK signing certificate does not match'
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$apk" "dist/$APK_NAME"
+          cd dist
+          sha256sum "$APK_NAME" > SHA256SUMS.txt
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove private signing files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/android-signing/release.keystore" "$RUNNER_TEMP/android-signing/signing.properties"
+          rm -f local.properties
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified APK
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: android-release
+          path: dist
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_TITLE: ${{ needs.build.outputs.title }}
+          IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS.txt
+          if [ "$IS_PRERELEASE" = 'true' ]; then
+            if ! gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" > /dev/null 2>&1; then
+              gh api --method POST "repos/$GH_REPO/git/refs" \
+                -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$SOURCE_COMMIT" --silent
+            fi
+          fi
+          tag_commit="$(gh api "repos/$GH_REPO/commits/refs%2Ftags%2F$RELEASE_TAG" --jq '.sha')"
+          if [ "$tag_commit" != "$SOURCE_COMMIT" ]; then
+            echo 'The release tag no longer identifies the commit that was built'
+            exit 1
+          fi
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag \
+              --title "$RELEASE_TITLE" --generate-notes --draft
+          fi
+          gh release upload "$RELEASE_TAG" ./*.apk SHA256SUMS.txt --clobber
+          if [ "$IS_PRERELEASE" = 'true' ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
+            gh api --method PATCH "repos/$GH_REPO/releases/$release_id" \
+              -F draft=false -F prerelease=false -f make_latest=legacy --silent
+          fi
