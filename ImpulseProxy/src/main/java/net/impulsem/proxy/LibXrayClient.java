@@ -11,6 +11,22 @@ import java.util.List;
 public final class LibXrayClient {
     public static final int ApiVersion = 3;
 
+    /** One ping outcome: delay in milliseconds (-1 on failure) and libXray's optional error text. */
+    public static final class PingResult {
+        public final long delay;
+        public final String error;
+
+
+        public PingResult(
+            long delay,
+            String error
+        ) {
+            this.delay = delay;
+            this.error = error;
+        }
+    }
+
+
     private final XrayRuntime runtime;
 
 
@@ -70,6 +86,22 @@ public final class LibXrayClient {
         String url,
         int timeoutSeconds
     ) throws XrayException {
+        PingResult[] detailed = pingBatchDetailed(xrayJsons, outboundTag, url, timeoutSeconds);
+        long[] delays = new long[detailed.length];
+        for (int i = 0; i < delays.length; i++) {
+            delays[i] = detailed[i].delay;
+        }
+        return delays;
+    }
+
+
+    /** Like pingBatch, with the optional error text libXray reports for a failed config. */
+    public PingResult[] pingBatchDetailed(
+        List<String> xrayJsons,
+        String outboundTag,
+        String url,
+        int timeoutSeconds
+    ) throws XrayException {
         String method = "pingBatch";
         JsonArray configs = new JsonArray();
         for (String xrayJson : xrayJsons) {
@@ -83,16 +115,22 @@ public final class LibXrayClient {
         payload.addProperty("timeout", timeoutSeconds);
         payload.addProperty("url", url);
         JsonArray results = arrayOf(method, objectOf(method, call(method, payload)), "results");
-        long[] delays = new long[xrayJsons.size()];
-        for (int i = 0; i < delays.length; i++) {
+        PingResult[] out = new PingResult[xrayJsons.size()];
+        for (int i = 0; i < out.length; i++) {
             if (i >= results.size()) {
-                delays[i] = -1L;
+                out[i] = new PingResult(-1L, null);
                 continue;
             }
             JsonObject result = objectOf(method, results.get(i));
-            delays[i] = booleanOf(method, result.get("success")) ? longOf(method, result.get("delay")) : -1L;
+            if (booleanOf(method, result.get("success"))) {
+                out[i] = new PingResult(longOf(method, result.get("delay")), null);
+            } else {
+                JsonElement error = result.get("error");
+                boolean text = error != null && error.isJsonPrimitive() && error.getAsJsonPrimitive().isString();
+                out[i] = new PingResult(-1L, text ? error.getAsString() : null);
+            }
         }
-        return delays;
+        return out;
     }
 
 

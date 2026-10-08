@@ -94,6 +94,9 @@ public class ImpulseProxyServerCell extends FrameLayout {
             setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
             textView = new TextView(context);
             textView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+            textView.setSingleLine(true);
+            textView.setMaxLines(1);
+            textView.setEllipsize(TextUtils.TruncateAt.END);
             textView.setGravity((LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT) | Gravity.CENTER_VERTICAL);
             addView(textView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL, 21, 0, 21, 0));
         }
@@ -149,6 +152,25 @@ public class ImpulseProxyServerCell extends FrameLayout {
             Theme.ResourcesProvider resourcesProvider
         ) {
             return new ImpulseProxyServerCell(context);
+        }
+
+
+        @Override
+        public boolean equals(
+            UItem a,
+            UItem b
+        ) {
+            return a.object instanceof Row && b.object instanceof Row
+                && ((Row) a.object).server.id.equals(((Row) b.object).server.id);
+        }
+
+
+        @Override
+        public boolean contentsEquals(
+            UItem a,
+            UItem b
+        ) {
+            return a.object != null && a.object.equals(b.object);
         }
 
 
@@ -228,6 +250,8 @@ public class ImpulseProxyServerCell extends FrameLayout {
         setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
         int start = LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT;
         int end = LocaleController.isRTL ? Gravity.LEFT : Gravity.RIGHT;
+        int textLeft = LocaleController.isRTL ? 56 : 54;
+        int textRight = LocaleController.isRTL ? 54 : 56;
 
         radio = new RadioButton(context);
         radio.setSize(dp(20));
@@ -241,7 +265,15 @@ public class ImpulseProxyServerCell extends FrameLayout {
         nameView.setMaxLines(1);
         nameView.setEllipsize(TextUtils.TruncateAt.END);
         nameView.setGravity(start | Gravity.CENTER_VERTICAL);
-        addView(nameView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, start | Gravity.TOP, LocaleController.isRTL ? 56 : 54, 10, LocaleController.isRTL ? 54 : 56, 0));
+        addView(nameView, LayoutHelper.createFrame(
+            LayoutHelper.MATCH_PARENT,
+            LayoutHelper.WRAP_CONTENT,
+            start | Gravity.TOP,
+            textLeft,
+            10,
+            textRight,
+            0
+        ));
 
         statusView = new TextView(context);
         statusView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
@@ -249,7 +281,15 @@ public class ImpulseProxyServerCell extends FrameLayout {
         statusView.setMaxLines(1);
         statusView.setEllipsize(TextUtils.TruncateAt.END);
         statusView.setGravity(start);
-        addView(statusView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, start | Gravity.TOP, LocaleController.isRTL ? 56 : 54, 35, LocaleController.isRTL ? 54 : 56, 0));
+        addView(statusView, LayoutHelper.createFrame(
+            LayoutHelper.MATCH_PARENT,
+            LayoutHelper.WRAP_CONTENT,
+            start | Gravity.TOP,
+            textLeft,
+            35,
+            textRight,
+            0
+        ));
 
         infoView = new ImageView(context);
         infoView.setImageResource(R.drawable.msg_info);

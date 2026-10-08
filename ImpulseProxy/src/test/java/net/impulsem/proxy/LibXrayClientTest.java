@@ -3,6 +3,7 @@ package net.impulsem.proxy;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -142,5 +143,36 @@ public class LibXrayClientTest {
             sent
         ).pingBatch(Arrays.asList("{}", "{}"), "proxy", "https://example.com", 5);
         assertArrayEquals(new long[] {120L, -1L}, delays);
+    }
+
+
+    @Test
+    public void pingBatchDetailedCarriesPerItemErrors() throws Exception {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        LibXrayClient.PingResult[] results = client(
+            "{\"success\":true,\"data\":{\"results\":[{\"success\":true,\"delay\":120},{\"success\":false,\"delay\":0,\"error\":\"timeout\"},{\"success\":false,\"error\":null}]}}",
+            sent
+        ).pingBatchDetailed(Arrays.asList("{}", "{}", "{}"), "proxy", "https://example.com", 5);
+        assertEquals(3, results.length);
+        assertEquals(120L, results[0].delay);
+        assertNull(results[0].error);
+        assertEquals(-1L, results[1].delay);
+        assertEquals("timeout", results[1].error);
+        assertEquals(-1L, results[2].delay);
+        assertNull(results[2].error);
+    }
+
+
+    @Test
+    public void pingBatchDetailedShortResultsAreMinusOneWithoutError() throws Exception {
+        AtomicReference<String> sent = new AtomicReference<String>();
+        LibXrayClient.PingResult[] results = client(
+            "{\"success\":true,\"data\":{\"results\":[{\"success\":true,\"delay\":50}]}}",
+            sent
+        ).pingBatchDetailed(Arrays.asList("{}", "{}"), "proxy", "https://example.com", 5);
+        assertEquals(2, results.length);
+        assertEquals(50L, results[0].delay);
+        assertEquals(-1L, results[1].delay);
+        assertNull(results[1].error);
     }
 }

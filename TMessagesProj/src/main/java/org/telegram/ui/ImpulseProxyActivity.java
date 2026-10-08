@@ -20,6 +20,7 @@ import android.widget.Toast;
 import com.google.gson.JsonArray;
 
 import net.impulsem.proxy.InputKind;
+import net.impulsem.proxy.LibXrayClient;
 import net.impulsem.proxy.OutboundFilter;
 import net.impulsem.proxy.ProxyServer;
 import net.impulsem.proxy.ProxyState;
@@ -76,6 +77,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private static final int PingTimeoutSeconds = 5;
     private static final long PingIntervalMs = 60000L;
     private static final int LogLimit = 120;
+    private static final Pattern HexRun = Pattern.compile("[0-9a-fA-F]{8,}");
     private static final Pattern UuidLike = Pattern.compile("[0-9a-fA-F-]{36}");
     private static final Pattern LongToken = Pattern.compile("[A-Za-z0-9+/_=-]{40,}");
     private static final Pattern ShareLink = Pattern.compile("vless://\\S+");
@@ -126,6 +128,12 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private UniversalRecyclerView listView;
     private boolean pinging;
     private boolean pingAgain;
+    private boolean pingAgainMarkAll;
+    private final ExecutorService converter = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "ImpulseProxyConvert");
+        thread.setDaemon(true);
+        return thread;
+    });
     private boolean destroyed;
     private long lastPingAt;
     private int currentConnectionState;
@@ -255,7 +263,6 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                 .red());
             items.add(UItem.asShadow(""));
         }
-
     }
 
 
@@ -498,8 +505,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             builder.setNegativeButton(getString(R.string.ImpulseProxyDelete), (dialog, which) -> {
                 ProxyController.getInstance().update(next -> next.removeServer(server.id));
             });
+            builder.makeRed(AlertDialog.BUTTON_NEGATIVE);
         }
-        builder.setNeutralButton(getString(R.string.Close), null);
+        builder.setNeutralButton(getString(R.string.ImpulseProxyClose), null);
         showDialog(builder.create());
     }
 
@@ -540,9 +548,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             return;
         }
         if (pinging) {
-            if (markAll) {
-                pingAgain = true;
-            }
+            // Whatever asked while a round runs must still get its own round afterwards.
+            pingAgain = true;
+            pingAgainMarkAll |= markAll;
             return;
         }
         List<ProxyServer> servers = new ArrayList<ProxyServer>();
@@ -565,53 +573,65 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         proxyListener.run();
         background.execute(() -> {
             Map<String, Long> result = new HashMap<String, Long>();
-            List<ProxyServer> valid = new ArrayList<ProxyServer>();
-            List<String> configs = new ArrayList<String>();
-            for (ProxyServer server : servers) {
-                try {
-                    configs.add(XrayConfigBuilder.pingConfig(server));
-                    valid.add(server);
-                } catch (RuntimeException e) {
-                    result.put(server.id, -1L);
-                    FileLog.d("impulse proxy: ping config failed, server " + safe(server.name) + " (" + server.host + "), " + e.getClass().getSimpleName());
-                }
-            }
             try {
-                long[] measured = ProxyController.getInstance().xray().pingBatch(
-                    configs,
-                    XrayConfigBuilder.ProxyTag,
-                    PingUrl,
-                    PingTimeoutSeconds
-                );
-                for (int i = 0; i < valid.size(); i++) {
-                    long delay = i < measured.length ? measured[i] : -1L;
-                    result.put(valid.get(i).id, delay);
-                    if (delay < 0) {
-                        // pingBatch reports only success or failure per server, with no error text.
-                        FileLog.d("impulse proxy: ping failed, server " + safe(valid.get(i).name) + " (" + valid.get(i).host + "), no response");
+                List<ProxyServer> valid = new ArrayList<ProxyServer>();
+                List<String> configs = new ArrayList<String>();
+                for (ProxyServer server : servers) {
+                    try {
+                        configs.add(XrayConfigBuilder.pingConfig(server));
+                        valid.add(server);
+                    } catch (RuntimeException e) {
+                        result.put(server.id, -1L);
+                        FileLog.d("impulse proxy: ping config failed, server " + safe(server.name) + " (" + server.host + "), " + e.getClass().getSimpleName());
                     }
                 }
-            } catch (XrayException e) {
-                for (ProxyServer server : valid) {
-                    result.put(server.id, -1L);
-                    FileLog.d("impulse proxy: ping failed, server " + safe(server.name) + " (" + server.host + "), " + safe(e.getMessage()));
+                try {
+                    LibXrayClient.PingResult[] measured = ProxyController.getInstance().xray().pingBatchDetailed(
+                        configs,
+                        XrayConfigBuilder.ProxyTag,
+                        PingUrl,
+                        PingTimeoutSeconds
+                    );
+                    for (int i = 0; i < valid.size(); i++) {
+                        ProxyServer server = valid.get(i);
+                        LibXrayClient.PingResult ping = i < measured.length ? measured[i] : new LibXrayClient.PingResult(-1L, null);
+                        result.put(server.id, ping.delay);
+                        if (ping.delay < 0) {
+                            FileLog.d("impulse proxy: ping failed, server " + safe(server.name) + " (" + server.host + "), " + safe(ping.error));
+                        }
+                    }
+                } catch (XrayException e) {
+                    for (ProxyServer server : valid) {
+                        result.put(server.id, -1L);
+                        FileLog.d("impulse proxy: ping failed, server " + safe(server.name) + " (" + server.host + "), " + safe(e.getMessage()));
+                    }
                 }
+            } catch (RuntimeException e) {
+                FileLog.d("impulse proxy: ping round failed, " + e.getClass().getSimpleName());
             }
+            // Always posted, so a failed round can never leave the ping state stuck.
             AndroidUtilities.runOnUIThread(() -> {
                 pinging = false;
                 if (destroyed) {
                     return;
                 }
+                for (ProxyServer server : servers) {
+                    if (!result.containsKey(server.id)) {
+                        result.put(server.id, -1L);
+                    }
+                    pending.remove(server.id);
+                }
                 delays.putAll(result);
-                pending.removeAll(result.keySet());
                 if (resort || sortDelays.isEmpty()) {
                     sortDelays.clear();
                     sortDelays.putAll(delays);
                 }
                 proxyListener.run();
                 if (pingAgain) {
+                    boolean again = pingAgainMarkAll;
                     pingAgain = false;
-                    pingServers(true, true);
+                    pingAgainMarkAll = false;
+                    pingServers(again, true);
                 }
             });
         });
@@ -626,6 +646,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         String clean = ShareLink.matcher(text).replaceAll("");
         clean = UuidLike.matcher(clean).replaceAll("");
         clean = LongToken.matcher(clean).replaceAll("");
+        clean = HexRun.matcher(clean).replaceAll("");
         clean = clean.replace('\n', ' ').trim();
         return clean.length() > LogLimit ? clean.substring(0, LogLimit) : clean;
     }
@@ -722,14 +743,17 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private void addInput(String text) {
         InputKind kind = InputKind.detect(text);
         if (kind == InputKind.SUBSCRIPTION) {
-            AlertDialog progress = showSpinner();
+            boolean[] cancelled = new boolean[1];
+            AlertDialog progress = showSpinner(cancelled);
             ProxyController.getInstance().addSubscription(text.trim(), error -> {
                 dismissSpinner(progress);
                 if (destroyed) {
                     return;
                 }
                 if (error != null) {
-                    toast(describeError(error));
+                    if (!cancelled[0]) {
+                        toast(describeError(error));
+                    }
                 } else {
                     pingServers(false, true);
                 }
@@ -742,13 +766,14 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     }
 
 
-    private AlertDialog showSpinner() {
+    private AlertDialog showSpinner(boolean[] cancelled) {
         Context context = getParentActivity();
         if (context == null) {
             return null;
         }
         AlertDialog progress = new AlertDialog(context, AlertDialog.ALERT_TYPE_SPINNER);
-        progress.setCanCancel(false);
+        progress.setCanCancel(true);
+        progress.setOnCancelListener(dialog -> cancelled[0] = true);
         progress.show();
         return progress;
     }
@@ -767,8 +792,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
 
 
     private void addLinks(String text) {
-        AlertDialog progress = showSpinner();
-        background.execute(() -> {
+        boolean[] cancelled = new boolean[1];
+        AlertDialog progress = showSpinner(cancelled);
+        converter.execute(() -> {
             List<ProxyServer> servers = new ArrayList<ProxyServer>();
             for (String raw : text.split("\\r?\\n")) {
                 String line = raw.trim();
@@ -790,7 +816,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                     return;
                 }
                 if (servers.isEmpty()) {
-                    toast(getString(R.string.ImpulseProxyInvalid));
+                    if (!cancelled[0]) {
+                        toast(getString(R.string.ImpulseProxyInvalid));
+                    }
                 } else {
                     ProxyController.getInstance().update(next -> next.addManual(servers));
                     pingServers(false, true);

@@ -270,6 +270,7 @@
     <string name="ImpulseProxyPaste">Вставить из буфера</string>
     <string name="ImpulseProxyScanQr">Сканировать QR-код</string>
     <string name="ImpulseProxyCheckServers">Проверить серверы</string>
+    <string name="ImpulseProxyClose">Закрыть</string>
     <string name="ImpulseProxyInfo">Сведения о сервере</string>
     <string name="ImpulseProxyChecking">Проверка…</string>
     <string name="ImpulseProxyAvailable">✓ Доступен, пинг: %1$d мс</string>

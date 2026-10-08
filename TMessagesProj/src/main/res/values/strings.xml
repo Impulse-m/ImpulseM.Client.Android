@@ -11242,6 +11242,7 @@
     <string name="ImpulseProxyPaste">Paste from clipboard</string>
     <string name="ImpulseProxyScanQr">Scan QR code</string>
     <string name="ImpulseProxyCheckServers">Check servers</string>
+    <string name="ImpulseProxyClose">Close</string>
     <string name="ImpulseProxyInfo">Server details</string>
     <string name="ImpulseProxyChecking">Checking…</string>
     <string name="ImpulseProxyAvailable">✓ Available, ping: %1$d ms</string>
