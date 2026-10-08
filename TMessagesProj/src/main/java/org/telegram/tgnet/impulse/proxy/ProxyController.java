@@ -20,6 +20,7 @@ import net.impulsem.proxy.XrayException;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
+import org.telegram.tgnet.ConnectionsManager;
 
 
 /** Owns the user's VLESS settings and the in-process Xray core. */
@@ -288,7 +289,8 @@ public final class ProxyController {
             stage = "run";
             failure = "Could not start proxy core";
             xray.run(config);
-            InetAddress loopback = InetAddress.getLoopbackAddress();
+            // The core listens on 127.0.0.1 only; getLoopbackAddress() may return ::1 on Android.
+            InetAddress loopback = loopbackV4();
             runtime = new Runtime(
                 new InetSocketAddress(loopback, ports[0]),
                 new InetSocketAddress(loopback, ports[1]),
@@ -367,6 +369,7 @@ public final class ProxyController {
 
 
     private void notifyListeners() {
+        ConnectionsManager.onProxyChanged();
         AndroidUtilities.runOnUIThread(() -> {
             for (Runnable listener : listeners) {
                 listener.run();
@@ -383,6 +386,15 @@ public final class ProxyController {
             hex.append(String.format("%02x", value & 0xff));
         }
         return hex.toString();
+    }
+
+
+    private static InetAddress loopbackV4() {
+        try {
+            return InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
+        } catch (java.net.UnknownHostException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
 

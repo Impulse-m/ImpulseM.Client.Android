@@ -208,6 +208,15 @@ public class ConnectionsManager extends BaseController {
         return localInstance;
     }
 
+    public static void onProxyChanged() {
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            ConnectionsManager manager = Instance[a];
+            if (manager != null && manager.impulse != null) {
+                manager.impulse.proxyChanged();
+            }
+        }
+    }
+
     public ConnectionsManager(int instance) {
         super(instance);
         connectionState = ConnectionStateConnecting;

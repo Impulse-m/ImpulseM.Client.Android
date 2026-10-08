@@ -21,6 +21,9 @@ import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.tgnet.impulse.proxy.ImpulseProxySelector;
+import org.telegram.tgnet.impulse.proxy.ProxyController;
+import net.impulsem.proxy.ProxyRouting;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -156,6 +159,8 @@ public final class ImpulseConnection {
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
+                .proxySelector(ImpulseProxySelector.Instance)
+                .proxyAuthenticator(ImpulseProxySelector.Authenticator)
                 .build();
         }
         return httpClient;
@@ -458,12 +463,34 @@ public final class ImpulseConnection {
                     wasOffline = connectionState == ConnectionStateWaitingForNetwork;
                 }
                 if (wasOffline) {
-                    setState(ConnectionStateConnecting);
+                    setState(connectingState());
                     retryNow();
                     fetchConfig();
                 }
             }
         });
+    }
+
+
+    public void proxyChanged() {
+        sharedHttpClient().connectionPool().evictAll();
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                if (ApplicationLoader.isNetworkOnline()) {
+                    setState(connectingState());
+                    retryNow();
+                }
+            }
+        });
+        realtime.syncSoon();
+    }
+
+
+    private static int connectingState() {
+        return ProxyController.getInstance().route() == ProxyRouting.Route.DIRECT
+            ? ConnectionStateConnecting
+            : ConnectionsManager.ConnectionStateConnectingToProxy;
     }
 
 
@@ -486,7 +513,7 @@ public final class ImpulseConnection {
     }
 
 
-    static OkHttpClient httpClient() {
+    public static OkHttpClient httpClient() {
         return sharedHttpClient();
     }
 
@@ -744,7 +771,7 @@ public final class ImpulseConnection {
         RequestEntry entry = pending.entry;
         pending.networkFailures++;
         log("token " + entry.token + " " + pending.method + " network failure " + pending.networkFailures + ": " + failure);
-        setState(ApplicationLoader.isNetworkOnline() ? ConnectionStateConnecting : ConnectionStateWaitingForNetwork);
+        setState(ApplicationLoader.isNetworkOnline() ? connectingState() : ConnectionStateWaitingForNetwork);
         RequestPolicy.Decision decision = RequestPolicy.onNetworkFailure(entry.flags, entry.connectionType, pending.networkFailures);
         if (decision.action == RequestPolicy.Action.RETRY_AFTER) {
             scheduleRun(pending, decision.delayMillis, true);
