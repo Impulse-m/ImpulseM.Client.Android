@@ -22,7 +22,7 @@ import org.junit.Test;
 
 /**
  * Acts as account B for the on-device end-to-end checks. Opt-in with {@code -Dimpulse.live=true}; the action comes from
- * {@code -Ddriver.action=login|send|history|createChannel|post|sendPhoto|fetchPhoto|burst|oldRefresh}. Account B persists between runs in the file named by
+ * {@code -Ddriver.action=login|send|history|createChannel|post|sendPhoto|fetchPhoto|call|burst|oldRefresh}. Account B persists between runs in the file named by
  * {@code -Ddriver.state} (default {@code ../branding-out/driver-state.properties}). Other parameters:
  * {@code driver.peerPhone} (the device account), {@code driver.text}, {@code driver.expect} (history must contain it).
  */
@@ -83,6 +83,8 @@ public class DeviceDriver {
                 sendPhoto(b);
             } else if ("fetchPhoto".equals(action)) {
                 fetchPhoto(b);
+            } else if ("call".equals(action)) {
+                call(b);
             } else if ("burst".equals(action)) {
                 burst(b);
             } else {
@@ -223,6 +225,121 @@ public class DeviceDriver {
         boolean refreshed = stale.tokens.refreshBlocking();
         System.out.println("DRIVER old refresh token accepted=" + refreshed);
         assertFalse("old refresh token still works", refreshed);
+    }
+
+
+    /** Calls the device account, completes the DH exchange once it answers, holds the call, then hangs up. */
+    private void call(LiveAccounts.Account b) throws Exception {
+        Map<String, Object> a = peer(b);
+        Map<String, Object> state = live.call(b, "updates.getState", TlBuilder.method("updates.getState"));
+        Map<String, Object> dh = live.call(
+            b,
+            "messages.getDhConfig",
+            TlBuilder.method("messages.getDhConfig").put("version", 0).put("random_length", 256)
+        );
+        java.math.BigInteger p = new java.math.BigInteger(1, (byte[]) dh.get("p"));
+        java.math.BigInteger g = java.math.BigInteger.valueOf(((Number) dh.get("g")).longValue());
+        byte[] salt = new byte[256];
+        random.nextBytes(salt);
+        java.math.BigInteger exponent = new java.math.BigInteger(1, salt);
+        byte[] ga = pad256(g.modPow(exponent, p));
+        byte[] gaHash = java.security.MessageDigest.getInstance("SHA-256").digest(ga);
+        TlBuilder protocol = TlBuilder.object("phoneCallProtocol")
+            .put("udp_p2p", Boolean.TRUE)
+            .put("udp_reflector", Boolean.TRUE)
+            .put("min_layer", 65)
+            .put("max_layer", 92)
+            .put("library_versions", TlBuilder.list("impulsem-livekit-1"));
+        Map<String, Object> requested = live.call(
+            b,
+            "phone.requestCall",
+            TlBuilder.method("phone.requestCall")
+                .put("user_id", TlBuilder.object("inputUser").put("user_id", a.get("id")).put("access_hash", a.get("access_hash")))
+                .put("random_id", random.nextInt())
+                .put("g_a_hash", gaHash)
+                .put("protocol", protocol)
+        );
+        Map<String, Object> call = asMap(requested.get("phone_call"));
+        long callId = (Long) call.get("id");
+        long accessHash = (Long) call.get("access_hash");
+        System.out.println("DRIVER call requested id=" + callId + " type=" + call.get("_"));
+        Map<String, Object> accepted = null;
+        long deadline = System.currentTimeMillis() + 240000L;
+        while (accepted == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(1000L);
+            Map<String, Object> diff = live.call(
+                b,
+                "updates.getDifference",
+                TlBuilder.method("updates.getDifference")
+                    .put("pts", state.get("pts"))
+                    .put("date", state.get("date"))
+                    .put("qts", state.get("qts"))
+            );
+            if ("updates.differenceEmpty".equals(diff.get("_"))) {
+                continue;
+            }
+            Object nextState = diff.containsKey("state") ? diff.get("state") : diff.get("intermediate_state");
+            if (nextState != null) {
+                state = asMap(nextState);
+            }
+            for (Object item : (List<?>) diff.get("other_updates")) {
+                Map<String, Object> update = asMap(item);
+                System.out.println("DRIVER update " + update.get("_"));
+                if (!"updatePhoneCall".equals(update.get("_"))) {
+                    continue;
+                }
+                Map<String, Object> pc = asMap(update.get("phone_call"));
+                System.out.println("DRIVER phone_call " + pc.get("_"));
+                if ("phoneCallAccepted".equals(pc.get("_"))) {
+                    accepted = pc;
+                } else if ("phoneCallDiscarded".equals(pc.get("_"))) {
+                    throw new AssertionError("call discarded");
+                }
+            }
+        }
+        assertNotNull("not accepted in time", accepted);
+        java.math.BigInteger key = new java.math.BigInteger(1, (byte[]) accepted.get("g_b")).modPow(exponent, p);
+        byte[] authKey = pad256(key);
+        byte[] sha = java.security.MessageDigest.getInstance("SHA-1").digest(authKey);
+        long fingerprint = 0;
+        for (int i = 0; i < 8; i++) {
+            fingerprint |= (sha[sha.length - 8 + i] & 0xFFL) << (8 * i);
+        }
+        Map<String, Object> confirmed = live.call(
+            b,
+            "phone.confirmCall",
+            TlBuilder.method("phone.confirmCall")
+                .put("peer", TlBuilder.object("inputPhoneCall").put("id", callId).put("access_hash", accessHash))
+                .put("g_a", ga)
+                .put("key_fingerprint", fingerprint)
+                .put("protocol", protocol)
+        );
+        System.out.println("DRIVER confirmed " + asMap(confirmed.get("phone_call")).get("_"));
+        long hold = Long.parseLong(System.getProperty("driver.hold", "90"));
+        System.out.println("DRIVER holding " + hold + "s");
+        Thread.sleep(hold * 1000L);
+        live.call(
+            b,
+            "phone.discardCall",
+            TlBuilder.method("phone.discardCall")
+                .put("peer", TlBuilder.object("inputPhoneCall").put("id", callId).put("access_hash", accessHash))
+                .put("duration", (int) hold)
+                .put("reason", TlBuilder.object("phoneCallDiscardReasonHangup"))
+                .put("connection_id", 0L)
+        );
+        System.out.println("DRIVER call discarded");
+    }
+
+
+    private static byte[] pad256(java.math.BigInteger value) {
+        byte[] raw = value.toByteArray();
+        byte[] out = new byte[256];
+        if (raw.length > 256) {
+            System.arraycopy(raw, raw.length - 256, out, 0, 256);
+        } else {
+            System.arraycopy(raw, 0, out, 256 - raw.length, raw.length);
+        }
+        return out;
     }
 
 
