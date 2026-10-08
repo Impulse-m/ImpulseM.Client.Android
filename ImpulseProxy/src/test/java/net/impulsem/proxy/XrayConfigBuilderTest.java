@@ -105,4 +105,260 @@ public class XrayConfigBuilderTest {
         String config = XrayConfigBuilder.build(server(), new LocalInbounds(1, 2, "u", "p"));
         assertFalse(config.contains("Name With Secrets?"));
     }
+
+
+    private static final LocalInbounds Inbounds = new LocalInbounds(1, 2, "u", "p");
+
+
+    private static ProxyServer serverWith(
+        String stream,
+        String flow,
+        String shareLink
+    ) {
+        String user = "{\"id\":\"11111111-1111-1111-1111-111111111111\",\"encryption\":\"none\""
+            + (flow == null ? "" : ",\"flow\":\"" + flow + "\"") + "}";
+        ProxyServer base = ProxyServer.fromOutbound(JsonParser.parseString(
+            "{\"protocol\":\"vless\",\"tag\":\"t\","
+                + "\"settings\":{\"vnext\":[{\"address\":\"h.example\",\"port\":443,\"users\":[" + user + "]}]},"
+                + "\"streamSettings\":" + stream + "}"
+        ).getAsJsonObject());
+        return shareLink == null ? base : base.withShareLink(shareLink);
+    }
+
+
+    private static JsonObject outboundOf(
+        String config,
+        int index
+    ) {
+        return JsonParser.parseString(config).getAsJsonObject().getAsJsonArray("outbounds").get(index).getAsJsonObject();
+    }
+
+
+    private static JsonObject sockopt(JsonObject outbound) {
+        return outbound.getAsJsonObject("streamSettings").getAsJsonObject("sockopt");
+    }
+
+
+    @Test
+    public void defaultAdvancedMatchesTheOldMethods() {
+        ProxyServer[] servers = {
+            server(),
+            serverWith("{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"a\"}}", "xtls-rprx-vision", null)
+        };
+        for (ProxyServer s : servers) {
+            assertEquals(
+                XrayConfigBuilder.build(s, Inbounds),
+                XrayConfigBuilder.build(s, Inbounds, new ProxyAdvanced())
+            );
+            assertEquals(
+                XrayConfigBuilder.pingConfig(s),
+                XrayConfigBuilder.pingConfig(s, new ProxyAdvanced())
+            );
+        }
+    }
+
+
+    @Test
+    public void classicFragmentUsesAFreedomDialer() {
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fragmentMode = ProxyAdvanced.FragmentClassic;
+        a.fragmentPackets = "1-3";
+        a.fragmentLength = "10-20";
+        a.fragmentInterval = "5-6";
+        a.keepAliveIdle = 30;
+        a.keepAliveInterval = 10;
+        a.tcpFastOpen = true;
+        a.tcpMaxSeg = 1300;
+        a.dnsMode = ProxyAdvanced.DnsGoogle;
+        String config = XrayConfigBuilder.build(server(), Inbounds, a);
+        JsonObject proxy = outboundOf(config, 0);
+        JsonObject freedom = outboundOf(config, 1);
+        assertEquals("proxy", proxy.get("tag").getAsString());
+        assertEquals("fragment", sockopt(proxy).get("dialerProxy").getAsString());
+        assertEquals(1, sockopt(proxy).size());
+        assertEquals(
+            JsonParser.parseString("{\"packets\":\"1-3\",\"length\":\"10-20\",\"interval\":\"5-6\"}"),
+            freedom.getAsJsonObject("settings").get("fragment")
+        );
+        assertEquals("fragment", freedom.get("tag").getAsString());
+        assertEquals("freedom", freedom.get("protocol").getAsString());
+        assertEquals("UseIPv4", freedom.getAsJsonObject("settings").get("domainStrategy").getAsString());
+        JsonObject options = sockopt(freedom);
+        assertEquals(30, options.get("tcpKeepAliveIdle").getAsInt());
+        assertEquals(10, options.get("tcpKeepAliveInterval").getAsInt());
+        assertTrue(options.get("tcpFastOpen").getAsBoolean());
+        assertEquals(1300, options.get("tcpMaxSeg").getAsInt());
+        assertFalse(proxy.getAsJsonObject("streamSettings").has("finalmask"));
+    }
+
+
+    @Test
+    public void finalMaskFragmentIsOnTheProxyStream() {
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fragmentMode = ProxyAdvanced.FragmentFinalMask;
+        String config = XrayConfigBuilder.build(server(), Inbounds, a);
+        assertEquals(1, JsonParser.parseString(config).getAsJsonObject().getAsJsonArray("outbounds").size());
+        assertEquals(
+            JsonParser.parseString(
+                "{\"tcp\":[{\"type\":\"fragment\",\"settings\":{\"packets\":\"tlshello\","
+                    + "\"lengths\":[\"100-200\"],\"delays\":[\"10-20\"]}}]}"
+            ),
+            outboundOf(config, 0).getAsJsonObject("streamSettings").get("finalmask")
+        );
+    }
+
+
+    @Test
+    public void fingerprintOverridesTlsAndReality() {
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fingerprint = "firefox";
+        JsonObject tls = outboundOf(XrayConfigBuilder.pingConfig(
+            serverWith("{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"fingerprint\":\"chrome\"}}", null, null),
+            a
+        ), 0).getAsJsonObject("streamSettings");
+        assertEquals("firefox", tls.getAsJsonObject("tlsSettings").get("fingerprint").getAsString());
+        assertFalse(tls.has("realitySettings"));
+        JsonObject reality = outboundOf(XrayConfigBuilder.build(
+            serverWith("{\"network\":\"tcp\",\"security\":\"reality\",\"realitySettings\":{\"serverName\":\"s\"}}", null, null),
+            Inbounds,
+            a
+        ), 0).getAsJsonObject("streamSettings");
+        assertEquals("firefox", reality.getAsJsonObject("realitySettings").get("fingerprint").getAsString());
+        assertFalse(reality.has("tlsSettings"));
+    }
+
+
+    @Test
+    public void muxIsAddedExceptForVision() {
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.muxEnabled = true;
+        a.muxConcurrency = 4;
+        JsonObject plain = outboundOf(XrayConfigBuilder.build(server(), Inbounds, a), 0);
+        assertEquals(JsonParser.parseString("{\"enabled\":true,\"concurrency\":4}"), plain.get("mux"));
+        ProxyServer vision = serverWith("{\"network\":\"tcp\"}", "xtls-rprx-vision", null);
+        assertFalse(outboundOf(XrayConfigBuilder.build(vision, Inbounds, a), 0).has("mux"));
+        assertFalse(outboundOf(XrayConfigBuilder.pingConfig(vision, a), 0).has("mux"));
+        ProxyServer visionUdp = serverWith("{\"network\":\"tcp\"}", "xtls-rprx-vision-udp443", null);
+        assertFalse(outboundOf(XrayConfigBuilder.build(visionUdp, Inbounds, a), 0).has("mux"));
+    }
+
+
+    @Test
+    public void tcpOptionsGoOnTheProxySockoptWithoutClassicFragment() {
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.keepAliveIdle = 20;
+        a.tcpMaxSeg = 1200;
+        JsonObject options = sockopt(outboundOf(XrayConfigBuilder.build(server(), Inbounds, a), 0));
+        assertEquals(20, options.get("tcpKeepAliveIdle").getAsInt());
+        assertEquals(1200, options.get("tcpMaxSeg").getAsInt());
+        assertFalse(options.has("tcpKeepAliveInterval"));
+        assertFalse(options.has("tcpFastOpen"));
+        a.fragmentMode = ProxyAdvanced.FragmentFinalMask;
+        JsonObject masked = sockopt(outboundOf(XrayConfigBuilder.build(server(), Inbounds, a), 0));
+        assertEquals(20, masked.get("tcpKeepAliveIdle").getAsInt());
+    }
+
+
+    @Test
+    public void dnsAddsTheTopLevelObjectAndDomainStrategy() {
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.dnsMode = ProxyAdvanced.DnsCustom;
+        a.dnsCustom = "8.8.4.4";
+        String expected = "{\"servers\":[\"8.8.4.4\"],\"queryStrategy\":\"UseIPv4\"}";
+        String built = XrayConfigBuilder.build(server(), Inbounds, a);
+        String ping = XrayConfigBuilder.pingConfig(server(), a);
+        assertEquals(JsonParser.parseString(expected), JsonParser.parseString(built).getAsJsonObject().get("dns"));
+        assertEquals(JsonParser.parseString(expected), JsonParser.parseString(ping).getAsJsonObject().get("dns"));
+        assertEquals("UseIPv4", sockopt(outboundOf(built, 0)).get("domainStrategy").getAsString());
+        assertFalse(JsonParser.parseString(XrayConfigBuilder.build(server(), Inbounds)).getAsJsonObject().has("dns"));
+    }
+
+
+    private static final String LinkBase = "vless://u@h.example:443?type=tcp&fragment=";
+
+
+    @Test
+    public void linkFragmentIsHonouredWhenModeIsOffAndFromLinkIsOn() {
+        ProxyServer s = serverWith("{\"network\":\"tcp\"}", null, LinkBase + "1-10%2C5-20%2Ctlshello%2C3#name");
+        String config = XrayConfigBuilder.build(s, Inbounds, new ProxyAdvanced());
+        assertEquals("fragment", sockopt(outboundOf(config, 0)).get("dialerProxy").getAsString());
+        assertEquals(
+            JsonParser.parseString("{\"packets\":\"tlshello\",\"length\":\"1-10\",\"interval\":\"5-20\"}"),
+            outboundOf(config, 1).getAsJsonObject("settings").get("fragment")
+        );
+        String plainComma = XrayConfigBuilder.pingConfig(
+            serverWith("{\"network\":\"tcp\"}", null, LinkBase + "1-10,5-20,tlshello"),
+            new ProxyAdvanced()
+        );
+        assertEquals(2, JsonParser.parseString(plainComma).getAsJsonObject().getAsJsonArray("outbounds").size());
+    }
+
+
+    @Test
+    public void linkFragmentIsIgnoredWhenFromLinkIsOff() {
+        ProxyServer s = serverWith("{\"network\":\"tcp\"}", null, LinkBase + "1-10,5-20,tlshello");
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fragmentFromLink = false;
+        assertEquals(
+            XrayConfigBuilder.build(serverWith("{\"network\":\"tcp\"}", null, null), Inbounds),
+            XrayConfigBuilder.build(s, Inbounds, a)
+        );
+    }
+
+
+    @Test
+    public void globalModeWinsOverTheLinkFragment() {
+        ProxyServer s = serverWith("{\"network\":\"tcp\"}", null, LinkBase + "1-10,5-20,tlshello");
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fragmentMode = ProxyAdvanced.FragmentFinalMask;
+        String config = XrayConfigBuilder.build(s, Inbounds, a);
+        assertEquals(1, JsonParser.parseString(config).getAsJsonObject().getAsJsonArray("outbounds").size());
+        assertTrue(outboundOf(config, 0).getAsJsonObject("streamSettings").has("finalmask"));
+    }
+
+
+    @Test
+    public void invalidLinkFragmentIsIgnored() {
+        String[] bad = {"abc", "1-10,5-20", "10-1,5-20,tlshello", "1-10,x,tlshello", "1-10,5-20,nope", ""};
+        for (String value : bad) {
+            ProxyServer s = serverWith("{\"network\":\"tcp\"}", null, LinkBase + value);
+            assertEquals(
+                value,
+                1,
+                JsonParser.parseString(XrayConfigBuilder.build(s, Inbounds, new ProxyAdvanced())).getAsJsonObject()
+                    .getAsJsonArray("outbounds").size()
+            );
+        }
+    }
+
+
+    @Test
+    public void pingConfigCarriesTheSameTransformations() {
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fragmentMode = ProxyAdvanced.FragmentClassic;
+        a.fingerprint = "edge";
+        a.muxEnabled = true;
+        ProxyServer s = serverWith("{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{}}", null, null);
+        JsonObject config = JsonParser.parseString(XrayConfigBuilder.pingConfig(s, a)).getAsJsonObject();
+        assertEquals(2, config.getAsJsonArray("outbounds").size());
+        assertFalse(config.has("inbounds"));
+        JsonObject proxy = outboundOf(XrayConfigBuilder.pingConfig(s, a), 0);
+        assertEquals("fragment", sockopt(proxy).get("dialerProxy").getAsString());
+        assertEquals("edge", proxy.getAsJsonObject("streamSettings").getAsJsonObject("tlsSettings").get("fingerprint").getAsString());
+        assertTrue(proxy.getAsJsonObject("mux").get("enabled").getAsBoolean());
+    }
+
+
+    @Test
+    public void storedOutboundIsNotMutated() {
+        ProxyServer s = server();
+        String before = s.outboundJson;
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fragmentMode = ProxyAdvanced.FragmentClassic;
+        a.muxEnabled = true;
+        a.fingerprint = "chrome";
+        XrayConfigBuilder.build(s, Inbounds, a);
+        assertEquals(before, s.outboundJson);
+        assertEquals(before, s.outbound().toString());
+    }
 }

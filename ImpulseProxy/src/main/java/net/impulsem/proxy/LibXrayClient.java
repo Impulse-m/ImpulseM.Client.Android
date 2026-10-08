@@ -160,8 +160,26 @@ public final class LibXrayClient {
         int timeoutSeconds,
         PingChunkListener listener
     ) {
-        for (int offset = 0; offset < xrayJsons.size(); offset += MaxPingBatch) {
-            List<String> chunk = xrayJsons.subList(offset, Math.min(offset + MaxPingBatch, xrayJsons.size()));
+        pingInChunks(xrayJsons, outboundTag, url, timeoutSeconds, MaxPingBatch, 0L, listener);
+    }
+
+
+    /**
+     * Like the shorter overload, with a chosen chunk size (clamped to 1..MaxPingBatch) and a pause between
+     * chunks (not after the last one). An interrupt stops the loop and keeps the interrupt flag set.
+     */
+    public void pingInChunks(
+        List<String> xrayJsons,
+        String outboundTag,
+        String url,
+        int timeoutSeconds,
+        int chunkSize,
+        long pauseMillis,
+        PingChunkListener listener
+    ) {
+        int size = Math.max(1, Math.min(chunkSize, MaxPingBatch));
+        for (int offset = 0; offset < xrayJsons.size(); offset += size) {
+            List<String> chunk = xrayJsons.subList(offset, Math.min(offset + size, xrayJsons.size()));
             PingResult[] results;
             try {
                 results = pingBatchDetailed(chunk, outboundTag, url, timeoutSeconds);
@@ -173,6 +191,14 @@ public final class LibXrayClient {
             }
             if (!listener.onChunk(offset, results)) {
                 return;
+            }
+            if (pauseMillis > 0 && offset + size < xrayJsons.size()) {
+                try {
+                    Thread.sleep(pauseMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
         }
     }

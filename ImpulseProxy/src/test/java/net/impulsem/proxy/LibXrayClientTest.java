@@ -175,6 +175,85 @@ public class LibXrayClientTest {
 
 
     @Test
+    public void pingInChunksWithChunkSizeOneMakesOneCallPerConfig() {
+        LinkedList<String> responses = new LinkedList<String>(Arrays.asList(
+            pingResponse(10),
+            pingResponse(20),
+            pingResponse(30)
+        ));
+        List<String> sent = new ArrayList<String>();
+        List<Integer> offsets = new ArrayList<Integer>();
+        queued(responses, sent).pingInChunks(
+            configs(3),
+            "proxy",
+            "https://example.com",
+            5,
+            1,
+            0L,
+            collecting(offsets, new ArrayList<LibXrayClient.PingResult>(), true)
+        );
+        assertEquals(3, sent.size());
+        assertEquals(Arrays.asList(0, 1, 2), offsets);
+    }
+
+
+    @Test
+    public void pingInChunksPausesBetweenChunksOnly() {
+        LinkedList<String> responses = new LinkedList<String>(Arrays.asList(
+            pingResponse(10),
+            pingResponse(20),
+            pingResponse(30)
+        ));
+        List<String> sent = new ArrayList<String>();
+        long started = System.nanoTime();
+        queued(responses, sent).pingInChunks(
+            configs(3),
+            "proxy",
+            "https://example.com",
+            5,
+            1,
+            60L,
+            collecting(new ArrayList<Integer>(), new ArrayList<LibXrayClient.PingResult>(), true)
+        );
+        long elapsedMillis = (System.nanoTime() - started) / 1000000L;
+        assertEquals(3, sent.size());
+        assertTrue("elapsed " + elapsedMillis, elapsedMillis >= 2 * 60L - 5L);
+    }
+
+
+    @Test
+    public void pingInChunksClampsChunkSize() {
+        LinkedList<String> responses = new LinkedList<String>(Arrays.asList(
+            pingResponse(1, 2, 3, 4, 5),
+            pingResponse(6, 7)
+        ));
+        List<String> sent = new ArrayList<String>();
+        queued(responses, sent).pingInChunks(
+            configs(7),
+            "proxy",
+            "https://example.com",
+            5,
+            50,
+            0L,
+            collecting(new ArrayList<Integer>(), new ArrayList<LibXrayClient.PingResult>(), true)
+        );
+        assertEquals(2, sent.size());
+        assertEquals(5, sentConfigs(sent.get(0)).size());
+        List<String> zeroSent = new ArrayList<String>();
+        queued(new LinkedList<String>(Arrays.asList(pingResponse(1), pingResponse(2))), zeroSent).pingInChunks(
+            configs(2),
+            "proxy",
+            "https://example.com",
+            5,
+            0,
+            0L,
+            collecting(new ArrayList<Integer>(), new ArrayList<LibXrayClient.PingResult>(), true)
+        );
+        assertEquals(2, zeroSent.size());
+    }
+
+
+    @Test
     public void pingBatchDetailedRejectsMoreThanFiveWithoutCallingRuntime() throws Exception {
         List<String> sent = new ArrayList<String>();
         try {

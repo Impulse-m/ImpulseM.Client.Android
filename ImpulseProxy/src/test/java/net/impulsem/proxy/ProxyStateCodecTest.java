@@ -120,6 +120,53 @@ public class ProxyStateCodecTest {
 
 
     @Test
+    public void advancedRoundTrip() {
+        ProxyState state = new ProxyState();
+        state.advanced.fragmentMode = ProxyAdvanced.FragmentClassic;
+        state.advanced.fragmentPackets = "1-3";
+        state.advanced.fragmentLength = "10-30";
+        state.advanced.fragmentInterval = "5-9";
+        state.advanced.fragmentFromLink = false;
+        state.advanced.fingerprint = "safari";
+        state.advanced.muxEnabled = true;
+        state.advanced.muxConcurrency = 16;
+        state.advanced.keepAliveIdle = 30;
+        state.advanced.keepAliveInterval = 15;
+        state.advanced.tcpFastOpen = true;
+        state.advanced.tcpMaxSeg = 1400;
+        state.advanced.dnsMode = ProxyAdvanced.DnsCustom;
+        state.advanced.dnsCustom = "https://dns.example/dns-query";
+        state.advanced.pingMode = ProxyAdvanced.PingSequential;
+        state.advanced.pingPauseMillis = 250;
+        state.advanced.pingTimeoutSeconds = 8;
+        state.advanced.pingUrl = "https://example.com/ping";
+        state.advanced.pingSkipWhileConnected = true;
+        ProxyState decoded = ProxyStateCodec.decode(ProxyStateCodec.encode(state));
+        assertEquals(state.advanced, decoded.advanced);
+    }
+
+
+    @Test
+    public void oldJsonWithoutAdvancedGivesDefaults() {
+        ProxyState decoded = ProxyStateCodec.decode("{\"v\":1,\"enabled\":true}");
+        assertTrue(decoded.enabled);
+        assertEquals(new ProxyAdvanced(), decoded.advanced);
+    }
+
+
+    @Test
+    public void garbageAdvancedGivesDefaults() {
+        assertEquals(new ProxyAdvanced(), ProxyStateCodec.decode("{\"advanced\":5}").advanced);
+        assertEquals(new ProxyAdvanced(), ProxyStateCodec.decode("{\"advanced\":[1]}").advanced);
+        String json = "{\"advanced\":{\"fragmentMode\":7,\"fragmentLength\":\"x\",\"fragmentFromLink\":\"no\","
+            + "\"fingerprint\":\"bogus\",\"muxConcurrency\":\"many\",\"tcpMaxSeg\":5,"
+            + "\"dnsMode\":\"custom\",\"dnsCustom\":\"junk\",\"pingTimeoutSeconds\":999,"
+            + "\"pingUrl\":\"http://plain\",\"pingMode\":{}}}";
+        assertEquals(new ProxyAdvanced(), ProxyStateCodec.decode(json).advanced);
+    }
+
+
+    @Test
     public void nullMetaEncodesAsDefaults() {
         ProxyState state = new ProxyState();
         state.replaceSubscription(new Subscription(

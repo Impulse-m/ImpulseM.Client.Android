@@ -11,6 +11,7 @@ public final class ProxyState {
     public String selectedId;
     public final List<ProxyServer> manual = new ArrayList<ProxyServer>();
     public final List<Subscription> subscriptions = new ArrayList<Subscription>();
+    public ProxyAdvanced advanced = new ProxyAdvanced();
 
 
     public ProxyServer selected() {

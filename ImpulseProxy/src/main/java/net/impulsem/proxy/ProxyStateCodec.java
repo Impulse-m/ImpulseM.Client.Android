@@ -55,6 +55,7 @@ public final class ProxyStateCodec {
             subscriptions.add(item);
         }
         root.add("subscriptions", subscriptions);
+        root.add("advanced", encodeAdvanced(state.advanced == null ? new ProxyAdvanced() : state.advanced));
         return root.toString();
     }
 
@@ -83,7 +84,106 @@ public final class ProxyStateCodec {
                 }
             }
         }
+        state.advanced = decodeAdvanced(root.get("advanced"));
         return state;
+    }
+
+
+    private static JsonObject encodeAdvanced(ProxyAdvanced advanced) {
+        JsonObject item = new JsonObject();
+        item.addProperty("fragmentMode", advanced.fragmentMode);
+        item.addProperty("fragmentPackets", advanced.fragmentPackets);
+        item.addProperty("fragmentLength", advanced.fragmentLength);
+        item.addProperty("fragmentInterval", advanced.fragmentInterval);
+        item.addProperty("fragmentFromLink", advanced.fragmentFromLink);
+        item.addProperty("fingerprint", advanced.fingerprint);
+        item.addProperty("muxEnabled", advanced.muxEnabled);
+        item.addProperty("muxConcurrency", advanced.muxConcurrency);
+        item.addProperty("keepAliveIdle", advanced.keepAliveIdle);
+        item.addProperty("keepAliveInterval", advanced.keepAliveInterval);
+        item.addProperty("tcpFastOpen", advanced.tcpFastOpen);
+        item.addProperty("tcpMaxSeg", advanced.tcpMaxSeg);
+        item.addProperty("dnsMode", advanced.dnsMode);
+        item.addProperty("dnsCustom", advanced.dnsCustom);
+        item.addProperty("pingMode", advanced.pingMode);
+        item.addProperty("pingPauseMillis", advanced.pingPauseMillis);
+        item.addProperty("pingTimeoutSeconds", advanced.pingTimeoutSeconds);
+        item.addProperty("pingUrl", advanced.pingUrl);
+        item.addProperty("pingSkipWhileConnected", advanced.pingSkipWhileConnected);
+        return item;
+    }
+
+
+    /** Missing or mistyped fields keep their defaults; the result is always sanitized. */
+    private static ProxyAdvanced decodeAdvanced(JsonElement element) {
+        ProxyAdvanced advanced = new ProxyAdvanced();
+        if (element != null && element.isJsonObject()) {
+            JsonObject item = element.getAsJsonObject();
+            advanced.fragmentMode = readString(item, "fragmentMode", advanced.fragmentMode);
+            advanced.fragmentPackets = readString(item, "fragmentPackets", advanced.fragmentPackets);
+            advanced.fragmentLength = readString(item, "fragmentLength", advanced.fragmentLength);
+            advanced.fragmentInterval = readString(item, "fragmentInterval", advanced.fragmentInterval);
+            advanced.fragmentFromLink = readBoolean(item, "fragmentFromLink", advanced.fragmentFromLink);
+            advanced.fingerprint = readString(item, "fingerprint", advanced.fingerprint);
+            advanced.muxEnabled = readBoolean(item, "muxEnabled", advanced.muxEnabled);
+            advanced.muxConcurrency = readInt(item, "muxConcurrency", advanced.muxConcurrency);
+            advanced.keepAliveIdle = readInt(item, "keepAliveIdle", advanced.keepAliveIdle);
+            advanced.keepAliveInterval = readInt(item, "keepAliveInterval", advanced.keepAliveInterval);
+            advanced.tcpFastOpen = readBoolean(item, "tcpFastOpen", advanced.tcpFastOpen);
+            advanced.tcpMaxSeg = readInt(item, "tcpMaxSeg", advanced.tcpMaxSeg);
+            advanced.dnsMode = readString(item, "dnsMode", advanced.dnsMode);
+            advanced.dnsCustom = readString(item, "dnsCustom", advanced.dnsCustom);
+            advanced.pingMode = readString(item, "pingMode", advanced.pingMode);
+            advanced.pingPauseMillis = readInt(item, "pingPauseMillis", advanced.pingPauseMillis);
+            advanced.pingTimeoutSeconds = readInt(item, "pingTimeoutSeconds", advanced.pingTimeoutSeconds);
+            advanced.pingUrl = readString(item, "pingUrl", advanced.pingUrl);
+            advanced.pingSkipWhileConnected = readBoolean(item, "pingSkipWhileConnected", advanced.pingSkipWhileConnected);
+        }
+        advanced.sanitize();
+        return advanced;
+    }
+
+
+    private static boolean readBoolean(
+        JsonObject object,
+        String key,
+        boolean fallback
+    ) {
+        JsonElement element = object.get(key);
+        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isBoolean()) {
+            return fallback;
+        }
+        return element.getAsBoolean();
+    }
+
+
+    private static String readString(
+        JsonObject object,
+        String key,
+        String fallback
+    ) {
+        JsonElement element = object.get(key);
+        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
+            return fallback;
+        }
+        return element.getAsString();
+    }
+
+
+    private static int readInt(
+        JsonObject object,
+        String key,
+        int fallback
+    ) {
+        JsonElement element = object.get(key);
+        if (element == null || !element.isJsonPrimitive() || !element.getAsJsonPrimitive().isNumber()) {
+            return fallback;
+        }
+        try {
+            return element.getAsInt();
+        } catch (RuntimeException e) {
+            return fallback;
+        }
     }
 
 
