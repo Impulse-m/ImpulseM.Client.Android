@@ -42,6 +42,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import okhttp3.Call;
@@ -56,6 +57,8 @@ import okhttp3.OkHttpClient;
  */
 public final class ImpulseConnection {
 
+    private static final AtomicLong proxyEpoch = new AtomicLong();
+    private static final ScheduledExecutorService proxyDropExecutor = new ScheduledThreadPoolExecutor(1, namedThreads("impulse-proxy-drop"));
     private static final int ConnectionStateConnecting = 1;
     private static final int ConnectionStateWaitingForNetwork = 2;
     private static final int ConnectionStateConnected = 3;
@@ -87,9 +90,9 @@ public final class ImpulseConnection {
         boolean listening;
         boolean cancelled;
         boolean waitingRetry;
-        boolean proxyRetry;
         int serverFailures;
         int networkFailures;
+        long startedEpoch;
         String method = "?";
         Call call;
         ScheduledFuture<?> timer;
@@ -473,22 +476,29 @@ public final class ImpulseConnection {
     }
 
 
-    /** Drops everything that was opened over the old route: idle and live sockets, in-flight calls, the realtime socket. */
+    /**
+     * First step of a proxy change, called once for all accounts before any account's proxyChanged(): advances the
+     * epoch, then drops the idle and in-flight HTTP calls of the shared client off the caller's thread. Every call that
+     * fails after the advance and started before it is classified as a proxy-change failure.
+     */
+    public static void beginProxyChange() {
+        proxyEpoch.incrementAndGet();
+        proxyDropExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                OkHttpClient client = sharedHttpClient();
+                client.connectionPool().evictAll();
+                client.dispatcher().cancelAll();
+            }
+        });
+    }
+
+
+    /** Per-account part of a proxy change: the state, the waiting retries and the realtime socket. */
     public void proxyChanged() {
         executor.execute(new Runnable() {
             @Override
             public void run() {
-                synchronized (lock) {
-                    for (Pending pending : pendings.values()) {
-                        if (pending.call != null) {
-                            // The cancelled call fails with an IOException and goes again over the new route.
-                            pending.proxyRetry = true;
-                        }
-                    }
-                }
-                OkHttpClient client = sharedHttpClient();
-                client.connectionPool().evictAll();
-                client.dispatcher().cancelAll();
                 if (ApplicationLoader.isNetworkOnline()) {
                     setState(connectingState());
                     retryNow();
@@ -674,6 +684,8 @@ public final class ImpulseConnection {
             finishError(pending, 400, "METHOD_INVALID");
             return;
         }
+        // Read before the call exists: a cancel that follows an epoch advance must see an older epoch.
+        long epoch = proxyEpoch.get();
         Call call;
         try {
             call = client.prepare(data);
@@ -687,6 +699,7 @@ public final class ImpulseConnection {
                 return;
             }
             pending.call = call;
+            pending.startedEpoch = epoch;
             pending.method = call.request().url().encodedPath();
         }
         ConnectionsManager.onRequestWriteToSocket(account, entry.token);
@@ -781,14 +794,11 @@ public final class ImpulseConnection {
             }
         }
         RequestEntry entry = pending.entry;
-        if (pending.proxyRetry) {
-            // Cancelled because the proxy changed: not a failure of the request, so it does not count as an attempt.
-            pending.proxyRetry = false;
-            scheduleRun(pending, 0L, false);
-            return;
+        boolean proxyChange = pending.startedEpoch < proxyEpoch.get();
+        if (!proxyChange) {
+            pending.networkFailures++;
         }
-        pending.networkFailures++;
-        log("token " + entry.token + " " + pending.method + " network failure " + pending.networkFailures + ": " + failure);
+        log("token " + entry.token + " " + pending.method + " network failure " + pending.networkFailures + (proxyChange ? " (proxy change)" : "") + ": " + failure);
         setState(ApplicationLoader.isNetworkOnline() ? connectingState() : ConnectionStateWaitingForNetwork);
         RequestPolicy.Decision decision = RequestPolicy.onNetworkFailure(entry.flags, entry.connectionType, pending.networkFailures);
         if (decision.action == RequestPolicy.Action.RETRY_AFTER) {
