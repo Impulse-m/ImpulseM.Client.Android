@@ -255,7 +255,7 @@ public class ImpulseProxyServerCell extends FrameLayout {
 
         radio = new RadioButton(context);
         radio.setSize(dp(20));
-        radio.setColor(Theme.key_radioBackground, Theme.key_radioBackgroundChecked);
+        radio.setColor(Theme.getColor(Theme.key_radioBackground), Theme.getColor(Theme.key_radioBackgroundChecked));
         addView(radio, LayoutHelper.createFrame(22, 22, start | Gravity.CENTER_VERTICAL, 16, 0, 16, 0));
 
         nameView = new TextView(context);
