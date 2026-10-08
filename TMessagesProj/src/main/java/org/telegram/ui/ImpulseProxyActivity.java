@@ -121,7 +121,10 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private final Runnable pingTick = new Runnable() {
         @Override
         public void run() {
-            pingServers(false, false);
+            // A round still running means the next tick comes later; ticks never queue rounds.
+            if (!pinging) {
+                pingServers(false, false);
+            }
             scheduleTick();
         }
     };
@@ -472,11 +475,51 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             SubscriptionAction action = (SubscriptionAction) target;
             String id = action.subscription.id;
             if (action.delete) {
-                controller.update(next -> next.removeSubscription(id));
+                boolean active = false;
+                ProxyServer selected = controller.snapshot().selected();
+                if (selected != null) {
+                    for (ProxyServer candidate : action.subscription.servers) {
+                        if (candidate.id.equals(selected.id)) {
+                            active = true;
+                            break;
+                        }
+                    }
+                }
+                confirmDelete(
+                    getString(R.string.ImpulseProxyDeleteSubscriptionTitle),
+                    LocaleController.formatString(R.string.ImpulseProxyDeleteSubscriptionText, subscriptionTitle(action.subscription)),
+                    active,
+                    () -> controller.update(next -> next.removeSubscription(id))
+                );
             } else {
                 refresh(id);
             }
         }
+    }
+
+
+    /** Asks before a destructive delete; activeSelected adds the warning when the running proxy uses the target. */
+    private void confirmDelete(
+        String title,
+        String message,
+        boolean activeSelected,
+        Runnable onConfirm
+    ) {
+        Context context = getParentActivity();
+        if (context == null || destroyed) {
+            return;
+        }
+        String text = message;
+        if (activeSelected && ProxyController.getInstance().isEnabled()) {
+            text = message + "\n\n" + getString(R.string.ImpulseProxyDeleteActiveWarning);
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
+        builder.setTitle(title);
+        builder.setMessage(text);
+        builder.setPositiveButton(getString(R.string.ImpulseProxyDelete), (dialog, which) -> onConfirm.run());
+        builder.makeRed(AlertDialog.BUTTON_POSITIVE);
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        showDialog(builder.create());
     }
 
 
@@ -503,7 +546,12 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         }
         if (manual) {
             builder.setNegativeButton(getString(R.string.ImpulseProxyDelete), (dialog, which) -> {
-                ProxyController.getInstance().update(next -> next.removeServer(server.id));
+                confirmDelete(
+                    getString(R.string.ImpulseProxyDeleteServerTitle),
+                    LocaleController.formatString(R.string.ImpulseProxyDeleteServerText, displayName(server)),
+                    server.id.equals(ProxyController.getInstance().snapshot().selectedId),
+                    () -> ProxyController.getInstance().update(next -> next.removeServer(server.id))
+                );
             });
             builder.makeRed(AlertDialog.BUTTON_NEGATIVE);
         }
@@ -555,7 +603,13 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         }
         List<ProxyServer> servers = new ArrayList<ProxyServer>();
         Set<String> seen = new HashSet<String>();
-        for (ProxyServer server : ProxyController.getInstance().snapshot().allServers()) {
+        ProxyState snapshot = ProxyController.getInstance().snapshot();
+        // The selected server goes first so its status shows up first.
+        ProxyServer selected = snapshot.selected();
+        if (selected != null && seen.add(selected.id)) {
+            servers.add(selected);
+        }
+        for (ProxyServer server : snapshot.allServers()) {
             if (seen.add(server.id)) {
                 servers.add(server);
             }
@@ -585,27 +639,35 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                         FileLog.d("impulse proxy: ping config failed, server " + safe(server.name) + " (" + server.host + "), " + e.getClass().getSimpleName());
                     }
                 }
-                try {
-                    LibXrayClient.PingResult[] measured = ProxyController.getInstance().xray().pingBatchDetailed(
-                        configs,
-                        XrayConfigBuilder.ProxyTag,
-                        PingUrl,
-                        PingTimeoutSeconds
-                    );
-                    for (int i = 0; i < valid.size(); i++) {
-                        ProxyServer server = valid.get(i);
-                        LibXrayClient.PingResult ping = i < measured.length ? measured[i] : new LibXrayClient.PingResult(-1L, null);
-                        result.put(server.id, ping.delay);
-                        if (ping.delay < 0) {
-                            FileLog.d("impulse proxy: ping failed, server " + safe(server.name) + " (" + server.host + "), " + safe(ping.error));
+                ProxyController.getInstance().xray().pingInChunks(
+                    configs,
+                    XrayConfigBuilder.ProxyTag,
+                    PingUrl,
+                    PingTimeoutSeconds,
+                    (offset, measured) -> {
+                        Map<String, Long> chunk = new HashMap<String, Long>();
+                        for (int i = 0; i < measured.length && offset + i < valid.size(); i++) {
+                            ProxyServer server = valid.get(offset + i);
+                            LibXrayClient.PingResult ping = measured[i];
+                            chunk.put(server.id, ping.delay);
+                            result.put(server.id, ping.delay);
+                            if (ping.delay < 0) {
+                                FileLog.d("impulse proxy: ping failed, server " + safe(server.name) + " (" + server.host + "), " + safe(ping.error));
+                            }
                         }
+                        AndroidUtilities.runOnUIThread(() -> {
+                            if (destroyed) {
+                                return;
+                            }
+                            for (String id : chunk.keySet()) {
+                                pending.remove(id);
+                            }
+                            delays.putAll(chunk);
+                            proxyListener.run();
+                        });
+                        return !destroyed;
                     }
-                } catch (XrayException e) {
-                    for (ProxyServer server : valid) {
-                        result.put(server.id, -1L);
-                        FileLog.d("impulse proxy: ping failed, server " + safe(server.name) + " (" + server.host + "), " + safe(e.getMessage()));
-                    }
-                }
+                );
             } catch (Throwable e) {
                 // Throwable, not RuntimeException: a native Error from libXray must not leave the ping state stuck.
                 FileLog.d("impulse proxy: ping round failed, " + e.getClass().getSimpleName());

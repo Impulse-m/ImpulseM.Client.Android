@@ -282,6 +282,11 @@
     <string name="ImpulseProxyRefresh">Обновить</string>
     <string name="ImpulseProxyCopyLink">Скопировать ссылку</string>
     <string name="ImpulseProxyDelete">Удалить</string>
+    <string name="ImpulseProxyDeleteSubscriptionTitle">Удалить подписку?</string>
+    <string name="ImpulseProxyDeleteSubscriptionText">Подписка «%1$s» и все её серверы будут удалены.</string>
+    <string name="ImpulseProxyDeleteServerTitle">Удалить сервер?</string>
+    <string name="ImpulseProxyDeleteServerText">Сервер «%1$s» будет удалён.</string>
+    <string name="ImpulseProxyDeleteActiveWarning">Прокси сейчас использует её сервер. Пока вы не выберете другой, у приложения не будет соединения.</string>
     <string name="ImpulseProxyUnavailable">Недоступен</string>
     <string name="ImpulseProxySkipped">Пропущено ссылок (не VLESS): %1$d</string>
     <string name="ImpulseProxyTraffic">%1$s из %2$s · до %3$s</string>
