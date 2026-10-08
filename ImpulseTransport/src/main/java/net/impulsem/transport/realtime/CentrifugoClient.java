@@ -207,6 +207,7 @@ public final class CentrifugoClient {
                 return;
             }
             wantConnected = true;
+            immediateReconnect = false;
         }
         connectAsync();
     }
@@ -644,6 +645,8 @@ public final class CentrifugoClient {
                 return;
             }
             boolean wasConnected = connected;
+            boolean immediate = immediateReconnect;
+            immediateReconnect = false;
             socket = null;
             connected = false;
             connecting = false;
@@ -659,8 +662,7 @@ public final class CentrifugoClient {
                 willReconnect = false;
             } else {
                 willReconnect = true;
-                if ((code == ConnectionExpiredCloseCode && wasConnected) || immediateReconnect) {
-                    immediateReconnect = false;
+                if ((code == ConnectionExpiredCloseCode && wasConnected) || immediate) {
                     reconnectDelay = 0L;
                 } else {
                     reconnectDelay = backoff.nextDelayMillis();

@@ -28,7 +28,8 @@ import org.junit.Test;
 public class CentrifugoClientResumeTest {
 
     private static final long WaitMillis = 5000L;
-    private static final long BackoffMillis = 1500L;
+    private static final long BackoffMillis = 4000L;
+    private static final long ImmediateMillis = 1500L;
 
 
     /** Answers the connect command so the client reaches the connected state. */
@@ -251,10 +252,9 @@ public class CentrifugoClientResumeTest {
         assertTrue(recorder.reconnecting.await(WaitMillis, TimeUnit.MILLISECONDS));
         // Wait until the backoff timer is really pending, so the cancel path is the one under test.
         waitForPendingTimer();
-        long startedAt = System.currentTimeMillis();
         client.reconnectNow();
-        assertTrue(second.connectSeen.await(WaitMillis, TimeUnit.MILLISECONDS));
-        assertTrue("connected only after the backoff", System.currentTimeMillis() - startedAt < BackoffMillis);
+        // The pending timer would only fire after BackoffMillis, far beyond this bound.
+        assertTrue("not connected at once", second.connectSeen.await(ImmediateMillis, TimeUnit.MILLISECONDS));
         assertEquals(2, tokenCounter.get());
         // The cancelled timer must not drive a further attempt once its delay has passed.
         Thread.sleep(BackoffMillis + 700L);
@@ -270,7 +270,9 @@ public class CentrifugoClientResumeTest {
         // Pretend the process was frozen: no frame has arrived for far longer than the watchdog window.
         setField("lastFrameAt", 0L);
         client.reconnectNow();
-        assertTrue(second.connectSeen.await(WaitMillis, TimeUnit.MILLISECONDS));
+        // The watchdog window is 25 s plus grace, so only reconnectNow can replace the socket this fast; a plain
+        // reconnect would wait for the backoff.
+        assertTrue("socket not replaced at once", second.connectSeen.await(ImmediateMillis, TimeUnit.MILLISECONDS));
         assertEquals(2, tokenCounter.get());
     }
 
