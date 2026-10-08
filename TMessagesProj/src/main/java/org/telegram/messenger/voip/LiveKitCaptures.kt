@@ -11,7 +11,9 @@ import io.livekit.android.room.track.LocalVideoTrackOptions
 import livekit.org.webrtc.CameraVideoCapturer
 import org.telegram.messenger.AndroidUtilities
 import org.telegram.messenger.ApplicationLoader
+import org.telegram.tgnet.impulse.ImpulseConnection
 import org.webrtc.VideoSink
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 
@@ -28,6 +30,7 @@ object LiveKitCaptures {
 
     private val nextId: AtomicLong = AtomicLong(1)
     private val captures: MutableMap<Long, Capture> = mutableMapOf()
+    private val proxyClients: MutableMap<Room, LiveKitProxyClient> = ConcurrentHashMap()
 
 
     @JvmStatic
@@ -36,6 +39,7 @@ object LiveKitCaptures {
         try {
             return create(room, sink, type, true)
         } catch (exception: Exception) {
+            closeForwarders(room)
             room.release()
             throw exception
         }
@@ -51,6 +55,7 @@ object LiveKitCaptures {
             capture.track.dispose()
         }
         if (capture.ownsRoom) {
+            closeForwarders(capture.room)
             capture.room.release()
         }
     }
@@ -103,10 +108,35 @@ object LiveKitCaptures {
 
 
     internal fun createRoom(): Room {
-        return LiveKit.create(
+        // The tunnel decision is made once per room; a room keeps it for its whole life.
+        val proxyClient: LiveKitProxyClient? = if (LiveKitProxyClient.shouldTunnel()) {
+            LiveKitProxyClient(ImpulseConnection.httpClient())
+        } else {
+            null
+        }
+        val room: Room = LiveKit.create(
             ApplicationLoader.applicationContext,
-            overrides = LiveKitOverrides(audioOptions = AudioOptions(audioHandler = NoAudioHandler()))
+            overrides = LiveKitOverrides(
+                okHttpClient = proxyClient,
+                audioOptions = AudioOptions(audioHandler = NoAudioHandler())
+            )
         )
+        if (proxyClient != null) {
+            proxyClients[room] = proxyClient
+        }
+        return room
+    }
+
+
+    /** True when this room was created for a call routed through the VLESS tunnel. */
+    internal fun isTunnelled(room: Room): Boolean {
+        return proxyClients.containsKey(room)
+    }
+
+
+    /** Stops the TURN forwarders of a room that is being released. */
+    internal fun closeForwarders(room: Room) {
+        proxyClients.remove(room)?.closeForwarders()
     }
 
 

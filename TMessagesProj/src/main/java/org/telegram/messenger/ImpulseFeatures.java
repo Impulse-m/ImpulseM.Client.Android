@@ -43,6 +43,10 @@ public final class ImpulseFeatures {
     public static final boolean HELP_SECTION = false;
 
 
+    /** VLESS proxy through the in-process Xray core. */
+    public static final boolean VLESS = true;
+
+
     private ImpulseFeatures() {
     }
 }

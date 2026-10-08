@@ -40,6 +40,7 @@ import org.telegram.messenger.utils.Choreographer60FpsContent;
 import org.telegram.messenger.voip.VideoCapturerDevice;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.Components.ForegroundDetector;
 import org.telegram.ui.Components.ItemOptions;
@@ -356,6 +357,9 @@ public class ApplicationLoader extends Application {
         // TODO(impulsem-unimplemented): proxy
         if (ImpulseFeatures.PROXY) {
             ProxyRotationController.init();
+        }
+        if (ImpulseFeatures.VLESS) {
+            ProxyController.getInstance().startIfEnabled();
         }
 
         //if (BuildConfig.DEBUG_PRIVATE_VERSION) {

@@ -196,7 +196,7 @@ public class DataSettingsActivity extends BaseFragment {
 //        quickRepliesRow = rowCount++;
         callsSection2Row = rowCount++;
         // TODO(impulsem-unimplemented): proxy
-        if (ImpulseFeatures.PROXY) {
+        if (ImpulseFeatures.PROXY || ImpulseFeatures.VLESS) {
             proxySectionRow = rowCount++;
             proxyRow = rowCount++;
             proxySection2Row = rowCount++;
@@ -557,7 +557,7 @@ public class DataSettingsActivity extends BaseFragment {
                 builder.setNegativeButton(LocaleController.getString(R.string.Cancel), null);
                 showDialog(builder.create());
             } else if (position == proxyRow) {
-                presentFragment(new ProxyListActivity());
+                presentFragment(ImpulseFeatures.VLESS ? new ImpulseProxyActivity() : new ProxyListActivity());
             } else if (position == enableStreamRow) {
                 SharedConfig.toggleStreamMedia();
                 TextCheckCell textCheckCell = (TextCheckCell) view;

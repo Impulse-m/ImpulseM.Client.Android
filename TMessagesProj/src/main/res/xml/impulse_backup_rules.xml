@@ -5,4 +5,5 @@
     <exclude domain="sharedpref" path="impulse_session1.xml" />
     <exclude domain="sharedpref" path="impulse_session2.xml" />
     <exclude domain="sharedpref" path="impulse_session3.xml" />
+    <exclude domain="sharedpref" path="impulse_proxy.xml" />
 </full-backup-content>

@@ -171,6 +171,22 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
     }
 
 
+    /** Drops the realtime socket and syncs again, so a new socket is opened over the current route. */
+    void reconnect() {
+        syncExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    client.disconnect();
+                } catch (RuntimeException e) {
+                    FileLog.e(e);
+                }
+                sync();
+            }
+        });
+    }
+
+
     /** Queues a sync now instead of waiting for the periodic check. */
     void syncSoon() {
         syncExecutor.execute(new Runnable() {

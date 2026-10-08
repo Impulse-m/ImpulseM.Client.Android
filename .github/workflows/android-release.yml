@@ -58,7 +58,7 @@ jobs:
 
       - name: Test the transport
         run: >-
-          gradle :ImpulseTransport:test
+          gradle :ImpulseTransport:test :ImpulseProxy:test
           --no-daemon --max-workers=2 --console=plain
           -Dorg.gradle.parallel=false
           '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g'

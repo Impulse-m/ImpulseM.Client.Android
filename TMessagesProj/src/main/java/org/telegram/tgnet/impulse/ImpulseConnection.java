@@ -2,6 +2,7 @@ package org.telegram.tgnet.impulse;
 
 import android.os.SystemClock;
 
+import net.impulsem.proxy.ProxyRouting;
 import net.impulsem.transport.auth.Clock;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
@@ -21,6 +22,8 @@ import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.tgnet.impulse.proxy.ImpulseProxySelector;
+import org.telegram.tgnet.impulse.proxy.ProxyController;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -39,6 +42,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import okhttp3.Call;
@@ -53,6 +57,8 @@ import okhttp3.OkHttpClient;
  */
 public final class ImpulseConnection {
 
+    private static final AtomicLong proxyEpoch = new AtomicLong();
+    private static final ScheduledExecutorService proxyDropExecutor = new ScheduledThreadPoolExecutor(1, namedThreads("impulse-proxy-drop"));
     private static final int ConnectionStateConnecting = 1;
     private static final int ConnectionStateWaitingForNetwork = 2;
     private static final int ConnectionStateConnected = 3;
@@ -86,6 +92,7 @@ public final class ImpulseConnection {
         boolean waitingRetry;
         int serverFailures;
         int networkFailures;
+        long startedEpoch;
         String method = "?";
         Call call;
         ScheduledFuture<?> timer;
@@ -123,7 +130,7 @@ public final class ImpulseConnection {
     private boolean configAgain;
     private boolean started;
     private long userId;
-    private int connectionState = ConnectionStateConnecting;
+    private int connectionState = connectingState();
     private int thisDatacenter = 1;
 
     private volatile long timeOffsetMillis;
@@ -156,6 +163,8 @@ public final class ImpulseConnection {
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
+                .proxySelector(ImpulseProxySelector.Instance)
+                .proxyAuthenticator(ImpulseProxySelector.Authenticator)
                 .build();
         }
         return httpClient;
@@ -458,12 +467,52 @@ public final class ImpulseConnection {
                     wasOffline = connectionState == ConnectionStateWaitingForNetwork;
                 }
                 if (wasOffline) {
-                    setState(ConnectionStateConnecting);
+                    setState(connectingState());
                     retryNow();
                     fetchConfig();
                 }
             }
         });
+    }
+
+
+    /**
+     * First step of a proxy change, called once for all accounts before any account's proxyChanged(): advances the
+     * epoch, then drops the idle and in-flight HTTP calls of the shared client off the caller's thread. Every call that
+     * fails after the advance and started before it is classified as a proxy-change failure.
+     */
+    public static void beginProxyChange() {
+        proxyEpoch.incrementAndGet();
+        proxyDropExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                OkHttpClient client = sharedHttpClient();
+                client.connectionPool().evictAll();
+                client.dispatcher().cancelAll();
+            }
+        });
+    }
+
+
+    /** Per-account part of a proxy change: the state, the waiting retries and the realtime socket. */
+    public void proxyChanged() {
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                if (ApplicationLoader.isNetworkOnline()) {
+                    setState(connectingState());
+                    retryNow();
+                }
+            }
+        });
+        realtime.reconnect();
+    }
+
+
+    private static int connectingState() {
+        return ProxyController.getInstance().route() == ProxyRouting.Route.DIRECT
+            ? ConnectionStateConnecting
+            : ConnectionsManager.ConnectionStateConnectingToProxy;
     }
 
 
@@ -486,7 +535,7 @@ public final class ImpulseConnection {
     }
 
 
-    static OkHttpClient httpClient() {
+    public static OkHttpClient httpClient() {
         return sharedHttpClient();
     }
 
@@ -635,6 +684,8 @@ public final class ImpulseConnection {
             finishError(pending, 400, "METHOD_INVALID");
             return;
         }
+        // Read before the call exists: a cancel that follows an epoch advance must see an older epoch.
+        long epoch = proxyEpoch.get();
         Call call;
         try {
             call = client.prepare(data);
@@ -648,6 +699,7 @@ public final class ImpulseConnection {
                 return;
             }
             pending.call = call;
+            pending.startedEpoch = epoch;
             pending.method = call.request().url().encodedPath();
         }
         ConnectionsManager.onRequestWriteToSocket(account, entry.token);
@@ -742,9 +794,12 @@ public final class ImpulseConnection {
             }
         }
         RequestEntry entry = pending.entry;
-        pending.networkFailures++;
-        log("token " + entry.token + " " + pending.method + " network failure " + pending.networkFailures + ": " + failure);
-        setState(ApplicationLoader.isNetworkOnline() ? ConnectionStateConnecting : ConnectionStateWaitingForNetwork);
+        boolean proxyChange = pending.startedEpoch < proxyEpoch.get();
+        if (!proxyChange) {
+            pending.networkFailures++;
+        }
+        log("token " + entry.token + " " + pending.method + " network failure " + pending.networkFailures + (proxyChange ? " (proxy change)" : "") + ": " + failure);
+        setState(ApplicationLoader.isNetworkOnline() ? connectingState() : ConnectionStateWaitingForNetwork);
         RequestPolicy.Decision decision = RequestPolicy.onNetworkFailure(entry.flags, entry.connectionType, pending.networkFailures);
         if (decision.action == RequestPolicy.Action.RETRY_AFTER) {
             scheduleRun(pending, decision.delayMillis, true);

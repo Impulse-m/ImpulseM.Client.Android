@@ -1,5 +1,6 @@
 include ':TMessagesProj'
 include ':ImpulseTransport'
+include ':ImpulseProxy'
 include ':TMessagesProj_App'
 include ':TMessagesProj_AppHuawei'
 include ':TMessagesProj_AppHockeyApp'

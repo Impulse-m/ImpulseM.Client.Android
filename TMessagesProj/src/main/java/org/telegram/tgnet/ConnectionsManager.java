@@ -23,6 +23,7 @@ import com.google.android.play.core.integrity.IntegrityManagerFactory;
 import com.google.android.play.core.integrity.IntegrityTokenRequest;
 import com.google.android.play.core.integrity.IntegrityTokenResponse;
 
+import net.impulsem.proxy.ProxyRouting;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.telegram.messenger.AccountInstance;
@@ -46,6 +47,7 @@ import org.telegram.messenger.StatsController;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
 import org.telegram.tgnet.impulse.ImpulseConnection;
+import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.tgnet.impulse.RequestEntry;
 import org.telegram.utils.proxy.WebProxyConnectionTester;
 import org.telegram.utils.proxy.WebProxyTransport;
@@ -208,9 +210,21 @@ public class ConnectionsManager extends BaseController {
         return localInstance;
     }
 
+    public static void onProxyChanged() {
+        ImpulseConnection.beginProxyChange();
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            ConnectionsManager manager = Instance[a];
+            if (manager != null && manager.impulse != null) {
+                manager.impulse.proxyChanged();
+            }
+        }
+    }
+
     public ConnectionsManager(int instance) {
         super(instance);
-        connectionState = ConnectionStateConnecting;
+        connectionState = ProxyController.getInstance().route() == ProxyRouting.Route.DIRECT
+            ? ConnectionStateConnecting
+            : ConnectionStateConnectingToProxy;
         impulse = ImpulseConnection.forAccount(currentAccount, this);
         String deviceModel;
         String systemLangCode;

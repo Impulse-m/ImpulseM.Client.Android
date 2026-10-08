@@ -17,6 +17,52 @@ repositories {
     google()
 }
 
+// libXray (XTLS, MIT) ships as a release zip, not on Maven. Fetch the pinned AAR once, check sha256,
+// and expose it as com.github.xtls:libxray from a local Maven layout under build/.
+def libXrayVersion = '26.9.30'
+def libXraySha256 = '394b59d147b37ab46003bd3f1d687ed3b2f637cabfc0cb863f179c5a87bddde3'
+def libXrayRepo = new File(rootDir, "build/libxray-repo")
+def ensureLibXray = {
+    File aar = new File(libXrayRepo, "com/github/xtls/libxray/${libXrayVersion}/libxray-${libXrayVersion}.aar")
+    if (aar.exists()) {
+        return
+    }
+    File zip = new File(rootDir, "build/libxray-${libXrayVersion}.zip")
+    zip.parentFile.mkdirs()
+    if (!zip.exists()) {
+        File part = new File(zip.parentFile, zip.name + ".part")
+        URLConnection connection = new URL("https://github.com/XTLS/libXray/releases/download/v${libXrayVersion}/libxray-android.zip").openConnection()
+        connection.connectTimeout = 30000
+        connection.readTimeout = 120000
+        connection.inputStream.withCloseable { input ->
+            part.withOutputStream { output -> output << input }
+        }
+        if (!part.renameTo(zip)) {
+            throw new GradleException("libXray ${libXrayVersion} download could not be moved into place")
+        }
+    }
+    String actual = java.security.MessageDigest.getInstance('SHA-256').digest(zip.bytes).encodeHex().toString()
+    if (actual != libXraySha256) {
+        zip.delete()
+        throw new GradleException("libXray ${libXrayVersion} checksum mismatch: ${actual}")
+    }
+    aar.parentFile.mkdirs()
+    // The AAR is the completion marker: the POM goes first, the AAR is moved into place last.
+    new File(aar.parentFile, "libxray-${libXrayVersion}.pom").text =
+        "<project><modelVersion>4.0.0</modelVersion><groupId>com.github.xtls</groupId><artifactId>libxray</artifactId>" +
+        "<version>${libXrayVersion}</version><packaging>aar</packaging></project>"
+    File temp = new File(aar.parentFile, aar.name + ".tmp")
+    new java.util.zip.ZipFile(zip).withCloseable { archive ->
+        def entry = archive.getEntry('libxray-android/libXray.aar')
+        if (entry == null) {
+            throw new GradleException("libXray zip has no libxray-android/libXray.aar")
+        }
+        temp.withOutputStream { output -> output << archive.getInputStream(entry) }
+    }
+    java.nio.file.Files.move(temp.toPath(), aar.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+}
+ensureLibXray()
+
 // Strip JLatexMath fonts we don't ship (transitive AAR assets from
 // io.noties.markwon:ext-latex -> ru.noties:jlatexmath-android, ~764 KB total under
 // assets/org/scilab/forge/jlatexmath/fonts/). Has to live in the APK modules — a
@@ -33,6 +79,12 @@ subprojects {
             url 'https://jitpack.io'
             content {
                 includeGroup 'com.github.davidliu'
+            }
+        }
+        maven {
+            url libXrayRepo.toURI()
+            content {
+                includeGroup 'com.github.xtls'
             }
         }
     }
