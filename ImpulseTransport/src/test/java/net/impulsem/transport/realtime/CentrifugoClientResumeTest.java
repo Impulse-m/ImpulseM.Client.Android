@@ -4,6 +4,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.net.InetAddress;
+import java.net.Socket;
 import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -11,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.net.SocketFactory;
 import okhttp3.OkHttpClient;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
@@ -24,7 +28,7 @@ import org.junit.Test;
 public class CentrifugoClientResumeTest {
 
     private static final long WaitMillis = 5000L;
-    private static final long BackoffMillis = 30000L;
+    private static final long BackoffMillis = 1500L;
 
 
     /** Answers the connect command so the client reaches the connected state. */
@@ -97,10 +101,11 @@ public class CentrifugoClientResumeTest {
     private MockWebServer server;
     private ScheduledExecutorService executor;
     private OkHttpClient http;
-    private final CopyOnWriteArrayList<java.net.Socket> rawSockets = new CopyOnWriteArrayList<java.net.Socket>();
+    private final CopyOnWriteArrayList<Socket> rawSockets = new CopyOnWriteArrayList<Socket>();
     private final AtomicInteger tokenCounter = new AtomicInteger();
     private final Session first = new Session();
     private final Session second = new Session();
+    private final Session third = new Session();
     private Recorder recorder;
     private CentrifugoClient client;
 
@@ -111,62 +116,63 @@ public class CentrifugoClientResumeTest {
         server.start();
         executor = Executors.newScheduledThreadPool(2);
         http = new OkHttpClient.Builder()
-            .socketFactory(new javax.net.SocketFactory() {
-                private java.net.Socket track(java.net.Socket socket) {
+            .socketFactory(new SocketFactory() {
+                private Socket track(Socket socket) {
                     rawSockets.add(socket);
                     return socket;
                 }
 
 
                 @Override
-                public java.net.Socket createSocket() {
-                    return track(new java.net.Socket());
+                public Socket createSocket() {
+                    return track(new Socket());
                 }
 
 
                 @Override
-                public java.net.Socket createSocket(
+                public Socket createSocket(
                     String host,
                     int port
                 ) throws IOException {
-                    return track(new java.net.Socket(host, port));
+                    return track(new Socket(host, port));
                 }
 
 
                 @Override
-                public java.net.Socket createSocket(
+                public Socket createSocket(
                     String host,
                     int port,
-                    java.net.InetAddress localHost,
+                    InetAddress localHost,
                     int localPort
                 ) throws IOException {
-                    return track(new java.net.Socket(host, port, localHost, localPort));
+                    return track(new Socket(host, port, localHost, localPort));
                 }
 
 
                 @Override
-                public java.net.Socket createSocket(
-                    java.net.InetAddress host,
+                public Socket createSocket(
+                    InetAddress host,
                     int port
                 ) throws IOException {
-                    return track(new java.net.Socket(host, port));
+                    return track(new Socket(host, port));
                 }
 
 
                 @Override
-                public java.net.Socket createSocket(
-                    java.net.InetAddress address,
+                public Socket createSocket(
+                    InetAddress address,
                     int port,
-                    java.net.InetAddress localAddress,
+                    InetAddress localAddress,
                     int localPort
                 ) throws IOException {
-                    return track(new java.net.Socket(address, port, localAddress, localPort));
+                    return track(new Socket(address, port, localAddress, localPort));
                 }
             })
             .build();
         recorder = new Recorder();
         server.enqueue(new MockResponse().withWebSocketUpgrade(first));
         server.enqueue(new MockResponse().withWebSocketUpgrade(second));
+        server.enqueue(new MockResponse().withWebSocketUpgrade(third));
         client = new CentrifugoClient(
             http,
             server.url("/connection/websocket?cf_ws_frame_ping_pong=true").toString(),
@@ -186,7 +192,7 @@ public class CentrifugoClientResumeTest {
     @After
     public void tearDown() throws IOException {
         client.disconnect();
-        for (java.net.Socket raw : rawSockets) {
+        for (Socket raw : rawSockets) {
             try {
                 raw.close();
             } catch (IOException ignored) {
@@ -203,13 +209,66 @@ public class CentrifugoClientResumeTest {
     }
 
 
+    private Object readField(String name) throws Exception {
+        Field lockField = CentrifugoClient.class.getDeclaredField("lock");
+        lockField.setAccessible(true);
+        Field field = CentrifugoClient.class.getDeclaredField(name);
+        field.setAccessible(true);
+        synchronized (lockField.get(client)) {
+            return field.get(client);
+        }
+    }
+
+
+    private void setField(
+        String name,
+        long value
+    ) throws Exception {
+        Field lockField = CentrifugoClient.class.getDeclaredField("lock");
+        lockField.setAccessible(true);
+        Field field = CentrifugoClient.class.getDeclaredField(name);
+        field.setAccessible(true);
+        synchronized (lockField.get(client)) {
+            field.setLong(client, value);
+        }
+    }
+
+
+    private void waitForPendingTimer() throws Exception {
+        long deadline = System.currentTimeMillis() + WaitMillis;
+        while (readField("reconnectTask") == null) {
+            assertTrue("no reconnect timer was scheduled", System.currentTimeMillis() < deadline);
+            Thread.sleep(10L);
+        }
+    }
+
+
     @Test
     public void reconnectNowSkipsAPendingBackoff() throws Exception {
         client.connect();
         assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
         rawSockets.get(0).close();
         assertTrue(recorder.reconnecting.await(WaitMillis, TimeUnit.MILLISECONDS));
-        // A 30 s backoff is now pending; without reconnectNow the second connection would not come within the wait.
+        // Wait until the backoff timer is really pending, so the cancel path is the one under test.
+        waitForPendingTimer();
+        long startedAt = System.currentTimeMillis();
+        client.reconnectNow();
+        assertTrue(second.connectSeen.await(WaitMillis, TimeUnit.MILLISECONDS));
+        assertTrue("connected only after the backoff", System.currentTimeMillis() - startedAt < BackoffMillis);
+        assertEquals(2, tokenCounter.get());
+        // The cancelled timer must not drive a further attempt once its delay has passed.
+        Thread.sleep(BackoffMillis + 700L);
+        assertEquals(2, server.getRequestCount());
+        assertEquals(2, tokenCounter.get());
+    }
+
+
+    @Test
+    public void reconnectNowReplacesASilentOpenSocket() throws Exception {
+        client.connect();
+        assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
+        // Pretend the process was frozen: no frame has arrived for far longer than the watchdog window.
+        setField("lastFrameAt", 0L);
         client.reconnectNow();
         assertTrue(second.connectSeen.await(WaitMillis, TimeUnit.MILLISECONDS));
         assertEquals(2, tokenCounter.get());

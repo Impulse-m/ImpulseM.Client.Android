@@ -147,6 +147,7 @@ public final class CentrifugoClient {
 
     private boolean wantConnected;
     private boolean connecting;
+    private boolean immediateReconnect;
     private int attemptSerial;
     private boolean connected;
     private int generation;
@@ -207,35 +208,44 @@ public final class CentrifugoClient {
             }
             wantConnected = true;
         }
-        executor.execute(new Runnable() {
-            @Override
-            public void run() {
-                attemptConnect();
-            }
-        });
+        connectAsync();
     }
 
 
     /**
-     * Skips a pending reconnect backoff and connects now. Does nothing when the client does not want a connection,
-     * or when a socket is open or a connect attempt is in flight.
+     * Connects at once when a reconnect is waiting on its backoff timer, or when the open socket has been silent for
+     * longer than the watchdog window (a process freeze leaves a dead socket that still looks open). Does nothing when
+     * the client does not want a connection, or when the socket is healthy or a connect attempt is in flight.
      */
     public void reconnectNow() {
+        int staleGen = -1;
         synchronized (lock) {
-            if (!wantConnected || connecting || socket != null) {
+            if (!wantConnected) {
                 return;
             }
-            if (reconnectTask != null) {
+            if (socket != null) {
+                if (!connected || System.currentTimeMillis() - lastFrameAt <= watchdogWindowMillis) {
+                    return;
+                }
+                staleGen = generation;
+                immediateReconnect = true;
+                backoff.reset();
+            } else {
+                if (connecting || reconnectTask == null) {
+                    return;
+                }
                 reconnectTask.cancel(false);
                 reconnectTask = null;
+                backoff.reset();
             }
         }
-        executor.execute(new Runnable() {
-            @Override
-            public void run() {
-                attemptConnect();
-            }
-        });
+        if (staleGen >= 0) {
+            Log.log(Level.WARNING, "socket silent beyond the watchdog window on resume, reconnecting");
+            // handleClosed sees immediateReconnect and starts the next attempt without a delay.
+            forceClose(staleGen);
+        } else {
+            connectAsync();
+        }
     }
 
 
@@ -259,6 +269,7 @@ public final class CentrifugoClient {
             resetChannelFlagsLocked();
             // Orphans a token fetch that is still in flight, so a later connect() starts cleanly.
             connecting = false;
+            immediateReconnect = false;
             attemptSerial++;
         }
         if (closing != null) {
@@ -400,6 +411,16 @@ public final class CentrifugoClient {
 
 
     // Connection lifecycle.
+
+    private void connectAsync() {
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                attemptConnect();
+            }
+        });
+    }
+
 
     private void attemptConnect() {
         final int serial;
@@ -638,7 +659,8 @@ public final class CentrifugoClient {
                 willReconnect = false;
             } else {
                 willReconnect = true;
-                if (code == ConnectionExpiredCloseCode && wasConnected) {
+                if ((code == ConnectionExpiredCloseCode && wasConnected) || immediateReconnect) {
+                    immediateReconnect = false;
                     reconnectDelay = 0L;
                 } else {
                     reconnectDelay = backoff.nextDelayMillis();

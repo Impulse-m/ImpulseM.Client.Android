@@ -203,12 +203,8 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         syncExecutor.execute(new Runnable() {
             @Override
             public void run() {
-                try {
-                    sync();
-                    client.reconnectNow();
-                } catch (RuntimeException e) {
-                    FileLog.e(e);
-                }
+                sync();
+                client.reconnectNow();
             }
         });
     }
