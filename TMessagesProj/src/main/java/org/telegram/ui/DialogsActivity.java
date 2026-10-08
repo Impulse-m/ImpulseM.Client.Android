@@ -114,7 +114,6 @@ import org.telegram.messenger.ImageLoader;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.ImpulseFeatures;
-import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
@@ -139,6 +138,7 @@ import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.SerializedData;
 import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.tgnet.tl.TL_account;
 import org.telegram.tgnet.tl.TL_chatlists;
 import org.telegram.tgnet.tl.TL_stars;
@@ -10248,7 +10248,8 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         if (ImpulseFeatures.VLESS) {
             // The VLESS core owns the proxy state: connected means the core is running, connecting covers STARTING and FAILED.
             proxyEnabled = ProxyController.getInstance().snapshot().enabled;
-            connected = ProxyController.getInstance().status() == ProxyController.Status.RUNNING;
+            connected = ProxyController.getInstance().status() == ProxyController.Status.RUNNING
+                    && (currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating);
         }
         proxyMenuSubItem.setSubtext(getString(proxyEnabled ? (connected ? R.string.MenuProxyConnected : R.string.MenuProxyConnecting) : R.string.MenuProxyDisabled));
         proxyDrawable.setConnected(proxyEnabled, connected, animated);

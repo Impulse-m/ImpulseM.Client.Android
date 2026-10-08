@@ -279,4 +279,5 @@
     <string name="ImpulseProxyUpdated">Обновлено %1$s</string>
     <string name="ImpulseProxyInvalid">Это не ссылка VLESS и не адрес подписки</string>
     <string name="ImpulseProxyNoSelection">Сначала выберите сервер</string>
+    <string name="ImpulseProxyPingMs">%1$d мс</string>
 </resources>

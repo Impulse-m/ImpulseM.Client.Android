@@ -11251,4 +11251,5 @@
     <string name="ImpulseProxyUpdated">Updated %1$s</string>
     <string name="ImpulseProxyInvalid">Not a VLESS link or subscription URL</string>
     <string name="ImpulseProxyNoSelection">Choose a server first</string>
+    <string name="ImpulseProxyPingMs">%1$d ms</string>
 </resources>

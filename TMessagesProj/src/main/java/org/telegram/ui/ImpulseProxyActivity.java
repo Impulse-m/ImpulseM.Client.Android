@@ -98,13 +98,14 @@ public class ImpulseProxyActivity extends BaseFragment {
     private final Runnable proxyListener = new Runnable() {
         @Override
         public void run() {
-            if (listView != null && listView.adapter != null) {
+            if (!destroyed && listView != null && listView.adapter != null) {
                 listView.adapter.update(true);
             }
         }
     };
     private UniversalRecyclerView listView;
     private boolean checking;
+    private boolean destroyed;
     private int nextId;
 
 
@@ -117,6 +118,7 @@ public class ImpulseProxyActivity extends BaseFragment {
 
     @Override
     public void onFragmentDestroy() {
+        destroyed = true;
         ProxyController.getInstance().removeListener(proxyListener);
         super.onFragmentDestroy();
     }
@@ -217,7 +219,7 @@ public class ImpulseProxyActivity extends BaseFragment {
         if (delay != null) {
             text.append(" · ");
             if (delay >= 0) {
-                text.append(delay).append(" ms");
+                text.append(LocaleController.formatString(R.string.ImpulseProxyPingMs, delay.intValue()));
             } else {
                 text.append(getString(R.string.ImpulseProxyUnavailable));
             }
@@ -244,7 +246,11 @@ public class ImpulseProxyActivity extends BaseFragment {
         ArrayList<UItem> items,
         Subscription subscription
     ) {
-        if (subscription.meta != null && subscription.meta.total >= 0) {
+        // total is 0 or -1 when the panel reports no limit: show only the expiry date then.
+        if (subscription.meta != null && subscription.meta.total <= 0 && subscription.meta.expire > 0) {
+            items.add(infoItem(DateFormat.getDateInstance(DateFormat.MEDIUM).format(new Date(subscription.meta.expire * 1000L)), false));
+        }
+        if (subscription.meta != null && subscription.meta.total > 0) {
             long used = Math.max(0L, subscription.meta.upload) + Math.max(0L, subscription.meta.download);
             String total = AndroidUtilities.formatFileSize(subscription.meta.total);
             String usedText = AndroidUtilities.formatFileSize(used);
@@ -405,6 +411,9 @@ public class ImpulseProxyActivity extends BaseFragment {
         proxyListener.run();
         ProxyController.getInstance().refresh(subscriptionId, error -> {
             refreshing.remove(subscriptionId);
+            if (destroyed) {
+                return;
+            }
             if (error != null) {
                 toast(error);
             }
@@ -458,6 +467,9 @@ public class ImpulseProxyActivity extends BaseFragment {
                 }
             }
             AndroidUtilities.runOnUIThread(() -> {
+                if (destroyed) {
+                    return;
+                }
                 delays.putAll(result);
                 checking = false;
                 proxyListener.run();
@@ -599,7 +611,7 @@ public class ImpulseProxyActivity extends BaseFragment {
 
 
     private void toast(String message) {
-        Context context = getParentActivity();
+        Context context = destroyed ? null : getParentActivity();
         if (context != null) {
             Toast.makeText(context, message, Toast.LENGTH_LONG).show();
         }
