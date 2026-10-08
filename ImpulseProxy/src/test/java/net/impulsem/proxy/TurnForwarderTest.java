@@ -19,6 +19,9 @@ import org.junit.Test;
 
 
 public class TurnForwarderTest {
+    /** The forwarder binds explicit IPv4 loopback, matching the 127.0.0.1 URL it advertises. */
+    private static final InetAddress Loopback = ipv4Loopback();
+
 
     @Test
     public void tcpForwardsThroughSocks() throws Exception {
@@ -32,7 +35,7 @@ public class TurnForwarderTest {
         Socket client = null;
         try {
             int port = forwarder.start();
-            client = new Socket(InetAddress.getLoopbackAddress(), port);
+            client = new Socket(Loopback, port);
             client.setSoTimeout(5000);
             client.getOutputStream().write("hello".getBytes(StandardCharsets.UTF_8));
             assertEquals("hello", readText(client.getInputStream(), 5));
@@ -57,7 +60,7 @@ public class TurnForwarderTest {
         Socket client = null;
         try {
             int port = forwarder.start();
-            client = new Socket(InetAddress.getLoopbackAddress(), port);
+            client = new Socket(Loopback, port);
             client.setSoTimeout(2000);
             client.getOutputStream().write("hi".getBytes(StandardCharsets.UTF_8));
             assertEquals("hi", readText(client.getInputStream(), 2));
@@ -136,7 +139,7 @@ public class TurnForwarderTest {
             assertTrue(relayPort > 0);
             byte[] payload = "evil".getBytes(StandardCharsets.UTF_8);
             byte[] frame = Socks5.wrapUdp("t.example", 3478, payload, payload.length);
-            spoof.send(new DatagramPacket(frame, frame.length, InetAddress.getLoopbackAddress(), relayPort));
+            spoof.send(new DatagramPacket(frame, frame.length, Loopback, relayPort));
             expectSilence(a, 700);
             sendText(a, "again", port);
             assertEquals("again", receiveText(a));
@@ -268,7 +271,7 @@ public class TurnForwarderTest {
 
 
     private static DatagramSocket newClient() throws SocketException {
-        DatagramSocket socket = new DatagramSocket(0, InetAddress.getLoopbackAddress());
+        DatagramSocket socket = new DatagramSocket(0, Loopback);
         socket.setSoTimeout(5000);
         return socket;
     }
@@ -280,7 +283,7 @@ public class TurnForwarderTest {
         int port
     ) throws IOException {
         byte[] payload = text.getBytes(StandardCharsets.UTF_8);
-        from.send(new DatagramPacket(payload, payload.length, InetAddress.getLoopbackAddress(), port));
+        from.send(new DatagramPacket(payload, payload.length, Loopback, port));
     }
 
 
@@ -343,6 +346,15 @@ public class TurnForwarderTest {
     private static void closeQuietly(DatagramSocket socket) {
         if (socket != null) {
             socket.close();
+        }
+    }
+
+
+    private static InetAddress ipv4Loopback() {
+        try {
+            return InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
+        } catch (java.net.UnknownHostException e) {
+            throw new IllegalStateException(e);
         }
     }
 }

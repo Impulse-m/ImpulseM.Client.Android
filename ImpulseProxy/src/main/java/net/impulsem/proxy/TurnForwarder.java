@@ -11,6 +11,7 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.net.UnknownHostException;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -22,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class TurnForwarder implements Closeable {
     private static final int MaxUdpSources = 8;
+    /** Explicit IPv4: on Android getLoopbackAddress() is ::1, but TurnEndpoint.localUrl advertises 127.0.0.1. */
+    private static final InetAddress Loopback = loopbackV4();
 
     private final TurnEndpoint target;
     private final InetSocketAddress socks;
@@ -63,7 +66,7 @@ public final class TurnForwarder implements Closeable {
     public int start() throws IOException {
         try {
             if (target.tcp) {
-                tcpListener = new ServerSocket(0, 8, InetAddress.getLoopbackAddress());
+                tcpListener = new ServerSocket(0, 8, Loopback);
                 daemon("turn-tcp-accept", new Runnable() {
                     @Override
                     public void run() {
@@ -72,7 +75,7 @@ public final class TurnForwarder implements Closeable {
                 });
                 return tcpListener.getLocalPort();
             }
-            udpLocal = new DatagramSocket(0, InetAddress.getLoopbackAddress());
+            udpLocal = new DatagramSocket(0, Loopback);
             daemon("turn-udp-local", new Runnable() {
                 @Override
                 public void run() {
@@ -246,6 +249,15 @@ public final class TurnForwarder implements Closeable {
     }
 
 
+    private static InetAddress loopbackV4() {
+        try {
+            return InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
+        } catch (UnknownHostException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+
     private static void daemon(
         String name,
         Runnable body
@@ -282,7 +294,7 @@ public final class TurnForwarder implements Closeable {
             this.association = Socks5.associate(socks, user, password);
             DatagramSocket socket;
             try {
-                socket = new DatagramSocket(0, InetAddress.getLoopbackAddress());
+                socket = new DatagramSocket(0, Loopback);
             } catch (IOException e) {
                 closeQuietly(association.control);
                 throw e;
