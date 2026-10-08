@@ -70,6 +70,12 @@ public class ProxyAdvancedTest {
         ProxyAdvanced c = a.copy();
         c.dnsMode = ProxyAdvanced.DnsGoogle;
         assertTrue(a.affectsCore(c));
+        ProxyAdvanced d = a.copy();
+        d.muxEnabled = true;
+        assertTrue(a.affectsCore(d));
+        ProxyAdvanced e = a.copy();
+        e.fingerprint = "chrome";
+        assertTrue(a.affectsCore(e));
     }
 
 

@@ -218,6 +218,35 @@ public class LibXrayClientTest {
         long elapsedMillis = (System.nanoTime() - started) / 1000000L;
         assertEquals(3, sent.size());
         assertTrue("elapsed " + elapsedMillis, elapsedMillis >= 2 * 60L - 5L);
+        // A pause after the last chunk too would make three pauses.
+        assertTrue("elapsed " + elapsedMillis, elapsedMillis < 3 * 60L + 40L);
+    }
+
+
+    @Test
+    public void pingInChunksInterruptStopsTheLoopAndKeepsTheFlag() {
+        LinkedList<String> responses = new LinkedList<String>(Arrays.asList(
+            pingResponse(10),
+            pingResponse(20),
+            pingResponse(30)
+        ));
+        List<String> sent = new ArrayList<String>();
+        try {
+            Thread.currentThread().interrupt();
+            queued(responses, sent).pingInChunks(
+                configs(3),
+                "proxy",
+                "https://example.com",
+                5,
+                1,
+                10000L,
+                collecting(new ArrayList<Integer>(), new ArrayList<LibXrayClient.PingResult>(), true)
+            );
+            assertEquals(1, sent.size());
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
     }
 
 

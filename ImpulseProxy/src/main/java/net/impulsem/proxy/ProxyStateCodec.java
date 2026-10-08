@@ -180,7 +180,7 @@ public final class ProxyStateCodec {
             return fallback;
         }
         try {
-            return element.getAsInt();
+            return element.getAsBigDecimal().intValueExact();
         } catch (RuntimeException e) {
             return fallback;
         }

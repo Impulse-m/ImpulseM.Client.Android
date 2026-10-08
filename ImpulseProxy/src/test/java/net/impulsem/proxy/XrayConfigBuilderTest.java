@@ -11,6 +11,19 @@ import org.junit.Test;
 
 
 public class XrayConfigBuilderTest {
+    private static final LocalInbounds Inbounds = new LocalInbounds(1, 2, "u", "p");
+    private static final String LinkBase = "vless://u@h.example:443?type=tcp&fragment=";
+
+    // Golden outbounds produced by the code before the advanced settings existed (edfd355).
+    private static final String GoldenTlsOutbound = "{\"protocol\":\"vless\",\"tag\":\"proxy\","
+        + "\"settings\":{\"vnext\":[{\"address\":\"h.example\",\"port\":443,\"users\":["
+        + "{\"id\":\"11111111-1111-1111-1111-111111111111\",\"encryption\":\"none\"}]}]},"
+        + "\"streamSettings\":{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"a\"}}}";
+    private static final String GoldenRealityOutbound = "{\"protocol\":\"vless\",\"tag\":\"proxy\","
+        + "\"settings\":{\"vnext\":[{\"address\":\"h.example\",\"port\":443,\"users\":["
+        + "{\"id\":\"11111111-1111-1111-1111-111111111111\",\"encryption\":\"none\",\"flow\":\"xtls-rprx-vision\"}]}]},"
+        + "\"streamSettings\":{\"network\":\"tcp\",\"security\":\"reality\","
+        + "\"realitySettings\":{\"serverName\":\"s\",\"fingerprint\":\"chrome\",\"publicKey\":\"k\",\"shortId\":\"ab\"}}}";
 
     private static ProxyServer server() {
         return ProxyServer.fromOutbound(JsonParser.parseString(
@@ -107,9 +120,6 @@ public class XrayConfigBuilderTest {
     }
 
 
-    private static final LocalInbounds Inbounds = new LocalInbounds(1, 2, "u", "p");
-
-
     private static ProxyServer serverWith(
         String stream,
         String flow,
@@ -139,22 +149,76 @@ public class XrayConfigBuilderTest {
     }
 
 
+    private static String goldenBuild(String outbound) {
+        return "{\"log\":{\"loglevel\":\"error\",\"access\":\"none\"},\"inbounds\":["
+            + "{\"tag\":\"http-in\",\"listen\":\"127.0.0.1\",\"port\":41001,\"protocol\":\"http\","
+            + "\"settings\":{\"accounts\":[{\"user\":\"u\",\"pass\":\"p\"}],\"allowTransparent\":false}},"
+            + "{\"tag\":\"socks-in\",\"listen\":\"127.0.0.1\",\"port\":41002,\"protocol\":\"socks\","
+            + "\"settings\":{\"auth\":\"password\",\"accounts\":[{\"user\":\"u\",\"pass\":\"p\"}],"
+            + "\"udp\":true,\"ip\":\"127.0.0.1\"}}],"
+            + "\"outbounds\":[" + outbound + "],"
+            + "\"routing\":{\"domainStrategy\":\"AsIs\",\"rules\":[{\"type\":\"field\","
+            + "\"inboundTag\":[\"http-in\",\"socks-in\"],\"outboundTag\":\"proxy\"}]}}";
+    }
+
+
     @Test
-    public void defaultAdvancedMatchesTheOldMethods() {
-        ProxyServer[] servers = {
-            server(),
-            serverWith("{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"a\"}}", "xtls-rprx-vision", null)
-        };
-        for (ProxyServer s : servers) {
-            assertEquals(
-                XrayConfigBuilder.build(s, Inbounds),
-                XrayConfigBuilder.build(s, Inbounds, new ProxyAdvanced())
-            );
-            assertEquals(
-                XrayConfigBuilder.pingConfig(s),
-                XrayConfigBuilder.pingConfig(s, new ProxyAdvanced())
-            );
-        }
+    public void defaultAdvancedReproducesThePreChangeOutput() {
+        LocalInbounds inbounds = new LocalInbounds(41001, 41002, "u", "p");
+        ProxyServer tls = serverWith(
+            "{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"a\"}}",
+            null,
+            null
+        );
+        ProxyServer reality = serverWith(
+            "{\"network\":\"tcp\",\"security\":\"reality\","
+                + "\"realitySettings\":{\"serverName\":\"s\",\"fingerprint\":\"chrome\",\"publicKey\":\"k\",\"shortId\":\"ab\"}}",
+            "xtls-rprx-vision",
+            null
+        );
+        String tlsPing = "{\"outbounds\":[" + GoldenTlsOutbound + "]}";
+        String realityPing = "{\"outbounds\":[" + GoldenRealityOutbound + "]}";
+        assertEquals(goldenBuild(GoldenTlsOutbound), XrayConfigBuilder.build(tls, inbounds));
+        assertEquals(goldenBuild(GoldenTlsOutbound), XrayConfigBuilder.build(tls, inbounds, new ProxyAdvanced()));
+        assertEquals(goldenBuild(GoldenRealityOutbound), XrayConfigBuilder.build(reality, inbounds));
+        assertEquals(goldenBuild(GoldenRealityOutbound), XrayConfigBuilder.build(reality, inbounds, new ProxyAdvanced()));
+        assertEquals(tlsPing, XrayConfigBuilder.pingConfig(tls));
+        assertEquals(tlsPing, XrayConfigBuilder.pingConfig(tls, new ProxyAdvanced()));
+        assertEquals(realityPing, XrayConfigBuilder.pingConfig(reality));
+        assertEquals(realityPing, XrayConfigBuilder.pingConfig(reality, new ProxyAdvanced()));
+    }
+
+
+    @Test
+    public void classicFragmentKeepsExistingSockoptKeys() {
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fragmentMode = ProxyAdvanced.FragmentClassic;
+        ProxyServer s = serverWith("{\"network\":\"tcp\",\"sockopt\":{\"mark\":255}}", null, null);
+        JsonObject options = sockopt(outboundOf(XrayConfigBuilder.build(s, Inbounds, a), 0));
+        assertEquals(255, options.get("mark").getAsInt());
+        assertEquals("fragment", options.get("dialerProxy").getAsString());
+    }
+
+
+    @Test
+    public void nullAdvancedAndNullFingerprintAreTolerated() {
+        ProxyServer s = serverWith("{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{}}", null, null);
+        assertEquals(XrayConfigBuilder.build(s, Inbounds), XrayConfigBuilder.build(s, Inbounds, null));
+        assertEquals(XrayConfigBuilder.pingConfig(s), XrayConfigBuilder.pingConfig(s, null));
+        ProxyAdvanced a = new ProxyAdvanced();
+        a.fingerprint = null;
+        assertEquals(XrayConfigBuilder.pingConfig(s), XrayConfigBuilder.pingConfig(s, a));
+    }
+
+
+    @Test
+    public void linkPacketsAreCaseInsensitive() {
+        ProxyServer s = serverWith("{\"network\":\"tcp\"}", null, LinkBase + "1-10,5-20,TLSHello");
+        String config = XrayConfigBuilder.build(s, Inbounds, new ProxyAdvanced());
+        assertEquals(
+            "tlshello",
+            outboundOf(config, 1).getAsJsonObject("settings").getAsJsonObject("fragment").get("packets").getAsString()
+        );
     }
 
 
@@ -272,9 +336,6 @@ public class XrayConfigBuilderTest {
         assertEquals("UseIPv4", sockopt(outboundOf(built, 0)).get("domainStrategy").getAsString());
         assertFalse(JsonParser.parseString(XrayConfigBuilder.build(server(), Inbounds)).getAsJsonObject().has("dns"));
     }
-
-
-    private static final String LinkBase = "vless://u@h.example:443?type=tcp&fragment=";
 
 
     @Test

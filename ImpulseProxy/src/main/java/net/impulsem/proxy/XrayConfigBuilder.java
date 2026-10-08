@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
+import java.util.Locale;
 
 
 /**
@@ -33,6 +34,7 @@ public final class XrayConfigBuilder {
         LocalInbounds inbounds,
         ProxyAdvanced advanced
     ) {
+        advanced = advanced == null ? new ProxyAdvanced() : advanced;
         requireCredential(inbounds.user, "user");
         requireCredential(inbounds.password, "password");
         JsonObject config = new JsonObject();
@@ -75,6 +77,7 @@ public final class XrayConfigBuilder {
         ProxyServer server,
         ProxyAdvanced advanced
     ) {
+        advanced = advanced == null ? new ProxyAdvanced() : advanced;
         JsonObject config = new JsonObject();
         config.add("outbounds", advancedOutbounds(server, advanced));
         addDns(config, advanced);
@@ -93,7 +96,7 @@ public final class XrayConfigBuilder {
         String[] fragment = effectiveFragment(server, advanced);
         boolean classic = fragment != null && ProxyAdvanced.FragmentClassic.equals(fragment[0]);
 
-        if (!advanced.fingerprint.isEmpty()) {
+        if (advanced.fingerprint != null && !advanced.fingerprint.isEmpty()) {
             JsonObject stream = streamOf(proxy, false);
             if (stream != null) {
                 setFingerprint(stream, "tlsSettings", advanced.fingerprint);
@@ -122,7 +125,7 @@ public final class XrayConfigBuilder {
             settings.add("fragment", fragmentJson);
             freedom.add("settings", settings);
             dialer = freedom;
-            streamOf(proxy, true).add("sockopt", dialerProxySockopt());
+            sockoptOf(proxy).addProperty("dialerProxy", FragmentTag);
         } else if (fragment != null) {
             JsonObject settings = new JsonObject();
             settings.addProperty("packets", fragment[1]);
@@ -214,7 +217,7 @@ public final class XrayConfigBuilder {
         }
         String length = parts[0].trim();
         String interval = parts[1].trim();
-        String packets = parts[2].trim();
+        String packets = parts[2].trim().toLowerCase(Locale.ROOT);
         if (!ProxyAdvanced.isRange(length) || !ProxyAdvanced.isRange(interval) || !ProxyAdvanced.isPackets(packets)) {
             return null;
         }
@@ -275,13 +278,6 @@ public final class XrayConfigBuilder {
         JsonObject created = new JsonObject();
         stream.add("sockopt", created);
         return created;
-    }
-
-
-    private static JsonObject dialerProxySockopt() {
-        JsonObject sockopt = new JsonObject();
-        sockopt.addProperty("dialerProxy", FragmentTag);
-        return sockopt;
     }
 
 

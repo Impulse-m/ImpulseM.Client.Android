@@ -167,6 +167,13 @@ public class ProxyStateCodecTest {
 
 
     @Test
+    public void outOfIntRangeAndFractionalNumbersGiveDefaults() {
+        String json = "{\"advanced\":{\"tcpMaxSeg\":4294967360,\"muxConcurrency\":3.9,\"pingTimeoutSeconds\":-4294967291}}";
+        assertEquals(new ProxyAdvanced(), ProxyStateCodec.decode(json).advanced);
+    }
+
+
+    @Test
     public void nullMetaEncodesAsDefaults() {
         ProxyState state = new ProxyState();
         state.replaceSubscription(new Subscription(
