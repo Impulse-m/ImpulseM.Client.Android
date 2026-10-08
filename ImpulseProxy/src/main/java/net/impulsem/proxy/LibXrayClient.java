@@ -11,6 +11,9 @@ import java.util.List;
 public final class LibXrayClient {
     public static final int ApiVersion = 3;
 
+    // libXray rejects a pingBatch call with more configs than this.
+    public static final int MaxPingBatch = 5;
+
     /** One ping outcome: delay in milliseconds (-1 on failure) and libXray's optional error text. */
     public static final class PingResult {
         public final long delay;
@@ -24,6 +27,15 @@ public final class LibXrayClient {
             this.delay = delay;
             this.error = error;
         }
+    }
+
+
+    /** Receives one chunk's results; return false to stop before the next chunk. */
+    public interface PingChunkListener {
+        boolean onChunk(
+            int offset,
+            PingResult[] results
+        );
     }
 
 
@@ -102,6 +114,9 @@ public final class LibXrayClient {
         String url,
         int timeoutSeconds
     ) throws XrayException {
+        if (xrayJsons.size() > MaxPingBatch) {
+            throw new IllegalArgumentException("pingBatch accepts at most " + MaxPingBatch + " configs");
+        }
         String method = "pingBatch";
         JsonArray configs = new JsonArray();
         for (String xrayJson : xrayJsons) {
@@ -131,6 +146,35 @@ public final class LibXrayClient {
             }
         }
         return out;
+    }
+
+
+    /**
+     * Pings xrayJsons in sequential chunks of at most MaxPingBatch. A chunk whose call fails reports -1
+     * with the failure text for each of its configs, and the next chunk still runs.
+     */
+    public void pingInChunks(
+        List<String> xrayJsons,
+        String outboundTag,
+        String url,
+        int timeoutSeconds,
+        PingChunkListener listener
+    ) {
+        for (int offset = 0; offset < xrayJsons.size(); offset += MaxPingBatch) {
+            List<String> chunk = xrayJsons.subList(offset, Math.min(offset + MaxPingBatch, xrayJsons.size()));
+            PingResult[] results;
+            try {
+                results = pingBatchDetailed(chunk, outboundTag, url, timeoutSeconds);
+            } catch (XrayException e) {
+                results = new PingResult[chunk.size()];
+                for (int i = 0; i < results.length; i++) {
+                    results[i] = new PingResult(-1L, e.getMessage());
+                }
+            }
+            if (!listener.onChunk(offset, results)) {
+                return;
+            }
+        }
     }
 
 
