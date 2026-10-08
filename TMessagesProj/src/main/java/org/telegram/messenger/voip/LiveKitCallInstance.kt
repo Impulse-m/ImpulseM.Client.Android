@@ -1,5 +1,6 @@
 package org.telegram.messenger.voip
 
+import io.livekit.android.ConnectOptions
 import io.livekit.android.e2ee.BaseKeyProvider
 import io.livekit.android.e2ee.E2EEOptions
 import io.livekit.android.e2ee.E2EEState
@@ -27,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import livekit.org.webrtc.FrameCryptorKeyDerivationAlgorithm
+import livekit.org.webrtc.PeerConnection
 import livekit.org.webrtc.RTCStatsReport
 import net.impulsem.transport.calls.LiveKitContract
 import org.telegram.messenger.AndroidUtilities
@@ -371,6 +373,7 @@ class LiveKitCallInstance private constructor(
             clearCapture()
             room.disconnect()
             room.release()
+            LiveKitCaptures.closeForwarders(room)
             keyProvider?.rtcKeyProvider?.dispose()
             keyProvider = null
         }
@@ -436,7 +439,15 @@ class LiveKitCallInstance private constructor(
         }
         connectJob = scope.launch {
             try {
-                room.connect(join.url, join.token)
+                if (LiveKitCaptures.isTunnelled(room)) {
+                    // Relay-only: every media path goes through the loopback TURN forwarders and the tunnel.
+                    val tunnelConfig: PeerConnection.RTCConfiguration = PeerConnection.RTCConfiguration(emptyList()).apply {
+                        iceTransportsType = PeerConnection.IceTransportsType.RELAY
+                    }
+                    room.connect(join.url, join.token, ConnectOptions(rtcConfig = tunnelConfig))
+                } else {
+                    room.connect(join.url, join.token)
+                }
                 connected = true
                 updateMedia()
                 reportConnected()
