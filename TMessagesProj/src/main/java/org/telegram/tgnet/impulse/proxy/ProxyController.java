@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import net.impulsem.proxy.HealthPolicy;
 import net.impulsem.proxy.LibXrayClient;
 import net.impulsem.proxy.LocalInbounds;
+import net.impulsem.proxy.ProxyAdvanced;
 import net.impulsem.proxy.ProxyRouting;
 import net.impulsem.proxy.ProxyServer;
 import net.impulsem.proxy.ProxyState;
@@ -177,6 +178,11 @@ public final class ProxyController {
             ProxyState next = copyOf(state);
             change.apply(next);
             restartNeeded = next.enabled != state.enabled || !sameId(next.selectedId, state.selectedId);
+            // A running core must pick up changed advanced settings; ping-only changes never restart it.
+            if (!restartNeeded && next.enabled && next.advanced.affectsCore(state.advanced)) {
+                restartNeeded = true;
+                FileLog.d("impulse proxy: advanced settings changed");
+            }
             state = next;
             persist(next);
             if (restartNeeded) {
@@ -400,9 +406,11 @@ public final class ProxyController {
 
         boolean enabled;
         ProxyServer server;
+        ProxyAdvanced advanced;
         synchronized (lock) {
             enabled = state.enabled;
             server = state.selected();
+            advanced = state.advanced.copy();
         }
         if (!enabled) {
             status = Status.OFF;
@@ -431,7 +439,7 @@ public final class ProxyController {
             String newPassword = randomHex(24);
             String config;
             try {
-                config = XrayConfigBuilder.build(server, new LocalInbounds(ports[0], ports[1], newUser, newPassword));
+                config = XrayConfigBuilder.build(server, new LocalInbounds(ports[0], ports[1], newUser, newPassword), advanced);
             } catch (RuntimeException e) {
                 stage = "build";
                 failure = ProxyErrors.InvalidConfig;

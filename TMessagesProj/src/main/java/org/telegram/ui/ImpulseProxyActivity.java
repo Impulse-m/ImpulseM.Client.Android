@@ -22,6 +22,7 @@ import com.google.gson.JsonArray;
 import net.impulsem.proxy.InputKind;
 import net.impulsem.proxy.LibXrayClient;
 import net.impulsem.proxy.OutboundFilter;
+import net.impulsem.proxy.ProxyAdvanced;
 import net.impulsem.proxy.ProxyServer;
 import net.impulsem.proxy.ProxyState;
 import net.impulsem.proxy.Subscription;
@@ -72,9 +73,8 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private static final int IdAdd = 3;
     private static final int IdRefreshPing = 4;
     private static final int IdInfo = 5;
+    private static final int IdAdvanced = 6;
     private static final int IdDynamicStart = 100;
-    private static final String PingUrl = "https://www.gstatic.com/generate_204";
-    private static final int PingTimeoutSeconds = 5;
     private static final long PingIntervalMs = 60000L;
     private static final int LogLimit = 120;
     private static final Pattern HexRun = Pattern.compile("[0-9a-fA-F]{8,}");
@@ -123,7 +123,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         public void run() {
             // A round still running means the next tick comes later; ticks never queue rounds.
             if (!pinging) {
-                pingServers(false, false);
+                autoPing(false);
             }
             scheduleTick();
         }
@@ -167,7 +167,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     public void onResume() {
         super.onResume();
         if (!pinging && System.currentTimeMillis() - lastPingAt >= PingIntervalMs) {
-            pingServers(false, sortDelays.isEmpty());
+            autoPing(sortDelays.isEmpty());
         }
         scheduleTick();
     }
@@ -245,6 +245,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         items.add(UItem.asCheck(IdUseForCalls, getString(R.string.ImpulseProxyUseForCalls))
             .setChecked(state.useForCalls)
             .setEnabled(state.enabled));
+        items.add(UItem.asButton(IdAdvanced, getString(R.string.ImpulseProxyAdvanced)));
         items.add(UItem.asShadow(""));
 
         items.add(UItem.asHeader(getString(R.string.ImpulseProxyMyLinks)));
@@ -468,6 +469,10 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             showAddDialog();
             return;
         }
+        if (item.id == IdAdvanced) {
+            presentFragment(new ImpulseProxyAdvancedActivity());
+            return;
+        }
         Object target = targets.get(item.id);
         if (target instanceof ProxyServer) {
             String id = ((ProxyServer) target).id;
@@ -572,7 +577,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             if (error != null) {
                 toast(describeError(error));
             } else {
-                pingServers(false, true);
+                autoPing(true);
             }
             proxyListener.run();
         });
@@ -582,6 +587,17 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private void scheduleTick() {
         AndroidUtilities.cancelRunOnUIThread(pingTick);
         AndroidUtilities.runOnUIThread(pingTick, PingIntervalMs);
+    }
+
+
+    /** An automatic round (open, tick, after add or refresh); skipped while connected when the user asked for that. */
+    private void autoPing(boolean resort) {
+        ProxyController controller = ProxyController.getInstance();
+        ProxyState state = controller.snapshot();
+        if (state.advanced.pingSkipWhileConnected && state.enabled && controller.status() == ProxyController.Status.RUNNING) {
+            return;
+        }
+        pingServers(false, resort);
     }
 
 
@@ -605,6 +621,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         List<ProxyServer> servers = new ArrayList<ProxyServer>();
         Set<String> seen = new HashSet<String>();
         ProxyState snapshot = ProxyController.getInstance().snapshot();
+        // Read once per round, so a settings change mid-round applies from the next round.
+        ProxyAdvanced advanced = snapshot.advanced;
+        int chunkSize = ProxyAdvanced.PingSequential.equals(advanced.pingMode) ? 1 : LibXrayClient.MaxPingBatch;
         // The selected server goes first so its status shows up first.
         ProxyServer selected = snapshot.selected();
         if (selected != null && seen.add(selected.id)) {
@@ -633,7 +652,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                 List<String> configs = new ArrayList<String>();
                 for (ProxyServer server : servers) {
                     try {
-                        configs.add(XrayConfigBuilder.pingConfig(server));
+                        configs.add(XrayConfigBuilder.pingConfig(server, advanced));
                         valid.add(server);
                     } catch (RuntimeException e) {
                         result.put(server.id, -1L);
@@ -643,8 +662,10 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                 ProxyController.getInstance().xray().pingInChunks(
                     configs,
                     XrayConfigBuilder.ProxyTag,
-                    PingUrl,
-                    PingTimeoutSeconds,
+                    advanced.pingUrl,
+                    advanced.pingTimeoutSeconds,
+                    chunkSize,
+                    advanced.pingPauseMillis,
                     (offset, measured) -> {
                         Map<String, Long> chunk = new HashMap<String, Long>();
                         for (int i = 0; i < measured.length && offset + i < valid.size(); i++) {
@@ -819,7 +840,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                         toast(describeError(error));
                     }
                 } else {
-                    pingServers(false, true);
+                    autoPing(true);
                 }
             });
         } else if (kind == InputKind.LINKS) {
@@ -885,7 +906,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                     }
                 } else {
                     ProxyController.getInstance().update(next -> next.addManual(servers));
-                    pingServers(false, true);
+                    autoPing(true);
                 }
             });
         });
