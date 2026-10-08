@@ -13791,7 +13791,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     || getMessagesController().blockedCountry && !SharedConfig.proxyList.isEmpty();
 
             // TODO(impulsem-unimplemented): proxy
-            final boolean vlessVisible = ImpulseFeatures.VLESS && ProxyController.getInstance().hasServers();
+            final boolean vlessVisible = ImpulseFeatures.VLESS;
             if (vlessVisible || proxyVisible && ImpulseFeatures.PROXY) {
                 io.addGap();
                 io.add(proxyMenuSubItem);

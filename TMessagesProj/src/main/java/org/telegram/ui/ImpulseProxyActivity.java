@@ -31,16 +31,18 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
+import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.tgnet.impulse.proxy.ProxyErrors;
 import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.ActionBarMenu;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BackDrawable;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.EditTextBoldCursor;
-import org.telegram.ui.Components.ItemOptions;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.UItem;
 import org.telegram.ui.Components.UniversalAdapter;
@@ -56,21 +58,27 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 
 /** The VLESS proxy screen: manual links, subscriptions and the on/off switches. */
-public class ImpulseProxyActivity extends BaseFragment {
+public class ImpulseProxyActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate {
 
     private static final int IdUse = 1;
     private static final int IdUseForCalls = 2;
     private static final int IdAdd = 3;
-    private static final int IdCheckAll = 4;
+    private static final int IdRefreshPing = 4;
     private static final int IdInfo = 5;
     private static final int IdDynamicStart = 100;
     private static final String PingUrl = "https://www.gstatic.com/generate_204";
     private static final int PingTimeoutSeconds = 5;
+    private static final long PingIntervalMs = 60000L;
+    private static final int LogLimit = 120;
+    private static final Pattern UuidLike = Pattern.compile("[0-9a-fA-F-]{36}");
+    private static final Pattern LongToken = Pattern.compile("[A-Za-z0-9+/_=-]{40,}");
+    private static final Pattern ShareLink = Pattern.compile("vless://\\S+");
     private static final ExecutorService background = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "ImpulseProxyScreen");
         thread.setDaemon(true);
@@ -94,6 +102,9 @@ public class ImpulseProxyActivity extends BaseFragment {
 
 
     private final Map<String, Long> delays = new HashMap<String, Long>();
+    // The delays the list is ordered by; refreshed only on the first result and on explicit checks, so periodic ticks never reshuffle rows.
+    private final Map<String, Long> sortDelays = new HashMap<String, Long>();
+    private final Set<String> pending = new HashSet<String>();
     private final Map<Integer, Object> targets = new HashMap<Integer, Object>();
     private final Set<String> refreshing = new HashSet<String>();
     private final Runnable proxyListener = new Runnable() {
@@ -104,14 +115,27 @@ public class ImpulseProxyActivity extends BaseFragment {
             }
         }
     };
+    private final ImpulseProxyServerCell.InfoListener infoListener = this::showServerInfo;
+    private final Runnable pingTick = new Runnable() {
+        @Override
+        public void run() {
+            pingServers(false, false);
+            scheduleTick();
+        }
+    };
     private UniversalRecyclerView listView;
-    private boolean checking;
+    private boolean pinging;
+    private boolean pingAgain;
     private boolean destroyed;
+    private long lastPingAt;
+    private int currentConnectionState;
     private int nextId;
 
 
     @Override
     public boolean onFragmentCreate() {
+        currentConnectionState = ConnectionsManager.getInstance(currentAccount).getConnectionState();
+        NotificationCenter.getInstance(currentAccount).addObserver(this, NotificationCenter.didUpdateConnectionState);
         ProxyController.getInstance().addListener(proxyListener);
         return super.onFragmentCreate();
     }
@@ -120,8 +144,43 @@ public class ImpulseProxyActivity extends BaseFragment {
     @Override
     public void onFragmentDestroy() {
         destroyed = true;
+        AndroidUtilities.cancelRunOnUIThread(pingTick);
+        NotificationCenter.getInstance(currentAccount).removeObserver(this, NotificationCenter.didUpdateConnectionState);
         ProxyController.getInstance().removeListener(proxyListener);
         super.onFragmentDestroy();
+    }
+
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (System.currentTimeMillis() - lastPingAt >= PingIntervalMs) {
+            pingServers(false, sortDelays.isEmpty());
+        }
+        scheduleTick();
+    }
+
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        AndroidUtilities.cancelRunOnUIThread(pingTick);
+    }
+
+
+    @Override
+    public void didReceivedNotification(
+        int id,
+        int account,
+        Object... args
+    ) {
+        if (id == NotificationCenter.didUpdateConnectionState) {
+            int state = ConnectionsManager.getInstance(account).getConnectionState();
+            if (state != currentConnectionState) {
+                currentConnectionState = state;
+                proxyListener.run();
+            }
+        }
     }
 
 
@@ -135,14 +194,18 @@ public class ImpulseProxyActivity extends BaseFragment {
             public void onItemClick(int id) {
                 if (id == -1) {
                     finishFragment();
+                } else if (id == IdRefreshPing) {
+                    pingServers(true, true);
                 }
             }
         });
+        ActionBarMenu menu = actionBar.createMenu();
+        menu.addItem(IdRefreshPing, R.drawable.msg_retry).setContentDescription(getString(R.string.ImpulseProxyCheckServers));
 
         FrameLayout contentView = new FrameLayout(context);
         contentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray, resourceProvider));
 
-        listView = new UniversalRecyclerView(this, this::fillItems, this::onClick, this::onLongClick);
+        listView = new UniversalRecyclerView(this, this::fillItems, this::onClick, (item, view, position, x, y) -> false);
         contentView.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.FILL));
 
         return fragmentView = contentView;
@@ -166,10 +229,7 @@ public class ImpulseProxyActivity extends BaseFragment {
         ProxyState state = controller.snapshot();
 
         items.add(UItem.asCheck(IdUse, getString(R.string.ImpulseProxyUse)).setChecked(state.enabled));
-        String coreError = controller.lastError();
-        if (state.enabled && controller.status() == ProxyController.Status.FAILED && !TextUtils.isEmpty(coreError)) {
-            items.add(infoItem(describeError(coreError), true));
-        }
+        items.add(overallStatusItem(controller, state));
         items.add(UItem.asCheck(IdUseForCalls, getString(R.string.ImpulseProxyUseForCalls))
             .setChecked(state.useForCalls)
             .setEnabled(state.enabled));
@@ -177,7 +237,7 @@ public class ImpulseProxyActivity extends BaseFragment {
 
         items.add(UItem.asHeader(getString(R.string.ImpulseProxyMyLinks)));
         for (ProxyServer server : sorted(state.manual)) {
-            items.add(serverItem(server, state.selectedId));
+            items.add(serverItem(server, state));
         }
         items.add(UItem.asButton(IdAdd, R.drawable.msg_add, getString(R.string.ImpulseProxyAdd)).accent());
         items.add(UItem.asShadow(""));
@@ -186,7 +246,7 @@ public class ImpulseProxyActivity extends BaseFragment {
             items.add(UItem.asHeader(subscriptionTitle(subscription)));
             addSubscriptionInfo(items, subscription);
             for (ProxyServer server : sorted(subscription.servers)) {
-                items.add(serverItem(server, state.selectedId));
+                items.add(serverItem(server, state));
             }
             boolean busy = refreshing.contains(subscription.id);
             items.add(UItem.asButton(register(new SubscriptionAction(subscription, false)), R.drawable.msg_retry, getString(R.string.ImpulseProxyRefresh))
@@ -196,40 +256,83 @@ public class ImpulseProxyActivity extends BaseFragment {
             items.add(UItem.asShadow(""));
         }
 
-        if (!state.allServers().isEmpty()) {
-            items.add(UItem.asButton(IdCheckAll, R.drawable.msg_retry, getString(R.string.ImpulseProxyCheckAll))
-                .setEnabled(!checking));
-            items.add(UItem.asShadow(""));
+    }
+
+
+    private UItem overallStatusItem(
+        ProxyController controller,
+        ProxyState state
+    ) {
+        if (!state.enabled) {
+            return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyStatusOff), Theme.key_windowBackgroundWhiteGrayText2);
         }
+        ProxyController.Status status = controller.status();
+        if (status == ProxyController.Status.FAILED) {
+            String error = controller.lastError();
+            String reason = TextUtils.isEmpty(error) ? getString(R.string.ImpulseProxyErrorCoreError) : describeError(error);
+            return ImpulseProxyServerCell.StatusFactory.as(LocaleController.formatString(R.string.ImpulseProxyStatusError, reason), Theme.key_text_RedRegular);
+        }
+        if (isConnected(controller)) {
+            return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyConnected), Theme.key_windowBackgroundWhiteGreenText);
+        }
+        return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyConnecting), Theme.key_windowBackgroundWhiteGrayText2);
+    }
+
+
+    // The same rule the chat-list item uses: the core runs and Telegram itself is connected through it.
+    private boolean isConnected(ProxyController controller) {
+        return controller.status() == ProxyController.Status.RUNNING
+            && (currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating);
     }
 
 
     private UItem serverItem(
         ProxyServer server,
-        String selectedId
+        ProxyState state
     ) {
-        return UItem.asRadio(register(server), server.name, serverSubtitle(server))
-            .setChecked(server.id.equals(selectedId));
+        ProxyController controller = ProxyController.getInstance();
+        boolean selected = server.id.equals(state.selectedId);
+        String status;
+        int colorKey;
+        Long delay = delays.get(server.id);
+        if (selected && state.enabled && controller.status() != ProxyController.Status.FAILED) {
+            if (isConnected(controller)) {
+                status = getString(R.string.ImpulseProxyConnected);
+                colorKey = Theme.key_windowBackgroundWhiteBlueText6;
+            } else {
+                status = getString(R.string.ImpulseProxyConnecting);
+                colorKey = Theme.key_windowBackgroundWhiteGrayText2;
+            }
+        } else if (pending.contains(server.id) || delay == null) {
+            status = getString(R.string.ImpulseProxyChecking);
+            colorKey = Theme.key_windowBackgroundWhiteGrayText2;
+        } else if (delay >= 0) {
+            status = LocaleController.formatString(R.string.ImpulseProxyAvailable, delay.intValue());
+            colorKey = Theme.key_windowBackgroundWhiteGreenText;
+        } else {
+            status = getString(R.string.ImpulseProxyUnavailable);
+            colorKey = Theme.key_text_RedRegular;
+        }
+        ImpulseProxyServerCell.Row row = new ImpulseProxyServerCell.Row(server, displayName(server), status, colorKey, selected);
+        return ImpulseProxyServerCell.Factory.as(register(server), row, infoListener);
     }
 
 
-    private String serverSubtitle(ProxyServer server) {
+    private static String displayName(ProxyServer server) {
+        if (server.name == null || server.name.trim().isEmpty()) {
+            return server.host + ":" + server.port;
+        }
+        return server.name.trim();
+    }
+
+
+    private static String transportText(ProxyServer server) {
         StringBuilder text = new StringBuilder();
-        text.append(server.host).append(':').append(server.port).append(" · ");
         if (!"none".equals(server.security)) {
             text.append(server.security.toUpperCase()).append(" · ");
         }
         // Xray reports plain TCP as "raw".
         text.append("raw".equals(server.network) ? "TCP" : server.network.toUpperCase());
-        Long delay = delays.get(server.id);
-        if (delay != null) {
-            text.append(" · ");
-            if (delay >= 0) {
-                text.append(LocaleController.formatString(R.string.ImpulseProxyPingMs, delay.intValue()));
-            } else {
-                text.append(getString(R.string.ImpulseProxyUnavailable));
-            }
-        }
         return text.toString();
     }
 
@@ -296,7 +399,7 @@ public class ImpulseProxyActivity extends BaseFragment {
 
     private List<ProxyServer> sorted(List<ProxyServer> servers) {
         List<ProxyServer> result = new ArrayList<ProxyServer>(servers);
-        if (delays.isEmpty()) {
+        if (sortDelays.isEmpty()) {
             return result;
         }
         Collections.sort(result, new Comparator<ProxyServer>() {
@@ -311,7 +414,7 @@ public class ImpulseProxyActivity extends BaseFragment {
                     return Integer.compare(rankA, rankB);
                 }
                 if (rankA == 0) {
-                    return Long.compare(delays.get(a.id), delays.get(b.id));
+                    return Long.compare(sortDelays.get(a.id), sortDelays.get(b.id));
                 }
                 return 0;
             }
@@ -321,7 +424,7 @@ public class ImpulseProxyActivity extends BaseFragment {
 
 
     private int rank(ProxyServer server) {
-        Long delay = delays.get(server.id);
+        Long delay = sortDelays.get(server.id);
         if (delay == null) {
             return 1;
         }
@@ -354,10 +457,6 @@ public class ImpulseProxyActivity extends BaseFragment {
             showAddDialog();
             return;
         }
-        if (item.id == IdCheckAll) {
-            checkAll();
-            return;
-        }
         Object target = targets.get(item.id);
         if (target instanceof ProxyServer) {
             String id = ((ProxyServer) target).id;
@@ -374,41 +473,34 @@ public class ImpulseProxyActivity extends BaseFragment {
     }
 
 
-    private boolean onLongClick(
-        UItem item,
-        View view,
-        int position,
-        float x,
-        float y
-    ) {
-        Object target = targets.get(item.id);
-        if (!(target instanceof ProxyServer)) {
-            return false;
+    private void showServerInfo(ProxyServer server) {
+        Context context = getParentActivity();
+        if (context == null || destroyed) {
+            return;
         }
-        ProxyServer server = (ProxyServer) target;
-        ProxyState state = ProxyController.getInstance().snapshot();
+        // A subscription server comes back on the next refresh, so only manual servers can be deleted.
         boolean manual = false;
-        for (ProxyServer candidate : state.manual) {
+        for (ProxyServer candidate : ProxyController.getInstance().snapshot().manual) {
             if (candidate.id.equals(server.id)) {
                 manual = true;
                 break;
             }
         }
-        // A subscription server comes back on the next refresh, so only the subscription can be deleted.
-        if (!manual) {
-            return false;
-        }
-        ItemOptions options = ItemOptions.makeOptions(this, view);
+        AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
+        builder.setTitle(displayName(server));
+        builder.setMessage(LocaleController.formatString(R.string.ImpulseProxyAddress, server.host, server.port) + "\n" + transportText(server));
         if (!TextUtils.isEmpty(server.shareLink)) {
-            options.add(R.drawable.msg_copy, getString(R.string.ImpulseProxyCopyLink), () -> {
+            builder.setPositiveButton(getString(R.string.ImpulseProxyCopyLink), (dialog, which) -> {
                 AndroidUtilities.addToClipboard(server.shareLink);
             });
         }
-        options.add(R.drawable.msg_delete, getString(R.string.ImpulseProxyDelete), true, () -> {
-            ProxyController.getInstance().update(next -> next.removeServer(server.id));
-        });
-        options.show();
-        return true;
+        if (manual) {
+            builder.setNegativeButton(getString(R.string.ImpulseProxyDelete), (dialog, which) -> {
+                ProxyController.getInstance().update(next -> next.removeServer(server.id));
+            });
+        }
+        builder.setNeutralButton(getString(R.string.Close), null);
+        showDialog(builder.create());
     }
 
 
@@ -422,14 +514,35 @@ public class ImpulseProxyActivity extends BaseFragment {
             }
             if (error != null) {
                 toast(describeError(error));
+            } else {
+                pingServers(false, true);
             }
             proxyListener.run();
         });
     }
 
 
-    private void checkAll() {
-        if (checking) {
+    private void scheduleTick() {
+        AndroidUtilities.cancelRunOnUIThread(pingTick);
+        AndroidUtilities.runOnUIThread(pingTick, PingIntervalMs);
+    }
+
+
+    /**
+     * Pings every server off the UI thread. markAll shows "Checking" on rows that already have a result;
+     * resort lets this round's results reorder the list.
+     */
+    private void pingServers(
+        boolean markAll,
+        boolean resort
+    ) {
+        if (destroyed) {
+            return;
+        }
+        if (pinging) {
+            if (markAll) {
+                pingAgain = true;
+            }
             return;
         }
         List<ProxyServer> servers = new ArrayList<ProxyServer>();
@@ -442,7 +555,13 @@ public class ImpulseProxyActivity extends BaseFragment {
         if (servers.isEmpty()) {
             return;
         }
-        checking = true;
+        pinging = true;
+        lastPingAt = System.currentTimeMillis();
+        for (ProxyServer server : servers) {
+            if (markAll || !delays.containsKey(server.id)) {
+                pending.add(server.id);
+            }
+        }
         proxyListener.run();
         background.execute(() -> {
             Map<String, Long> result = new HashMap<String, Long>();
@@ -454,6 +573,7 @@ public class ImpulseProxyActivity extends BaseFragment {
                     valid.add(server);
                 } catch (RuntimeException e) {
                     result.put(server.id, -1L);
+                    FileLog.d("impulse proxy: ping config failed, server " + safe(server.name) + " (" + server.host + "), " + e.getClass().getSimpleName());
                 }
             }
             try {
@@ -464,23 +584,50 @@ public class ImpulseProxyActivity extends BaseFragment {
                     PingTimeoutSeconds
                 );
                 for (int i = 0; i < valid.size(); i++) {
-                    result.put(valid.get(i).id, i < measured.length ? measured[i] : -1L);
+                    long delay = i < measured.length ? measured[i] : -1L;
+                    result.put(valid.get(i).id, delay);
+                    if (delay < 0) {
+                        // pingBatch reports only success or failure per server, with no error text.
+                        FileLog.d("impulse proxy: ping failed, server " + safe(valid.get(i).name) + " (" + valid.get(i).host + "), no response");
+                    }
                 }
             } catch (XrayException e) {
-                FileLog.d("impulse proxy: ping failed");
                 for (ProxyServer server : valid) {
                     result.put(server.id, -1L);
+                    FileLog.d("impulse proxy: ping failed, server " + safe(server.name) + " (" + server.host + "), " + safe(e.getMessage()));
                 }
             }
             AndroidUtilities.runOnUIThread(() -> {
+                pinging = false;
                 if (destroyed) {
                     return;
                 }
                 delays.putAll(result);
-                checking = false;
+                pending.removeAll(result.keySet());
+                if (resort || sortDelays.isEmpty()) {
+                    sortDelays.clear();
+                    sortDelays.putAll(delays);
+                }
                 proxyListener.run();
+                if (pingAgain) {
+                    pingAgain = false;
+                    pingServers(true, true);
+                }
             });
         });
+    }
+
+
+    /** Log text must never carry a UUID, key material or a share link: strip those and cap the length. */
+    private static String safe(String text) {
+        if (text == null) {
+            return "";
+        }
+        String clean = ShareLink.matcher(text).replaceAll("");
+        clean = UuidLike.matcher(clean).replaceAll("");
+        clean = LongToken.matcher(clean).replaceAll("");
+        clean = clean.replace('\n', ' ').trim();
+        return clean.length() > LogLimit ? clean.substring(0, LogLimit) : clean;
     }
 
 
@@ -575,9 +722,16 @@ public class ImpulseProxyActivity extends BaseFragment {
     private void addInput(String text) {
         InputKind kind = InputKind.detect(text);
         if (kind == InputKind.SUBSCRIPTION) {
+            AlertDialog progress = showSpinner();
             ProxyController.getInstance().addSubscription(text.trim(), error -> {
+                dismissSpinner(progress);
+                if (destroyed) {
+                    return;
+                }
                 if (error != null) {
                     toast(describeError(error));
+                } else {
+                    pingServers(false, true);
                 }
             });
         } else if (kind == InputKind.LINKS) {
@@ -588,7 +742,32 @@ public class ImpulseProxyActivity extends BaseFragment {
     }
 
 
+    private AlertDialog showSpinner() {
+        Context context = getParentActivity();
+        if (context == null) {
+            return null;
+        }
+        AlertDialog progress = new AlertDialog(context, AlertDialog.ALERT_TYPE_SPINNER);
+        progress.setCanCancel(false);
+        progress.show();
+        return progress;
+    }
+
+
+    private void dismissSpinner(AlertDialog progress) {
+        if (progress == null) {
+            return;
+        }
+        try {
+            progress.dismiss();
+        } catch (RuntimeException e) {
+            FileLog.e(e);
+        }
+    }
+
+
     private void addLinks(String text) {
+        AlertDialog progress = showSpinner();
         background.execute(() -> {
             List<ProxyServer> servers = new ArrayList<ProxyServer>();
             for (String raw : text.split("\\r?\\n")) {
@@ -606,10 +785,15 @@ public class ImpulseProxyActivity extends BaseFragment {
                 }
             }
             AndroidUtilities.runOnUIThread(() -> {
+                dismissSpinner(progress);
+                if (destroyed) {
+                    return;
+                }
                 if (servers.isEmpty()) {
                     toast(getString(R.string.ImpulseProxyInvalid));
                 } else {
                     ProxyController.getInstance().update(next -> next.addManual(servers));
+                    pingServers(false, true);
                 }
             });
         });
