@@ -132,6 +132,7 @@ import org.telegram.messenger.Emoji;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.ImpulseFeatures;
+import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaDataController;
 import org.telegram.messenger.MessageObject;
@@ -768,7 +769,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
         proxyButtonView = new ImageView(context);
         proxyButtonView.setImageDrawable(proxyDrawable = new ProxyDrawable(context));
-        proxyButtonView.setOnClickListener(v -> presentFragment(new ProxyListActivity()));
+        proxyButtonView.setOnClickListener(v -> presentFragment(ImpulseFeatures.VLESS ? new ImpulseProxyActivity() : new ProxyListActivity()));
         proxyButtonView.setAlpha(0f);
         proxyButtonView.setVisibility(View.GONE);
         sizeNotifierFrameLayout.addView(proxyButtonView, LayoutHelper.createFrame(32, 32, Gravity.RIGHT | Gravity.TOP, 16, 16, 16, 16));
@@ -8770,7 +8771,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
     private void updateProxyButton(boolean animated, boolean force) {
         // TODO(impulsem-unimplemented): proxy
-        if (!ImpulseFeatures.PROXY) {
+        if (!ImpulseFeatures.PROXY && !ImpulseFeatures.VLESS) {
             return;
         }
         if (proxyDrawable == null) {
@@ -8783,7 +8784,9 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
         currentConnectionState = state;
         SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
         String proxyAddress = preferences.getString("proxy_ip", "");
-        final boolean proxyEnabled = preferences.getBoolean("proxy_enabled", false) && !TextUtils.isEmpty(proxyAddress);
+        final boolean proxyEnabled = ImpulseFeatures.VLESS
+                ? ProxyController.getInstance().snapshot().enabled
+                : preferences.getBoolean("proxy_enabled", false) && !TextUtils.isEmpty(proxyAddress);
         final boolean connected = currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating;
         final boolean connecting = currentConnectionState == ConnectionsManager.ConnectionStateConnecting || currentConnectionState == ConnectionsManager.ConnectionStateWaitingForNetwork || currentConnectionState == ConnectionsManager.ConnectionStateConnectingToProxy;
         if (proxyEnabled) {
@@ -8815,7 +8818,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
 
     private void showProxyButton(boolean show, boolean animated) {
         // TODO(impulsem-unimplemented): proxy
-        if (!ImpulseFeatures.PROXY) {
+        if (!ImpulseFeatures.PROXY && !ImpulseFeatures.VLESS) {
             return;
         }
         if (show == proxyButtonVisible) {

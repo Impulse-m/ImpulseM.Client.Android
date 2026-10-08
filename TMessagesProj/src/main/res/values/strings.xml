@@ -11233,4 +11233,22 @@
     <string name="RoundVideoComposition">Composition</string>
     <string name="RoundVideoCompositionEnabled">Round video styling</string>
     <string name="RoundVideoCompositionInfo">Disable styling to record a plain square without outside-circle blur, dimming or Telegram overlays.</string>
+    <string name="ImpulseProxyTitle">Proxy</string>
+    <string name="ImpulseProxyUse">Use proxy</string>
+    <string name="ImpulseProxyUseForCalls">Use for calls</string>
+    <string name="ImpulseProxyMyLinks">My links</string>
+    <string name="ImpulseProxyAdd">Add proxy</string>
+    <string name="ImpulseProxyAddHint">vless:// link or subscription URL</string>
+    <string name="ImpulseProxyPaste">Paste from clipboard</string>
+    <string name="ImpulseProxyScanQr">Scan QR code</string>
+    <string name="ImpulseProxyCheckAll">Check all</string>
+    <string name="ImpulseProxyRefresh">Refresh</string>
+    <string name="ImpulseProxyCopyLink">Copy link</string>
+    <string name="ImpulseProxyDelete">Delete</string>
+    <string name="ImpulseProxyUnavailable">unavailable</string>
+    <string name="ImpulseProxySkipped">%1$d links skipped (not VLESS)</string>
+    <string name="ImpulseProxyTraffic">%1$s of %2$s · until %3$s</string>
+    <string name="ImpulseProxyUpdated">Updated %1$s</string>
+    <string name="ImpulseProxyInvalid">Not a VLESS link or subscription URL</string>
+    <string name="ImpulseProxyNoSelection">Choose a server first</string>
 </resources>

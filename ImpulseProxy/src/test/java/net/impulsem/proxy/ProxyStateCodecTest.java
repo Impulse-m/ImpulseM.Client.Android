@@ -18,7 +18,7 @@ public class ProxyStateCodecTest {
         state.enabled = true;
         state.useForCalls = true;
         state.addManual(Arrays.asList(
-            new ProxyServer("a", "A", "ha", 443, "ws", "tls", "{\"protocol\":\"vless\",\"tag\":\"A\"}")
+            new ProxyServer("a", "A", "ha", 443, "ws", "tls", "{\"protocol\":\"vless\",\"tag\":\"A\"}", "vless://x@ha:443#A")
         ));
         state.replaceSubscription(new Subscription(
             "s",
@@ -37,6 +37,7 @@ public class ProxyStateCodecTest {
         assertTrue(decoded.useForCalls);
         assertEquals("b", decoded.selectedId);
         assertEquals("A", decoded.manual.get(0).name);
+        assertEquals("vless://x@ha:443#A", decoded.manual.get(0).shareLink);
         Subscription subscription = decoded.subscriptions.get(0);
         assertEquals("https://panel/sub", subscription.url);
         assertEquals("T", subscription.meta.title);
@@ -45,6 +46,7 @@ public class ProxyStateCodecTest {
         assertEquals(2, subscription.skipped);
         assertEquals("err", subscription.lastError);
         assertEquals("reality", subscription.servers.get(0).security);
+        assertNull(subscription.servers.get(0).shareLink);
         assertEquals("{\"protocol\":\"vless\",\"tag\":\"B\"}", subscription.servers.get(0).outboundJson);
     }
 

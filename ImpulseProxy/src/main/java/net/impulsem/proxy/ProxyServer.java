@@ -16,6 +16,8 @@ public final class ProxyServer {
     public final String network;
     public final String security;
     public final String outboundJson;
+    /** The original share line for a manually added server; null when unknown. */
+    public final String shareLink;
 
 
     public ProxyServer(
@@ -27,6 +29,20 @@ public final class ProxyServer {
         String security,
         String outboundJson
     ) {
+        this(id, name, host, port, network, security, outboundJson, null);
+    }
+
+
+    public ProxyServer(
+        String id,
+        String name,
+        String host,
+        int port,
+        String network,
+        String security,
+        String outboundJson,
+        String shareLink
+    ) {
         this.id = id;
         this.name = name;
         this.host = host;
@@ -34,6 +50,13 @@ public final class ProxyServer {
         this.network = network;
         this.security = security;
         this.outboundJson = outboundJson;
+        this.shareLink = shareLink;
+    }
+
+
+    /** A copy of this server that remembers the share line it was created from. */
+    public ProxyServer withShareLink(String link) {
+        return new ProxyServer(id, name, host, port, network, security, outboundJson, link);
     }
 
 

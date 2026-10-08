@@ -114,6 +114,7 @@ import org.telegram.messenger.ImageLoader;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.ImpulseFeatures;
+import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
@@ -510,6 +511,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     private ActionBarMenuItem doneItem;
     private ProxyDrawable proxyDrawable;
     private ActionBarMenuSubItem proxyMenuSubItem;
+    private final Runnable vlessProxyListener = () -> updateProxyButton(true, false);
     private HintView2 storyHint;
     private HintView2 storyPremiumHint;
     private boolean canShowStoryHint;
@@ -2831,6 +2833,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     @Override
     public boolean onFragmentCreate() {
         super.onFragmentCreate();
+        if (ImpulseFeatures.VLESS) {
+            ProxyController.getInstance().addListener(vlessProxyListener);
+        }
 
         if (arguments != null) {
             onlySelect = arguments.getBoolean("onlySelect", false);
@@ -3069,6 +3074,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     @Override
     public void onFragmentDestroy() {
         super.onFragmentDestroy();
+        ProxyController.getInstance().removeListener(vlessProxyListener);
         if (observersGroup != null) {
             observersGroup.removeAllObservers();
             observersGroup = null;
@@ -10238,7 +10244,12 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
 
         final SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
         boolean proxyEnabled = preferences.getBoolean("proxy_enabled", false);
-        final boolean connected = currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating;
+        boolean connected = currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating;
+        if (ImpulseFeatures.VLESS) {
+            // The VLESS core owns the proxy state: connected means the core is running, connecting covers STARTING and FAILED.
+            proxyEnabled = ProxyController.getInstance().snapshot().enabled;
+            connected = ProxyController.getInstance().status() == ProxyController.Status.RUNNING;
+        }
         proxyMenuSubItem.setSubtext(getString(proxyEnabled ? (connected ? R.string.MenuProxyConnected : R.string.MenuProxyConnecting) : R.string.MenuProxyDisabled));
         proxyDrawable.setConnected(proxyEnabled, connected, animated);
     }
@@ -13767,7 +13778,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             proxyMenuSubItem.subtextView.setTextColor(getThemedColor(Theme.key_groupcreate_sectionText));
             proxyMenuSubItem.setOnClickListener(v -> {
                 io.dismiss();
-                presentFragment(new ProxyListActivity());
+                presentFragment(ImpulseFeatures.VLESS ? new ImpulseProxyActivity() : new ProxyListActivity());
             });
 
             final SharedPreferences preferences = ApplicationLoader.applicationContext
@@ -13779,7 +13790,8 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     || getMessagesController().blockedCountry && !SharedConfig.proxyList.isEmpty();
 
             // TODO(impulsem-unimplemented): proxy
-            if (proxyVisible && ImpulseFeatures.PROXY) {
+            final boolean vlessVisible = ImpulseFeatures.VLESS && !ProxyController.getInstance().snapshot().allServers().isEmpty();
+            if (vlessVisible || proxyVisible && ImpulseFeatures.PROXY) {
                 io.addGap();
                 io.add(proxyMenuSubItem);
             }

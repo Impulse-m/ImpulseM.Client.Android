@@ -98,6 +98,9 @@ public final class ProxyStateCodec {
             item.addProperty("network", server.network);
             item.addProperty("security", server.security);
             item.addProperty("outbound", server.outboundJson);
+            if (server.shareLink != null) {
+                item.addProperty("shareLink", server.shareLink);
+            }
             array.add(item);
         }
         return array;
@@ -129,7 +132,8 @@ public final class ProxyStateCodec {
             item.get("port").getAsInt(),
             item.get("network").getAsString(),
             item.get("security").getAsString(),
-            item.get("outbound").getAsString()
+            item.get("outbound").getAsString(),
+            readString(item, "shareLink")
         );
     }
 

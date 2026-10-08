@@ -8234,7 +8234,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             titleId = R.string.Connecting;
         }
         // TODO(impulsem-unimplemented): proxy
-        if (ImpulseFeatures.PROXY && (currentConnectionState == ConnectionsManager.ConnectionStateConnecting || currentConnectionState == ConnectionsManager.ConnectionStateConnectingToProxy)) {
+        if ((ImpulseFeatures.PROXY || ImpulseFeatures.VLESS) && (currentConnectionState == ConnectionsManager.ConnectionStateConnecting || currentConnectionState == ConnectionsManager.ConnectionStateConnectingToProxy)) {
             action = () -> {
                 BaseFragment lastFragment = null;
                 if (AndroidUtilities.isTablet()) {
@@ -8246,10 +8246,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
                         lastFragment = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
                     }
                 }
-                if (lastFragment instanceof ProxyListActivity || lastFragment instanceof ProxySettingsActivity) {
+                if (lastFragment instanceof ProxyListActivity || lastFragment instanceof ProxySettingsActivity || lastFragment instanceof ImpulseProxyActivity) {
                     return;
                 }
-                presentFragment(new ProxyListActivity());
+                presentFragment(ImpulseFeatures.VLESS ? new ImpulseProxyActivity() : new ProxyListActivity());
             };
         }
         actionBarLayout.setTitleOverlayText(title, titleId, action);

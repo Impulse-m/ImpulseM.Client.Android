@@ -261,4 +261,22 @@
     <string name="RemindTodayAt">\'Отправить сегодня в\' HH:mm</string>
     <string name="RemindDayAt">\'Отправить\' d MMM \'в\' HH:mm</string>
     <string name="RemindDayYearAt">\'Напомнить\' d MMM yyyy \'в\' HH:mm</string>
+    <string name="ImpulseProxyTitle">Прокси</string>
+    <string name="ImpulseProxyUse">Использовать прокси</string>
+    <string name="ImpulseProxyUseForCalls">Использовать для звонков</string>
+    <string name="ImpulseProxyMyLinks">Мои ссылки</string>
+    <string name="ImpulseProxyAdd">Добавить прокси</string>
+    <string name="ImpulseProxyAddHint">Ссылка vless:// или адрес подписки</string>
+    <string name="ImpulseProxyPaste">Вставить из буфера</string>
+    <string name="ImpulseProxyScanQr">Сканировать QR-код</string>
+    <string name="ImpulseProxyCheckAll">Проверить все</string>
+    <string name="ImpulseProxyRefresh">Обновить</string>
+    <string name="ImpulseProxyCopyLink">Скопировать ссылку</string>
+    <string name="ImpulseProxyDelete">Удалить</string>
+    <string name="ImpulseProxyUnavailable">недоступен</string>
+    <string name="ImpulseProxySkipped">Пропущено ссылок (не VLESS): %1$d</string>
+    <string name="ImpulseProxyTraffic">%1$s из %2$s · до %3$s</string>
+    <string name="ImpulseProxyUpdated">Обновлено %1$s</string>
+    <string name="ImpulseProxyInvalid">Это не ссылка VLESS и не адрес подписки</string>
+    <string name="ImpulseProxyNoSelection">Сначала выберите сервер</string>
 </resources>
