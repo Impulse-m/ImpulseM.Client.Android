@@ -305,6 +305,7 @@
     <string name="ImpulseProxyErrorCoreStart">Не удалось запустить ядро прокси</string>
     <string name="ImpulseProxyErrorCoreError">Ошибка ядра прокси</string>
     <string name="ImpulseProxyErrorCoreStopped">Ядро прокси остановилось</string>
+    <string name="ImpulseProxyNotChecked">Не проверен</string>
     <string name="ImpulseProxyAdvanced">Расширенные настройки</string>
     <string name="ImpulseProxyAdvFragmentation">Фрагментация</string>
     <string name="ImpulseProxyAdvMode">Режим</string>

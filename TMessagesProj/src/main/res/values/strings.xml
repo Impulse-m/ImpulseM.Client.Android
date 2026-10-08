@@ -11277,6 +11277,7 @@
     <string name="ImpulseProxyErrorCoreStart">Could not start proxy core</string>
     <string name="ImpulseProxyErrorCoreError">Proxy core error</string>
     <string name="ImpulseProxyErrorCoreStopped">The proxy core stopped</string>
+    <string name="ImpulseProxyNotChecked">Not checked</string>
     <string name="ImpulseProxyAdvanced">Advanced settings</string>
     <string name="ImpulseProxyAdvFragmentation">Fragmentation</string>
     <string name="ImpulseProxyAdvMode">Mode</string>

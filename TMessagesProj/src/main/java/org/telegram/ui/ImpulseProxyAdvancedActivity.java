@@ -61,6 +61,16 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
     private static final int InvalidNumber = Integer.MIN_VALUE;
 
 
+    private final Runnable proxyListener = new Runnable() {
+        @Override
+        public void run() {
+            refreshList();
+        }
+    };
+    private UniversalRecyclerView listView;
+    private boolean destroyed;
+
+
     /** Edits a copy of the settings. */
     private interface Change {
         void apply(ProxyAdvanced edited);
@@ -88,16 +98,6 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
     private interface Choice {
         void chosen(int index);
     }
-
-
-    private final Runnable proxyListener = new Runnable() {
-        @Override
-        public void run() {
-            refreshList();
-        }
-    };
-    private UniversalRecyclerView listView;
-    private boolean destroyed;
 
 
     @Override
@@ -362,9 +362,14 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
             getString(R.string.ImpulseProxyAdvClassic),
             getString(R.string.ImpulseProxyAdvFinalMask)
         };
-        choose(getString(R.string.ImpulseProxyAdvMode), names, indexOf(modes, advanced.fragmentMode), index -> {
-            change(edited -> edited.fragmentMode = modes[index]);
-        });
+        choose(
+            getString(R.string.ImpulseProxyAdvMode),
+            names,
+            indexOf(modes, advanced.fragmentMode),
+            index -> {
+                change(edited -> edited.fragmentMode = modes[index]);
+            }
+        );
     }
 
 
@@ -380,24 +385,29 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
         } else if (PacketsExample.equals(advanced.fragmentPackets)) {
             selected = 1;
         }
-        choose(getString(R.string.ImpulseProxyAdvPackets), names, selected, index -> {
-            if (index == 0) {
-                change(edited -> edited.fragmentPackets = ProxyAdvanced.DefaultFragmentPackets);
-            } else if (index == 1) {
-                change(edited -> edited.fragmentPackets = PacketsExample);
-            } else {
-                askText(
-                    getString(R.string.ImpulseProxyAdvPackets),
-                    advanced.fragmentPackets,
-                    false,
-                    getString(R.string.ImpulseProxyAdvPacketsError),
-                    (edited, text) -> {
-                        edited.fragmentPackets = text;
-                        return ProxyAdvanced.isPackets(text);
-                    }
-                );
+        choose(
+            getString(R.string.ImpulseProxyAdvPackets),
+            names,
+            selected,
+            index -> {
+                if (index == 0) {
+                    change(edited -> edited.fragmentPackets = ProxyAdvanced.DefaultFragmentPackets);
+                } else if (index == 1) {
+                    change(edited -> edited.fragmentPackets = PacketsExample);
+                } else {
+                    askText(
+                        getString(R.string.ImpulseProxyAdvPackets),
+                        advanced.fragmentPackets,
+                        false,
+                        getString(R.string.ImpulseProxyAdvPacketsError),
+                        (edited, text) -> {
+                            edited.fragmentPackets = text;
+                            return ProxyAdvanced.isPackets(text);
+                        }
+                    );
+                }
             }
-        });
+        );
     }
 
 
@@ -406,9 +416,14 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
         names.add(getString(R.string.ImpulseProxyAdvAsInLink));
         names.addAll(ProxyAdvanced.Fingerprints);
         int selected = advanced.fingerprint.isEmpty() ? 0 : ProxyAdvanced.Fingerprints.indexOf(advanced.fingerprint) + 1;
-        choose(getString(R.string.ImpulseProxyAdvFingerprint), names.toArray(new String[0]), selected, index -> {
-            change(edited -> edited.fingerprint = index == 0 ? "" : ProxyAdvanced.Fingerprints.get(index - 1));
-        });
+        choose(
+            getString(R.string.ImpulseProxyAdvFingerprint),
+            names.toArray(new String[0]),
+            selected,
+            index -> {
+                change(edited -> edited.fingerprint = index == 0 ? "" : ProxyAdvanced.Fingerprints.get(index - 1));
+            }
+        );
     }
 
 
@@ -420,26 +435,31 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
             getString(R.string.ImpulseProxyAdvDnsGoogle),
             getString(R.string.ImpulseProxyAdvCustom)
         };
-        choose(getString(R.string.ImpulseProxyAdvDnsServer), names, indexOf(modes, advanced.dnsMode), index -> {
-            if (index < 3) {
-                change(edited -> edited.dnsMode = modes[index]);
-            } else {
-                askText(
-                    getString(R.string.ImpulseProxyAdvDnsServer),
-                    advanced.dnsCustom,
-                    false,
-                    getString(R.string.ImpulseProxyAdvDnsError),
-                    (edited, text) -> {
-                        if (!ProxyAdvanced.isDnsServer(text)) {
-                            return false;
+        choose(
+            getString(R.string.ImpulseProxyAdvDnsServer),
+            names,
+            indexOf(modes, advanced.dnsMode),
+            index -> {
+                if (index < 3) {
+                    change(edited -> edited.dnsMode = modes[index]);
+                } else {
+                    askText(
+                        getString(R.string.ImpulseProxyAdvDnsServer),
+                        advanced.dnsCustom,
+                        false,
+                        getString(R.string.ImpulseProxyAdvDnsError),
+                        (edited, text) -> {
+                            if (!ProxyAdvanced.isDnsServer(text)) {
+                                return false;
+                            }
+                            edited.dnsMode = ProxyAdvanced.DnsCustom;
+                            edited.dnsCustom = text;
+                            return true;
                         }
-                        edited.dnsMode = ProxyAdvanced.DnsCustom;
-                        edited.dnsCustom = text;
-                        return true;
-                    }
-                );
+                    );
+                }
             }
-        });
+        );
     }
 
 
@@ -449,9 +469,14 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
             getString(R.string.ImpulseProxyAdvChecksBatch),
             getString(R.string.ImpulseProxyAdvChecksOne)
         };
-        choose(getString(R.string.ImpulseProxyAdvMode), names, indexOf(modes, advanced.pingMode), index -> {
-            change(edited -> edited.pingMode = modes[index]);
-        });
+        choose(
+            getString(R.string.ImpulseProxyAdvMode),
+            names,
+            indexOf(modes, advanced.pingMode),
+            index -> {
+                change(edited -> edited.pingMode = modes[index]);
+            }
+        );
     }
 
 
@@ -465,7 +490,13 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
         if (activity == null || destroyed) {
             return;
         }
-        showDialog(AlertsCreator.createSingleChoiceDialog(activity, names, title, selected, (dialog, which) -> choice.chosen(which)));
+        showDialog(AlertsCreator.createSingleChoiceDialog(
+            activity,
+            names,
+            title,
+            selected,
+            (dialog, which) -> choice.chosen(which)
+        ));
     }
 
 
@@ -550,10 +581,14 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
         }
         AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
         builder.setTitle(getString(R.string.ImpulseProxyAdvResetTitle));
-        builder.setPositiveButton(getString(R.string.ImpulseProxyAdvResetButton), (dialog, which) -> save(new ProxyAdvanced()));
-        builder.makeRed(AlertDialog.BUTTON_POSITIVE);
+        builder.setPositiveButton(
+            getString(R.string.ImpulseProxyAdvResetButton),
+            (button, which) -> save(new ProxyAdvanced())
+        );
         builder.setNegativeButton(getString(R.string.Cancel), null);
-        showDialog(builder.create());
+        AlertDialog dialog = builder.create();
+        showDialog(dialog);
+        dialog.redPositive();
     }
 
 

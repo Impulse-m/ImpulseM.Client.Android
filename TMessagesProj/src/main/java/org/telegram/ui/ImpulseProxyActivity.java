@@ -6,6 +6,7 @@ import static org.telegram.messenger.LocaleController.getString;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.net.Uri;
 import android.text.InputType;
 import android.text.TextUtils;
@@ -307,6 +308,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         String status;
         int colorKey;
         Long delay = delays.get(server.id);
+        boolean skipping = state.advanced.pingSkipWhileConnected && state.enabled && controller.status() == ProxyController.Status.RUNNING;
         if (selected && state.enabled && controller.status() != ProxyController.Status.FAILED) {
             if (isConnected(controller)) {
                 status = getString(R.string.ImpulseProxyConnected);
@@ -315,8 +317,12 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                 status = getString(R.string.ImpulseProxyConnecting);
                 colorKey = Theme.key_windowBackgroundWhiteGrayText2;
             }
-        } else if (pending.contains(server.id) || delay == null) {
+        } else if (pending.contains(server.id) || (delay == null && !skipping)) {
             status = getString(R.string.ImpulseProxyChecking);
+            colorKey = Theme.key_windowBackgroundWhiteGrayText2;
+        } else if (delay == null) {
+            // Automatic checks are off while connected, so there is nothing to wait for.
+            status = getString(R.string.ImpulseProxyNotChecked);
             colorKey = Theme.key_windowBackgroundWhiteGrayText2;
         } else if (delay >= 0) {
             status = LocaleController.formatString(R.string.ImpulseProxyAvailable, delay.intValue());
@@ -523,9 +529,10 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         builder.setTitle(title);
         builder.setMessage(text);
         builder.setPositiveButton(getString(R.string.ImpulseProxyDelete), (dialog, which) -> onConfirm.run());
-        builder.makeRed(AlertDialog.BUTTON_POSITIVE);
         builder.setNegativeButton(getString(R.string.Cancel), null);
-        showDialog(builder.create());
+        AlertDialog dialog = builder.create();
+        showDialog(dialog);
+        dialog.redPositive();
     }
 
 
@@ -559,10 +566,16 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                     () -> ProxyController.getInstance().update(next -> next.removeServer(server.id))
                 );
             });
-            builder.makeRed(AlertDialog.BUTTON_NEGATIVE);
         }
         builder.setNeutralButton(getString(R.string.ImpulseProxyClose), null);
-        showDialog(builder.create());
+        AlertDialog dialog = builder.create();
+        showDialog(dialog);
+        if (manual) {
+            TextView deleteButton = (TextView) dialog.getButton(DialogInterface.BUTTON_NEGATIVE);
+            if (deleteButton != null) {
+                deleteButton.setTextColor(getThemedColor(Theme.key_text_RedBold));
+            }
+        }
     }
 
 
