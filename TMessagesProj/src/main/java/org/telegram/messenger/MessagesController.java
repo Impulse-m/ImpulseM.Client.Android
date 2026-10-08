@@ -20469,6 +20469,12 @@ public class MessagesController extends BaseController implements NotificationCe
 //                                svc.answerToRequestForConference((TL_phone.phoneCallRequested) call);
 //                                continue;
 //                            }
+                            // A replay of the call that is already ringing or starting is not "busy".
+                            if ((VoIPService.callIShouldHavePutIntoIntent != null && VoIPService.callIShouldHavePutIntoIntent.id == call.id)
+                                || (svc != null && svc.getPrivateCall() != null && svc.getPrivateCall().id == call.id)) {
+                                FileLog.d("Ignoring duplicate request for call " + call.id);
+                                continue;
+                            }
                             if (svc != null || VoIPService.callIShouldHavePutIntoIntent != null || !callStateIsIdle) {
                                 if (svc != null && svc.getAccount() != currentAccount && svc.getUser() != null && svc.getUser().id == getUserConfig().getClientUserId()) {
                                     // calling from the same device, don't discard
