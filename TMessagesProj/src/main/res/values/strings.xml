@@ -11252,4 +11252,15 @@
     <string name="ImpulseProxyInvalid">Not a VLESS link or subscription URL</string>
     <string name="ImpulseProxyNoSelection">Choose a server first</string>
     <string name="ImpulseProxyPingMs">%1$d ms</string>
+    <string name="ImpulseProxyErrorNotRunning">Proxy is not running. Pick a working server or turn the proxy off.</string>
+    <string name="ImpulseProxyErrorInvalidSubscription">Invalid subscription</string>
+    <string name="ImpulseProxyErrorSubscriptionNotFound">Subscription not found</string>
+    <string name="ImpulseProxyErrorNoLinks">No VLESS links</string>
+    <string name="ImpulseProxyErrorNoLinksSkipped">No VLESS links (%1$d skipped)</string>
+    <string name="ImpulseProxyErrorHttp">HTTP %1$d</string>
+    <string name="ImpulseProxyErrorNetwork">Network error</string>
+    <string name="ImpulseProxyErrorInvalidConfig">Invalid server configuration</string>
+    <string name="ImpulseProxyErrorCoreStart">Could not start proxy core</string>
+    <string name="ImpulseProxyErrorCoreError">Proxy core error</string>
+    <string name="ImpulseProxyErrorCoreStopped">The proxy core stopped</string>
 </resources>

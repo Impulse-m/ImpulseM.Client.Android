@@ -280,4 +280,15 @@
     <string name="ImpulseProxyInvalid">Это не ссылка VLESS и не адрес подписки</string>
     <string name="ImpulseProxyNoSelection">Сначала выберите сервер</string>
     <string name="ImpulseProxyPingMs">%1$d мс</string>
+    <string name="ImpulseProxyErrorNotRunning">Прокси не запущен. Выберите рабочий сервер или выключите прокси.</string>
+    <string name="ImpulseProxyErrorInvalidSubscription">Некорректная подписка</string>
+    <string name="ImpulseProxyErrorSubscriptionNotFound">Подписка не найдена</string>
+    <string name="ImpulseProxyErrorNoLinks">Нет ссылок VLESS</string>
+    <string name="ImpulseProxyErrorNoLinksSkipped">Нет ссылок VLESS (пропущено: %1$d)</string>
+    <string name="ImpulseProxyErrorHttp">HTTP %1$d</string>
+    <string name="ImpulseProxyErrorNetwork">Ошибка сети</string>
+    <string name="ImpulseProxyErrorInvalidConfig">Некорректная конфигурация сервера</string>
+    <string name="ImpulseProxyErrorCoreStart">Не удалось запустить ядро прокси</string>
+    <string name="ImpulseProxyErrorCoreError">Ошибка ядра прокси</string>
+    <string name="ImpulseProxyErrorCoreStopped">Ядро прокси остановилось</string>
 </resources>

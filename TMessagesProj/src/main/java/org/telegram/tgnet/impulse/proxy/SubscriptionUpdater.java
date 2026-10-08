@@ -94,7 +94,7 @@ public final class SubscriptionUpdater {
                 .get()
                 .build();
         } catch (IllegalArgumentException e) {
-            throw new FetchException("Invalid subscription");
+            throw new FetchException(ProxyErrors.InvalidSubscription);
         }
         OkHttpClient client = ImpulseConnection.httpClient()
             .newBuilder()
@@ -104,13 +104,13 @@ public final class SubscriptionUpdater {
         SubscriptionMeta meta;
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                throw new FetchException("HTTP " + response.code());
+                throw new FetchException(ProxyErrors.withArg(ProxyErrors.Http, response.code()));
             }
             byte[] bytes = response.peekBody(MaxBodyBytes + 1L).bytes();
             if (bytes.length > MaxBodyBytes) {
-                throw new FetchException("Invalid subscription");
+                throw new FetchException(ProxyErrors.InvalidSubscription);
             }
-            text = new String(bytes, StandardCharsets.UTF_8);
+            text = stripBom(new String(bytes, StandardCharsets.UTF_8));
             meta = SubscriptionMeta.parse(
                 response.header("profile-title"),
                 response.header("subscription-userinfo"),
@@ -123,7 +123,7 @@ public final class SubscriptionUpdater {
                 }
             );
         } catch (IOException e) {
-            throw new FetchException("Network error");
+            throw new FetchException(ProxyErrors.Network);
         }
 
         JsonArray outbounds;
@@ -132,18 +132,23 @@ public final class SubscriptionUpdater {
         } catch (XrayException e) {
             String message = e.getMessage();
             if (message != null && message.toLowerCase(Locale.ROOT).contains("no valid outbound")) {
-                throw new FetchException("No VLESS links");
+                throw new FetchException(ProxyErrors.NoLinks);
             }
-            throw new FetchException("Invalid subscription");
+            throw new FetchException(ProxyErrors.InvalidSubscription);
         }
         OutboundFilter.Result result = OutboundFilter.filter(outbounds);
         if (result.servers.isEmpty()) {
             if (result.skipped > 0) {
-                throw new FetchException("No VLESS links (" + result.skipped + " skipped)");
+                throw new FetchException(ProxyErrors.withArg(ProxyErrors.NoLinks, result.skipped));
             }
-            throw new FetchException("No VLESS links");
+            throw new FetchException(ProxyErrors.NoLinks);
         }
         return new Subscription(id, url, meta, now, null, result.skipped, result.servers);
+    }
+
+
+    private static String stripBom(String text) {
+        return !text.isEmpty() && text.charAt(0) == '﻿' ? text.substring(1) : text;
     }
 
 

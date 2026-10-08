@@ -33,6 +33,7 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
 import org.telegram.tgnet.impulse.proxy.ProxyController;
+import org.telegram.tgnet.impulse.proxy.ProxyErrors;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BackDrawable;
@@ -271,7 +272,7 @@ public class ImpulseProxyActivity extends BaseFragment {
             items.add(infoItem(LocaleController.formatString(R.string.ImpulseProxyUpdated, when), false));
         }
         if (!TextUtils.isEmpty(subscription.lastError)) {
-            items.add(infoItem(subscription.lastError, true));
+            items.add(infoItem(describeError(subscription.lastError), true));
         }
     }
 
@@ -415,7 +416,7 @@ public class ImpulseProxyActivity extends BaseFragment {
                 return;
             }
             if (error != null) {
-                toast(error);
+                toast(describeError(error));
             }
             proxyListener.run();
         });
@@ -571,7 +572,7 @@ public class ImpulseProxyActivity extends BaseFragment {
         if (kind == InputKind.SUBSCRIPTION) {
             ProxyController.getInstance().addSubscription(text.trim(), error -> {
                 if (error != null) {
-                    toast(error);
+                    toast(describeError(error));
                 }
             });
         } else if (kind == InputKind.LINKS) {
@@ -607,6 +608,44 @@ public class ImpulseProxyActivity extends BaseFragment {
                 }
             });
         });
+    }
+
+
+    /** Maps a controller error code to localized text; anything that is not a known code is shown as-is. */
+    public static String describeError(String error) {
+        String name = ProxyErrors.nameOf(error);
+        if (name == null) {
+            return error;
+        }
+        int argument = ProxyErrors.argumentOf(error);
+        switch (name) {
+            case ProxyErrors.NotRunning:
+                return getString(R.string.ImpulseProxyErrorNotRunning);
+            case ProxyErrors.InvalidSubscription:
+                return getString(R.string.ImpulseProxyErrorInvalidSubscription);
+            case ProxyErrors.SubscriptionNotFound:
+                return getString(R.string.ImpulseProxyErrorSubscriptionNotFound);
+            case ProxyErrors.NoLinks:
+                return argument > 0
+                    ? LocaleController.formatString(R.string.ImpulseProxyErrorNoLinksSkipped, argument)
+                    : getString(R.string.ImpulseProxyErrorNoLinks);
+            case ProxyErrors.Http:
+                return LocaleController.formatString(R.string.ImpulseProxyErrorHttp, argument);
+            case ProxyErrors.Network:
+                return getString(R.string.ImpulseProxyErrorNetwork);
+            case ProxyErrors.InvalidConfig:
+                return getString(R.string.ImpulseProxyErrorInvalidConfig);
+            case ProxyErrors.CoreStart:
+                return getString(R.string.ImpulseProxyErrorCoreStart);
+            case ProxyErrors.CoreError:
+                return getString(R.string.ImpulseProxyErrorCoreError);
+            case ProxyErrors.CoreStopped:
+                return getString(R.string.ImpulseProxyErrorCoreStopped);
+            case ProxyErrors.NoServer:
+                return getString(R.string.ImpulseProxyNoSelection);
+            default:
+                return error;
+        }
     }
 
 

@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import net.impulsem.proxy.HealthPolicy;
 import net.impulsem.proxy.LibXrayClient;
 import net.impulsem.proxy.LocalInbounds;
 import net.impulsem.proxy.ProxyRouting;
@@ -141,6 +142,27 @@ public final class ProxyController {
     }
 
 
+    public boolean isEnabled() {
+        synchronized (lock) {
+            return state.enabled;
+        }
+    }
+
+
+    public boolean useForCalls() {
+        synchronized (lock) {
+            return state.useForCalls;
+        }
+    }
+
+
+    public boolean hasServers() {
+        synchronized (lock) {
+            return !state.allServers().isEmpty();
+        }
+    }
+
+
     /** A decoded copy, safe to read and mutate off the lock. */
     public ProxyState snapshot() {
         synchronized (lock) {
@@ -261,7 +283,7 @@ public final class ProxyController {
     ) {
         fetcher.execute(() -> {
             Subscription current = findSubscription(snapshot(), subscriptionId);
-            String error = current == null ? "Subscription not found" : fetchAndStore(current.id, current.url, false);
+            String error = current == null ? ProxyErrors.SubscriptionNotFound : fetchAndStore(current.id, current.url, false);
             finish(callback, error);
         });
     }
@@ -300,13 +322,13 @@ public final class ProxyController {
         boolean allowNew
     ) {
         if (route() == ProxyRouting.Route.BLOCKED) {
-            return "Proxy is not running. Pick a working server or turn the proxy off.";
+            return ProxyErrors.NotRunning;
         }
         try {
             Subscription previous = findSubscription(snapshot(), id);
             Subscription fresh = SubscriptionUpdater.fetch(xray, url, previous);
             if (previous == null && (fresh.lastError != null || !allowNew)) {
-                return fresh.lastError != null ? fresh.lastError : "Subscription not found";
+                return fresh.lastError != null ? fresh.lastError : ProxyErrors.SubscriptionNotFound;
             }
             update(next -> {
                 // A subscription removed while the fetch ran must stay removed.
@@ -317,7 +339,7 @@ public final class ProxyController {
             return fresh.lastError;
         } catch (Throwable t) {
             FileLog.d("impulse proxy: subscription " + id + " error, " + t.getClass().getName());
-            return "Invalid subscription";
+            return ProxyErrors.InvalidSubscription;
         }
     }
 
@@ -390,7 +412,7 @@ public final class ProxyController {
         }
         if (server == null) {
             status = Status.FAILED;
-            lastError = "No proxy server selected";
+            lastError = ProxyErrors.NoServer;
             FileLog.d("impulse proxy: status FAILED, no selected server");
             notifyListeners();
             return;
@@ -399,7 +421,7 @@ public final class ProxyController {
         status = Status.STARTING;
         notifyListeners();
         String stage = "freePorts";
-        String failure = "Could not start proxy core";
+        String failure = ProxyErrors.CoreStart;
         try {
             int[] ports = xray.freePorts(2);
             if (ports.length < 2) {
@@ -412,14 +434,14 @@ public final class ProxyController {
                 config = XrayConfigBuilder.build(server, new LocalInbounds(ports[0], ports[1], newUser, newPassword));
             } catch (RuntimeException e) {
                 stage = "build";
-                failure = "Invalid server configuration";
+                failure = ProxyErrors.InvalidConfig;
                 throw new XrayException("invalid configuration");
             }
             stage = "test";
-            failure = "Invalid server configuration";
+            failure = ProxyErrors.InvalidConfig;
             xray.test(config);
             stage = "run";
-            failure = "Could not start proxy core";
+            failure = ProxyErrors.CoreStart;
             xray.run(config);
             // The core listens on 127.0.0.1 only; getLoopbackAddress() may return ::1 on Android.
             InetAddress loopback = loopbackV4();
@@ -454,27 +476,33 @@ public final class ProxyController {
 
 
     private void checkAliveCore(int expectedGeneration) {
-        if (expectedGeneration != generation || status != Status.RUNNING) {
+        boolean current = expectedGeneration == generation && status == Status.RUNNING;
+        boolean alive = false;
+        if (current) {
+            try {
+                alive = xray.isRunning();
+            } catch (XrayException e) {
+                alive = false;
+            }
+        }
+        HealthPolicy.Action action = HealthPolicy.decide(current, autoRetried, alive);
+        if (action == HealthPolicy.Action.STOP) {
             return;
         }
-        boolean alive;
-        try {
-            alive = xray.isRunning();
-        } catch (XrayException e) {
-            alive = false;
-        }
-        if (alive) {
+        if (action == HealthPolicy.Action.RECHECK) {
+            // A full healthy check earns a later crash its own automatic restart.
             autoRetried = false;
+            worker.schedule(() -> checkAlive(expectedGeneration), HealthCheckDelaySeconds, TimeUnit.SECONDS);
             return;
         }
-        if (!autoRetried) {
+        if (action == HealthPolicy.Action.RESTART) {
             autoRetried = true;
             FileLog.d("impulse proxy: core stopped, restarting once");
             restart();
             return;
         }
         runtime = null;
-        lastError = "The proxy core stopped";
+        lastError = ProxyErrors.CoreStopped;
         status = Status.FAILED;
         FileLog.d("impulse proxy: status FAILED, core stopped again");
         notifyListeners();
@@ -483,7 +511,7 @@ public final class ProxyController {
 
     private void failUnexpectedly(Throwable t) {
         runtime = null;
-        lastError = "Proxy core error";
+        lastError = ProxyErrors.CoreError;
         status = Status.FAILED;
         FileLog.d("impulse proxy: status FAILED, " + t.getClass().getName());
         notifyListeners();

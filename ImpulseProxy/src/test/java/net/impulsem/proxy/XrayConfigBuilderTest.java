@@ -45,6 +45,15 @@ public class XrayConfigBuilderTest {
 
 
     @Test
+    public void coreLogsErrorsOnly() {
+        JsonObject config = JsonParser.parseString(
+            XrayConfigBuilder.build(server(), new LocalInbounds(1, 2, "u", "p"))
+        ).getAsJsonObject();
+        assertEquals("error", config.getAsJsonObject("log").get("loglevel").getAsString());
+    }
+
+
+    @Test
     public void everythingRoutesToTheProxyOutbound() {
         JsonObject config = JsonParser.parseString(
             XrayConfigBuilder.build(server(), new LocalInbounds(1, 2, "u", "p"))

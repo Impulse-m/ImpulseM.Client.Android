@@ -2,7 +2,6 @@ package org.telegram.messenger.voip
 
 import livekit.LivekitRtc
 import net.impulsem.proxy.ProxyRouting
-import net.impulsem.proxy.ProxyState
 import net.impulsem.proxy.TurnEndpoint
 import net.impulsem.proxy.TurnForwarder
 import okhttp3.Call
@@ -212,8 +211,8 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
         /** True when a new call must be relayed through the VLESS tunnel (fails closed when the core is down). */
         @JvmStatic
         fun shouldTunnel(): Boolean {
-            val state: ProxyState = ProxyController.getInstance().snapshot()
-            return ProxyRouting.tunnelCalls(ImpulseFeatures.VLESS, state.enabled, state.useForCalls)
+            val controller: ProxyController = ProxyController.getInstance()
+            return ProxyRouting.tunnelCalls(ImpulseFeatures.VLESS, controller.isEnabled(), controller.useForCalls())
         }
     }
 }

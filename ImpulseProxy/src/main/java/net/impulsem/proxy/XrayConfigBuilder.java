@@ -24,7 +24,7 @@ public final class XrayConfigBuilder {
         requireCredential(inbounds.password, "password");
         JsonObject config = new JsonObject();
         JsonObject log = new JsonObject();
-        log.addProperty("loglevel", "warning");
+        log.addProperty("loglevel", "error");
         log.addProperty("access", "none");
         config.add("log", log);
 

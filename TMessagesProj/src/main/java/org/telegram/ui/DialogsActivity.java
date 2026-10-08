@@ -10247,7 +10247,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         boolean connected = currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating;
         if (ImpulseFeatures.VLESS) {
             // The VLESS core owns the proxy state: connected means the core is running, connecting covers STARTING and FAILED.
-            proxyEnabled = ProxyController.getInstance().snapshot().enabled;
+            proxyEnabled = ProxyController.getInstance().isEnabled();
             connected = ProxyController.getInstance().status() == ProxyController.Status.RUNNING
                     && (currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating);
         }
@@ -13791,7 +13791,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     || getMessagesController().blockedCountry && !SharedConfig.proxyList.isEmpty();
 
             // TODO(impulsem-unimplemented): proxy
-            final boolean vlessVisible = ImpulseFeatures.VLESS && !ProxyController.getInstance().snapshot().allServers().isEmpty();
+            final boolean vlessVisible = ImpulseFeatures.VLESS && ProxyController.getInstance().hasServers();
             if (vlessVisible || proxyVisible && ImpulseFeatures.PROXY) {
                 io.addGap();
                 io.add(proxyMenuSubItem);
