@@ -129,7 +129,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private boolean pinging;
     private boolean pingAgain;
     private boolean pingAgainMarkAll;
-    private final ExecutorService converter = Executors.newSingleThreadExecutor(runnable -> {
+    private static final ExecutorService converter = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "ImpulseProxyConvert");
         thread.setDaemon(true);
         return thread;
@@ -606,7 +606,8 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                         FileLog.d("impulse proxy: ping failed, server " + safe(server.name) + " (" + server.host + "), " + safe(e.getMessage()));
                     }
                 }
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
+                // Throwable, not RuntimeException: a native Error from libXray must not leave the ping state stuck.
                 FileLog.d("impulse proxy: ping round failed, " + e.getClass().getSimpleName());
             }
             // Always posted, so a failed round can never leave the ping state stuck.
