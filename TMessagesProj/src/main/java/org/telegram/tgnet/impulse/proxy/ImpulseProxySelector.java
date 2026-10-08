@@ -27,13 +27,12 @@ public final class ImpulseProxySelector extends ProxySelector {
             Response response
         ) {
             ProxyController controller = ProxyController.getInstance();
-            String user = controller.user();
-            String password = controller.password();
-            if (user == null || password == null || response.request().header("Proxy-Authorization") != null) {
+            ProxyController.Runtime runtime = controller.runtime();
+            if (runtime == null || response.request().header("Proxy-Authorization") != null) {
                 return null;
             }
             return response.request().newBuilder()
-                .header("Proxy-Authorization", Credentials.basic(user, password))
+                .header("Proxy-Authorization", Credentials.basic(runtime.user, runtime.password))
                 .build();
         }
     };
@@ -53,9 +52,9 @@ public final class ImpulseProxySelector extends ProxySelector {
         if (route == ProxyRouting.Route.DIRECT) {
             return Collections.singletonList(Proxy.NO_PROXY);
         }
-        InetSocketAddress endpoint = controller.httpEndpoint();
-        if (route == ProxyRouting.Route.PROXY && endpoint != null) {
-            return Collections.singletonList(new Proxy(Proxy.Type.HTTP, endpoint));
+        ProxyController.Runtime runtime = controller.runtime();
+        if (route == ProxyRouting.Route.PROXY && runtime != null) {
+            return Collections.singletonList(new Proxy(Proxy.Type.HTTP, runtime.httpEndpoint));
         }
         return Collections.singletonList(Blackhole);
     }

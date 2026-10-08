@@ -38,6 +38,28 @@ public final class ProxyController {
     }
 
 
+    /** The loopback endpoints and credentials of the running core, published in one write. */
+    public static final class Runtime {
+        public final InetSocketAddress httpEndpoint;
+        public final InetSocketAddress socksEndpoint;
+        public final String user;
+        public final String password;
+
+
+        private Runtime(
+            InetSocketAddress httpEndpoint,
+            InetSocketAddress socksEndpoint,
+            String user,
+            String password
+        ) {
+            this.httpEndpoint = httpEndpoint;
+            this.socksEndpoint = socksEndpoint;
+            this.user = user;
+            this.password = password;
+        }
+    }
+
+
     private static final String PrefsName = "impulse_proxy";
     private static final String StateKey = "state";
     private static final long HealthCheckDelaySeconds = 30L;
@@ -52,10 +74,7 @@ public final class ProxyController {
     private ProxyState state;
     private volatile Status status = Status.OFF;
     private volatile String lastError;
-    private volatile InetSocketAddress httpEndpoint;
-    private volatile InetSocketAddress socksEndpoint;
-    private volatile String user;
-    private volatile String password;
+    private volatile Runtime runtime;
     // Worker-thread only: invalidates a pending health check, and tracks the single automatic retry.
     private int generation;
     private boolean autoRetried;
@@ -114,6 +133,12 @@ public final class ProxyController {
             restartNeeded = next.enabled != state.enabled || !sameId(next.selectedId, state.selectedId);
             state = next;
             persist(next);
+            if (restartNeeded) {
+                // Fail closed right away: the old server must not keep carrying traffic.
+                runtime = null;
+                status = Status.STARTING;
+                lastError = null;
+            }
         }
         if (restartNeeded) {
             requestRestart();
@@ -132,26 +157,41 @@ public final class ProxyController {
     }
 
 
+    /** Endpoints and credentials as one consistent snapshot; null unless RUNNING. */
+    public Runtime runtime() {
+        Runtime current = runtime;
+        return status == Status.RUNNING ? current : null;
+    }
+
+
     public InetSocketAddress httpEndpoint() {
-        return status == Status.RUNNING ? httpEndpoint : null;
+        Runtime current = runtime();
+        return current == null ? null : current.httpEndpoint;
     }
 
 
     public InetSocketAddress socksEndpoint() {
-        return status == Status.RUNNING ? socksEndpoint : null;
+        Runtime current = runtime();
+        return current == null ? null : current.socksEndpoint;
     }
 
 
     public String user() {
-        return status == Status.RUNNING ? user : null;
+        Runtime current = runtime();
+        return current == null ? null : current.user;
     }
 
 
     public String password() {
-        return status == Status.RUNNING ? password : null;
+        Runtime current = runtime();
+        return current == null ? null : current.password;
     }
 
 
+    /**
+     * The shared client. run, stop, test and freePorts belong to the controller; callers may use only
+     * convertShareLinks and pingBatch, and pingBatch must be called off the UI thread.
+     */
     public LibXrayClient xray() {
         return xray;
     }
@@ -182,6 +222,15 @@ public final class ProxyController {
 
     // Runs on the worker thread only.
     private void restart() {
+        try {
+            restartCore();
+        } catch (Throwable t) {
+            failUnexpectedly(t);
+        }
+    }
+
+
+    private void restartCore() {
         generation++;
         int current = generation;
         try {
@@ -191,7 +240,7 @@ public final class ProxyController {
         } catch (XrayException e) {
             // A core that cannot be stopped or queried is replaced by the run below.
         }
-        clearRuntime();
+        runtime = null;
         lastError = null;
 
         boolean enabled;
@@ -216,10 +265,12 @@ public final class ProxyController {
 
         status = Status.STARTING;
         notifyListeners();
+        String stage = "freePorts";
+        String failure = "Could not start proxy core";
         try {
             int[] ports = xray.freePorts(2);
             if (ports.length < 2) {
-                throw new XrayException("getFreePorts: not enough ports");
+                throw new XrayException("not enough ports");
             }
             String newUser = randomHex(16);
             String newPassword = randomHex(24);
@@ -227,23 +278,32 @@ public final class ProxyController {
             try {
                 config = XrayConfigBuilder.build(server, new LocalInbounds(ports[0], ports[1], newUser, newPassword));
             } catch (RuntimeException e) {
-                throw new XrayException("Invalid server configuration");
+                stage = "build";
+                failure = "Invalid server configuration";
+                throw new XrayException("invalid configuration");
             }
+            stage = "test";
+            failure = "Invalid server configuration";
             xray.test(config);
+            stage = "run";
+            failure = "Could not start proxy core";
             xray.run(config);
             InetAddress loopback = InetAddress.getLoopbackAddress();
-            httpEndpoint = new InetSocketAddress(loopback, ports[0]);
-            socksEndpoint = new InetSocketAddress(loopback, ports[1]);
-            user = newUser;
-            password = newPassword;
+            runtime = new Runtime(
+                new InetSocketAddress(loopback, ports[0]),
+                new InetSocketAddress(loopback, ports[1]),
+                newUser,
+                newPassword
+            );
             status = Status.RUNNING;
             FileLog.d("impulse proxy: status RUNNING, server " + server.name + " (" + server.host + ")");
             worker.schedule(() -> checkAlive(current), HealthCheckDelaySeconds, TimeUnit.SECONDS);
         } catch (XrayException e) {
-            clearRuntime();
-            lastError = e.getMessage();
+            // The libXray message can quote config fragments, so only fixed text reaches the UI.
+            runtime = null;
+            lastError = failure;
             status = Status.FAILED;
-            FileLog.d("impulse proxy: status FAILED, server " + server.name + " (" + server.host + ")");
+            FileLog.d("impulse proxy: status FAILED at " + stage + ", server " + server.name + " (" + server.host + ")");
         }
         notifyListeners();
     }
@@ -251,6 +311,15 @@ public final class ProxyController {
 
     // Runs on the worker thread only.
     private void checkAlive(int expectedGeneration) {
+        try {
+            checkAliveCore(expectedGeneration);
+        } catch (Throwable t) {
+            failUnexpectedly(t);
+        }
+    }
+
+
+    private void checkAliveCore(int expectedGeneration) {
         if (expectedGeneration != generation || status != Status.RUNNING) {
             return;
         }
@@ -270,7 +339,7 @@ public final class ProxyController {
             restart();
             return;
         }
-        clearRuntime();
+        runtime = null;
         lastError = "The proxy core stopped";
         status = Status.FAILED;
         FileLog.d("impulse proxy: status FAILED, core stopped again");
@@ -278,11 +347,12 @@ public final class ProxyController {
     }
 
 
-    private void clearRuntime() {
-        httpEndpoint = null;
-        socksEndpoint = null;
-        user = null;
-        password = null;
+    private void failUnexpectedly(Throwable t) {
+        runtime = null;
+        lastError = "Proxy core error";
+        status = Status.FAILED;
+        FileLog.d("impulse proxy: status FAILED, " + t.getClass().getName());
+        notifyListeners();
     }
 
 

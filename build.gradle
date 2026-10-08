@@ -30,8 +30,15 @@ def ensureLibXray = {
     File zip = new File(rootDir, "build/libxray-${libXrayVersion}.zip")
     zip.parentFile.mkdirs()
     if (!zip.exists()) {
-        new URL("https://github.com/XTLS/libXray/releases/download/v${libXrayVersion}/libxray-android.zip").withInputStream { input ->
-            zip.withOutputStream { output -> output << input }
+        File part = new File(zip.parentFile, zip.name + ".part")
+        URLConnection connection = new URL("https://github.com/XTLS/libXray/releases/download/v${libXrayVersion}/libxray-android.zip").openConnection()
+        connection.connectTimeout = 30000
+        connection.readTimeout = 120000
+        connection.inputStream.withCloseable { input ->
+            part.withOutputStream { output -> output << input }
+        }
+        if (!part.renameTo(zip)) {
+            throw new GradleException("libXray ${libXrayVersion} download could not be moved into place")
         }
     }
     String actual = java.security.MessageDigest.getInstance('SHA-256').digest(zip.bytes).encodeHex().toString()
@@ -40,12 +47,19 @@ def ensureLibXray = {
         throw new GradleException("libXray ${libXrayVersion} checksum mismatch: ${actual}")
     }
     aar.parentFile.mkdirs()
-    new java.util.zip.ZipFile(zip).withCloseable { archive ->
-        aar.withOutputStream { output -> output << archive.getInputStream(archive.getEntry('libxray-android/libXray.aar')) }
-    }
+    // The AAR is the completion marker: the POM goes first, the AAR is moved into place last.
     new File(aar.parentFile, "libxray-${libXrayVersion}.pom").text =
         "<project><modelVersion>4.0.0</modelVersion><groupId>com.github.xtls</groupId><artifactId>libxray</artifactId>" +
         "<version>${libXrayVersion}</version><packaging>aar</packaging></project>"
+    File temp = new File(aar.parentFile, aar.name + ".tmp")
+    new java.util.zip.ZipFile(zip).withCloseable { archive ->
+        def entry = archive.getEntry('libxray-android/libXray.aar')
+        if (entry == null) {
+            throw new GradleException("libXray zip has no libxray-android/libXray.aar")
+        }
+        temp.withOutputStream { output -> output << archive.getInputStream(entry) }
+    }
+    java.nio.file.Files.move(temp.toPath(), aar.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
 }
 ensureLibXray()
 
