@@ -162,9 +162,14 @@ public class ImpulseProxyActivity extends BaseFragment {
     ) {
         targets.clear();
         nextId = 0;
-        ProxyState state = ProxyController.getInstance().snapshot();
+        ProxyController controller = ProxyController.getInstance();
+        ProxyState state = controller.snapshot();
 
         items.add(UItem.asCheck(IdUse, getString(R.string.ImpulseProxyUse)).setChecked(state.enabled));
+        String coreError = controller.lastError();
+        if (state.enabled && controller.status() == ProxyController.Status.FAILED && !TextUtils.isEmpty(coreError)) {
+            items.add(infoItem(describeError(coreError), true));
+        }
         items.add(UItem.asCheck(IdUseForCalls, getString(R.string.ImpulseProxyUseForCalls))
             .setChecked(state.useForCalls)
             .setEnabled(state.enabled));

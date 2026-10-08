@@ -148,7 +148,7 @@ public final class SubscriptionUpdater {
 
 
     private static String stripBom(String text) {
-        return !text.isEmpty() && text.charAt(0) == '﻿' ? text.substring(1) : text;
+        return !text.isEmpty() && text.charAt(0) == '\uFEFF' ? text.substring(1) : text;
     }
 
 
