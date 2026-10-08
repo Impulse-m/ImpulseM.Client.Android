@@ -5,8 +5,9 @@ import java.util.Set;
 
 
 /**
- * Decides when a (re)subscribe means the application missed updates. The user lane always runs getDifference, which
- * replaces the old onSessionCreated. A channel lane does after a failed recovery, and after an unsubscribe push with
+ * Decides when a (re)subscribe means the application missed updates. The user lane runs getDifference after a fresh
+ * subscribe or a lost position, which replaces the old onSessionCreated, and skips it after a clean recovery (the
+ * replay already delivered the missed updates). A channel lane does after a failed recovery, and after an unsubscribe push with
  * code 2502 (the server dropped the position, so the follow-up subscribe is not recovered).
  */
 public final class GapTracker {
@@ -38,7 +39,7 @@ public final class GapTracker {
     ) {
         boolean dropped = positionDropped.remove(channel);
         if (channel.startsWith(PublicationRouter.UserPrefix)) {
-            return true;
+            return dropped || !recovered;
         }
         return dropped || (wasRecovering && !recovered);
     }

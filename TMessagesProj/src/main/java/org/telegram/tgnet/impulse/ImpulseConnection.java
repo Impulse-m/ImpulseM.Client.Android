@@ -519,6 +519,7 @@ public final class ImpulseConnection {
     public void resume() {
         setAppPaused(false);
         networkChanged();
+        realtime.connectNow();
     }
 
 

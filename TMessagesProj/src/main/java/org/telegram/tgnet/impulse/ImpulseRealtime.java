@@ -198,6 +198,18 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
     }
 
 
+    /** Syncs, then skips any pending reconnect backoff so a resumed or pushed app connects at once. */
+    void connectNow() {
+        syncExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                sync();
+                client.reconnectNow();
+            }
+        });
+    }
+
+
     @Override
     public String fetchToken() throws IOException {
         try {

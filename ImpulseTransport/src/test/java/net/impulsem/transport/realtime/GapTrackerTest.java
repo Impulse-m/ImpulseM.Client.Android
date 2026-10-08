@@ -9,9 +9,24 @@ import org.junit.Test;
 public class GapTrackerTest {
 
     @Test
-    public void userLaneAlwaysNeedsDifference() {
+    public void recoveredUserLaneWithoutDropNeedsNoDifference() {
+        GapTracker tracker = new GapTracker();
+        assertFalse(tracker.onSubscribed("user:5", true, true));
+    }
+
+
+    @Test
+    public void freshUserLaneSubscribeNeedsDifference() {
         GapTracker tracker = new GapTracker();
         assertTrue(tracker.onSubscribed("user:5", false, false));
+        assertTrue(tracker.onSubscribed("user:5", false, true));
+    }
+
+
+    @Test
+    public void droppedUserLanePositionNeedsDifferenceEvenIfRecovered() {
+        GapTracker tracker = new GapTracker();
+        tracker.onUnsubscribed("user:5", 2502);
         assertTrue(tracker.onSubscribed("user:5", true, true));
     }
 
