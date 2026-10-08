@@ -7,7 +7,8 @@ import java.util.List;
 /** The whole proxy configuration. Owned and synchronised by the controller. */
 public final class ProxyState {
     public boolean enabled;
-    public boolean useForCalls;
+    public boolean useForTransport = true;
+    public boolean useForCalls = true;
     public String selectedId;
     public final List<ProxyServer> manual = new ArrayList<ProxyServer>();
     public final List<Subscription> subscriptions = new ArrayList<Subscription>();

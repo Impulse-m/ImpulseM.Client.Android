@@ -263,7 +263,6 @@
     <string name="RemindDayYearAt">\'Напомнить\' d MMM yyyy \'в\' HH:mm</string>
     <string name="ImpulseProxyTitle">Прокси</string>
     <string name="ImpulseProxyUse">Использовать прокси</string>
-    <string name="ImpulseProxyUseForCalls">Использовать для звонков</string>
     <string name="ImpulseProxyMyLinks">Мои ссылки</string>
     <string name="ImpulseProxyAdd">Добавить прокси</string>
     <string name="ImpulseProxyAddHint">Ссылка vless:// или адрес подписки</string>
@@ -344,6 +343,11 @@
     <string name="ImpulseProxyAdvTimeout">Таймаут, с</string>
     <string name="ImpulseProxyAdvUrl">Адрес проверки</string>
     <string name="ImpulseProxyAdvSkipConnected">Не проверять при подключении</string>
+    <string name="ImpulseProxyAdvUseFor">Использовать VPN для</string>
+    <string name="ImpulseProxyAdvUseForTransport">Основной транспорт</string>
+    <string name="ImpulseProxyAdvUseForCalls">Звонки</string>
+    <string name="ImpulseProxyAdvUseForInfo">Основной транспорт — сообщения и синхронизация с сервером. Звонки — голос и видео. Можно выбрать оба пункта или один.</string>
+    <string name="ImpulseProxyAdvUseForNeedOne">Нужно выбрать хотя бы один пункт</string>
     <string name="ImpulseProxyAdvChecksInfo">Одновременная проверка множества серверов может привести к блокировке со стороны оператора в мобильных сетях. Проверка по одному с паузой мягче.</string>
     <string name="ImpulseProxyAdvReset">Сбросить по умолчанию</string>
     <string name="ImpulseProxyAdvResetTitle">Сбросить расширенные настройки?</string>

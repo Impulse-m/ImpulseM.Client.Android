@@ -114,7 +114,7 @@ public final class ProxyController {
         state = ProxyStateCodec.decode(prefs().getString(StateKey, null));
         // Until the first restart runs, an enabled proxy must not look like a direct route.
         status = state.enabled ? Status.STARTING : Status.OFF;
-        publishedRoute = ProxyRouting.decide(state.enabled, false);
+        publishedRoute = ProxyRouting.decide(state.enabled, state.useForTransport, false);
     }
 
 
@@ -146,6 +146,13 @@ public final class ProxyController {
     public boolean isEnabled() {
         synchronized (lock) {
             return state.enabled;
+        }
+    }
+
+
+    public boolean useForTransport() {
+        synchronized (lock) {
+            return state.useForTransport;
         }
     }
 
@@ -202,10 +209,12 @@ public final class ProxyController {
 
     public ProxyRouting.Route route() {
         boolean enabled;
+        boolean useForTransport;
         synchronized (lock) {
             enabled = state.enabled;
+            useForTransport = state.useForTransport;
         }
-        return ProxyRouting.decide(enabled, status == Status.RUNNING);
+        return ProxyRouting.decide(enabled, useForTransport, status == Status.RUNNING);
     }
 
 

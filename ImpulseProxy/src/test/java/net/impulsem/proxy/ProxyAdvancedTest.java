@@ -32,7 +32,7 @@ public class ProxyAdvancedTest {
         assertEquals(0, a.pingPauseMillis);
         assertEquals(5, a.pingTimeoutSeconds);
         assertEquals("https://www.gstatic.com/generate_204", a.pingUrl);
-        assertFalse(a.pingSkipWhileConnected);
+        assertTrue(a.pingSkipWhileConnected);
         assertNull(a.effectiveDnsServer());
     }
 

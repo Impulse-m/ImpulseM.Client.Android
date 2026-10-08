@@ -23,6 +23,7 @@ public final class ProxyStateCodec {
         JsonObject root = new JsonObject();
         root.addProperty("v", 1);
         root.addProperty("enabled", state.enabled);
+        root.addProperty("useForTransport", state.useForTransport);
         root.addProperty("useForCalls", state.useForCalls);
         if (state.selectedId != null) {
             root.addProperty("selectedId", state.selectedId);
@@ -72,6 +73,7 @@ public final class ProxyStateCodec {
         }
         ProxyState state = new ProxyState();
         state.enabled = readBoolean(root, "enabled");
+        state.useForTransport = readBoolean(root, "useForTransport", true);
         state.useForCalls = readBoolean(root, "useForCalls");
         state.selectedId = readString(root, "selectedId");
         state.manual.addAll(decodeServers(readArray(root, "manual")));

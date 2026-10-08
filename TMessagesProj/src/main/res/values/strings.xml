@@ -11235,7 +11235,6 @@
     <string name="RoundVideoCompositionInfo">Disable styling to record a plain square without outside-circle blur, dimming or Telegram overlays.</string>
     <string name="ImpulseProxyTitle">Proxy</string>
     <string name="ImpulseProxyUse">Use proxy</string>
-    <string name="ImpulseProxyUseForCalls">Use for calls</string>
     <string name="ImpulseProxyMyLinks">My links</string>
     <string name="ImpulseProxyAdd">Add proxy</string>
     <string name="ImpulseProxyAddHint">vless:// link or subscription URL</string>
@@ -11316,6 +11315,11 @@
     <string name="ImpulseProxyAdvTimeout">Timeout, s</string>
     <string name="ImpulseProxyAdvUrl">Check URL</string>
     <string name="ImpulseProxyAdvSkipConnected">Don\'t check while connected</string>
+    <string name="ImpulseProxyAdvUseFor">Use VPN for</string>
+    <string name="ImpulseProxyAdvUseForTransport">Main transport</string>
+    <string name="ImpulseProxyAdvUseForCalls">Calls</string>
+    <string name="ImpulseProxyAdvUseForInfo">Main transport: messages and sync with the server. Calls: voice and video. Choose both or either one.</string>
+    <string name="ImpulseProxyAdvUseForNeedOne">Choose at least one</string>
     <string name="ImpulseProxyAdvChecksInfo">Checking many servers at once can trigger operator blocking on mobile networks. One by one with a pause is gentler.</string>
     <string name="ImpulseProxyAdvReset">Reset to defaults</string>
     <string name="ImpulseProxyAdvResetTitle">Reset advanced settings?</string>

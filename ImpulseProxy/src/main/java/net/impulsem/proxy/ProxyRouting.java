@@ -19,7 +19,17 @@ public final class ProxyRouting {
         boolean enabled,
         boolean running
     ) {
-        if (!enabled) {
+        return decide(enabled, true, running);
+    }
+
+
+    /** With the transport switched off the main connection goes direct, whatever the core is doing. */
+    public static Route decide(
+        boolean enabled,
+        boolean useForTransport,
+        boolean running
+    ) {
+        if (!enabled || !useForTransport) {
             return Route.DIRECT;
         }
         return running ? Route.PROXY : Route.BLOCKED;

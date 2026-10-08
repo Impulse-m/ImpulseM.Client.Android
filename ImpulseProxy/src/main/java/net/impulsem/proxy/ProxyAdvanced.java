@@ -79,7 +79,7 @@ public final class ProxyAdvanced {
     public int pingTimeoutSeconds = DefaultPingTimeoutSeconds;
     /** https:// only. */
     public String pingUrl = DefaultPingUrl;
-    public boolean pingSkipWhileConnected = false;
+    public boolean pingSkipWhileConnected = true;
 
 
     public ProxyAdvanced copy() {

@@ -52,6 +52,32 @@ public class ProxyStateCodecTest {
 
 
     @Test
+    public void useForTransportRoundTrips() {
+        ProxyState state = new ProxyState();
+        state.useForTransport = false;
+        assertFalse(ProxyStateCodec.decode(ProxyStateCodec.encode(state)).useForTransport);
+        state.useForTransport = true;
+        assertTrue(ProxyStateCodec.decode(ProxyStateCodec.encode(state)).useForTransport);
+    }
+
+
+    @Test
+    public void oldStateWithoutUseForTransportKeepsTunnellingTransport() {
+        ProxyState decoded = ProxyStateCodec.decode("{\"v\":1,\"enabled\":true,\"useForCalls\":false}");
+        assertTrue(decoded.useForTransport);
+        assertFalse(decoded.useForCalls);
+    }
+
+
+    @Test
+    public void newStateUsesVpnForBoth() {
+        ProxyState state = new ProxyState();
+        assertTrue(state.useForTransport);
+        assertTrue(state.useForCalls);
+    }
+
+
+    @Test
     public void corruptInputGivesEmptyState() {
         ProxyState state = ProxyStateCodec.decode("{not json");
         assertFalse(state.enabled);

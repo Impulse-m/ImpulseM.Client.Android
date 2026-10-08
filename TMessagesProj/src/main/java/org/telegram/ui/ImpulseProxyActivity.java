@@ -70,7 +70,6 @@ import java.util.concurrent.Executors;
 public class ImpulseProxyActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate {
 
     private static final int IdUse = 1;
-    private static final int IdUseForCalls = 2;
     private static final int IdAdd = 3;
     private static final int IdRefreshPing = 4;
     private static final int IdInfo = 5;
@@ -243,9 +242,6 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
 
         items.add(UItem.asCheck(IdUse, getString(R.string.ImpulseProxyUse)).setChecked(state.enabled));
         items.add(overallStatusItem(controller, state));
-        items.add(UItem.asCheck(IdUseForCalls, getString(R.string.ImpulseProxyUseForCalls))
-            .setChecked(state.useForCalls)
-            .setEnabled(state.enabled));
         items.add(UItem.asButton(IdAdvanced, getString(R.string.ImpulseProxyAdvanced)));
         items.add(UItem.asShadow(""));
 
@@ -285,7 +281,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             String reason = TextUtils.isEmpty(error) ? getString(R.string.ImpulseProxyErrorCoreError) : describeError(error);
             return ImpulseProxyServerCell.StatusFactory.as(LocaleController.formatString(R.string.ImpulseProxyStatusError, reason), Theme.key_text_RedRegular);
         }
-        if (isConnected(controller)) {
+        // Without the transport the app connection does not go through the proxy, so only the core matters.
+        boolean coreOnly = !state.useForTransport && status == ProxyController.Status.RUNNING;
+        if (coreOnly || isConnected(controller)) {
             return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyConnected), Theme.key_windowBackgroundWhiteGreenText);
         }
         return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyConnecting), Theme.key_windowBackgroundWhiteGrayText2);
@@ -465,10 +463,6 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                 return;
             }
             controller.update(next -> next.enabled = !next.enabled);
-            return;
-        }
-        if (item.id == IdUseForCalls) {
-            controller.update(next -> next.useForCalls = !next.useForCalls);
             return;
         }
         if (item.id == IdAdd) {

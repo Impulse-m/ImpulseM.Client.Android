@@ -14,6 +14,7 @@ import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import net.impulsem.proxy.ProxyAdvanced;
+import net.impulsem.proxy.ProxyState;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LocaleController;
@@ -57,6 +58,8 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
     private static final int IdPingUrl = 17;
     private static final int IdPingSkip = 18;
     private static final int IdReset = 19;
+    private static final int IdUseForTransport = 20;
+    private static final int IdUseForCalls = 21;
     private static final String PacketsExample = "1-3";
     private static final int InvalidNumber = Integer.MIN_VALUE;
 
@@ -157,6 +160,12 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
     ) {
         ProxyAdvanced advanced = current();
         boolean fragmentOn = !ProxyAdvanced.FragmentOff.equals(advanced.fragmentMode);
+        ProxyState state = ProxyController.getInstance().snapshot();
+
+        items.add(UItem.asHeader(getString(R.string.ImpulseProxyAdvUseFor)));
+        items.add(UItem.asCheck(IdUseForTransport, getString(R.string.ImpulseProxyAdvUseForTransport)).setChecked(state.useForTransport));
+        items.add(UItem.asCheck(IdUseForCalls, getString(R.string.ImpulseProxyAdvUseForCalls)).setChecked(state.useForCalls));
+        items.add(UItem.asShadow(getString(R.string.ImpulseProxyAdvUseForInfo)));
 
         items.add(UItem.asHeader(getString(R.string.ImpulseProxyAdvFragmentation)));
         items.add(UItem.asButton(IdFragMode, getString(R.string.ImpulseProxyAdvMode), fragmentModeName(advanced.fragmentMode)));
@@ -348,6 +357,12 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
                 break;
             case IdReset:
                 confirmReset();
+                break;
+            case IdUseForTransport:
+                toggleUseFor(true);
+                break;
+            case IdUseForCalls:
+                toggleUseFor(false);
                 break;
             default:
                 break;
@@ -589,6 +604,23 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
         AlertDialog dialog = builder.create();
         showDialog(dialog);
         dialog.redPositive();
+    }
+
+
+    // At least one of the two stays on, otherwise the proxy would carry nothing.
+    private void toggleUseFor(boolean transport) {
+        ProxyState state = ProxyController.getInstance().snapshot();
+        boolean turningOffLast = transport ? (state.useForTransport && !state.useForCalls) : (state.useForCalls && !state.useForTransport);
+        if (turningOffLast) {
+            toast(getString(R.string.ImpulseProxyAdvUseForNeedOne));
+            return;
+        }
+        if (transport) {
+            ProxyController.getInstance().update(next -> next.useForTransport = !next.useForTransport);
+        } else {
+            ProxyController.getInstance().update(next -> next.useForCalls = !next.useForCalls);
+        }
+        refreshList();
     }
 
 

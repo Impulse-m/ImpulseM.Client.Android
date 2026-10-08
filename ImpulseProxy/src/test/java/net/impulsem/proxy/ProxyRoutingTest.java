@@ -29,6 +29,22 @@ public class ProxyRoutingTest {
 
 
     @Test
+    public void transportOffIsDirectEvenWhenEnabledAndRunning() {
+        assertEquals(ProxyRouting.Route.DIRECT, ProxyRouting.decide(true, false, true));
+        assertEquals(ProxyRouting.Route.DIRECT, ProxyRouting.decide(true, false, false));
+        assertEquals(ProxyRouting.Route.DIRECT, ProxyRouting.decide(false, false, true));
+    }
+
+
+    @Test
+    public void transportOnKeepsTheKillSwitch() {
+        assertEquals(ProxyRouting.Route.PROXY, ProxyRouting.decide(true, true, true));
+        assertEquals(ProxyRouting.Route.BLOCKED, ProxyRouting.decide(true, true, false));
+        assertEquals(ProxyRouting.Route.DIRECT, ProxyRouting.decide(false, true, true));
+    }
+
+
+    @Test
     public void callsAreTunnelledWheneverEnabledAndUseForCalls() {
         assertTrue(ProxyRouting.tunnelCalls(true, true, true));
     }
