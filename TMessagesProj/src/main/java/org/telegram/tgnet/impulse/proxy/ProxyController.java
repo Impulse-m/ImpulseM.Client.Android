@@ -6,7 +6,10 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +19,8 @@ import net.impulsem.proxy.ProxyRouting;
 import net.impulsem.proxy.ProxyServer;
 import net.impulsem.proxy.ProxyState;
 import net.impulsem.proxy.ProxyStateCodec;
+import net.impulsem.proxy.Subscription;
+import net.impulsem.proxy.SubscriptionMeta;
 import net.impulsem.proxy.XrayConfigBuilder;
 import net.impulsem.proxy.XrayException;
 import org.telegram.messenger.AndroidUtilities;
@@ -37,6 +42,12 @@ public final class ProxyController {
 
     public interface StateChange {
         void apply(ProxyState state);
+    }
+
+
+    /** error is null on success; always called on the UI thread. */
+    public interface Callback {
+        void done(String error);
     }
 
 
@@ -70,6 +81,8 @@ public final class ProxyController {
 
     private final Object lock = new Object();
     private final ScheduledExecutorService worker;
+    // Subscription downloads run here, one at a time, so a slow fetch never delays a core restart.
+    private final ExecutorService fetcher;
     private final LibXrayClient xray = new LibXrayClient(new XrayEngine());
     private final CopyOnWriteArrayList<Runnable> listeners = new CopyOnWriteArrayList<Runnable>();
     private final SecureRandom random = new SecureRandom();
@@ -88,6 +101,11 @@ public final class ProxyController {
     private ProxyController() {
         worker = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "ImpulseProxyWorker");
+            thread.setDaemon(true);
+            return thread;
+        });
+        fetcher = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "ImpulseSubscriptionWorker");
             thread.setDaemon(true);
             return thread;
         });
@@ -214,7 +232,116 @@ public final class ProxyController {
 
 
     public void startIfEnabled() {
-        requestRestart();
+        worker.execute(() -> {
+            autoRetried = false;
+            restart();
+            // The core has settled; stale subscriptions can now be fetched through the right route.
+            refreshDue();
+        });
+    }
+
+
+    /** Fetches a new subscription; a failed first fetch is reported and nothing is stored. */
+    public void addSubscription(
+        String url,
+        Callback callback
+    ) {
+        String trimmed = url == null ? "" : url.trim();
+        String id = SubscriptionUpdater.idFor(trimmed);
+        fetcher.execute(() -> {
+            String error = fetchAndStore(id, trimmed, true);
+            finish(callback, error);
+        });
+    }
+
+
+    public void refresh(
+        String subscriptionId,
+        Callback callback
+    ) {
+        fetcher.execute(() -> {
+            Subscription current = findSubscription(snapshot(), subscriptionId);
+            String error = current == null ? "Subscription not found" : fetchAndStore(current.id, current.url, false);
+            finish(callback, error);
+        });
+    }
+
+
+    /** Refreshes every subscription whose update interval has passed, one after another. */
+    public void refreshDue() {
+        fetcher.execute(() -> {
+            long now = System.currentTimeMillis();
+            List<String> due = new ArrayList<String>();
+            for (Subscription subscription : snapshot().subscriptions) {
+                int hours = subscription.meta == null ? SubscriptionMeta.DefaultIntervalHours : subscription.meta.updateIntervalHours;
+                if (subscription.updatedAt + hours * 3600000L <= now) {
+                    due.add(subscription.id);
+                }
+            }
+            for (String id : due) {
+                Subscription current = findSubscription(snapshot(), id);
+                if (current == null) {
+                    continue;
+                }
+                if (route() == ProxyRouting.Route.BLOCKED) {
+                    // Do not record a failure for a fetch the kill switch would block; try again later.
+                    return;
+                }
+                fetchAndStore(current.id, current.url, false);
+            }
+        });
+    }
+
+
+    // Runs on the fetcher thread. Returns the sanitized error, or null on success.
+    private String fetchAndStore(
+        String id,
+        String url,
+        boolean allowNew
+    ) {
+        if (route() == ProxyRouting.Route.BLOCKED) {
+            return "Proxy is not running. Pick a working server or turn the proxy off.";
+        }
+        try {
+            Subscription previous = findSubscription(snapshot(), id);
+            Subscription fresh = SubscriptionUpdater.fetch(xray, url, previous);
+            if (previous == null && (fresh.lastError != null || !allowNew)) {
+                return fresh.lastError != null ? fresh.lastError : "Subscription not found";
+            }
+            update(next -> {
+                // A subscription removed while the fetch ran must stay removed.
+                if (allowNew || findSubscription(next, id) != null) {
+                    next.replaceSubscription(fresh);
+                }
+            });
+            return fresh.lastError;
+        } catch (Throwable t) {
+            FileLog.d("impulse proxy: subscription " + id + " error, " + t.getClass().getName());
+            return "Invalid subscription";
+        }
+    }
+
+
+    private static Subscription findSubscription(
+        ProxyState source,
+        String id
+    ) {
+        for (Subscription subscription : source.subscriptions) {
+            if (subscription.id.equals(id)) {
+                return subscription;
+            }
+        }
+        return null;
+    }
+
+
+    private static void finish(
+        Callback callback,
+        String error
+    ) {
+        if (callback != null) {
+            AndroidUtilities.runOnUIThread(() -> callback.done(error));
+        }
     }
 
 
