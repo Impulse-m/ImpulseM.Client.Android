@@ -281,9 +281,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             String reason = TextUtils.isEmpty(error) ? getString(R.string.ImpulseProxyErrorCoreError) : describeError(error);
             return ImpulseProxyServerCell.StatusFactory.as(LocaleController.formatString(R.string.ImpulseProxyStatusError, reason), Theme.key_text_RedRegular);
         }
-        // Without the transport the app connection does not go through the proxy, so only the core matters.
-        boolean coreOnly = !state.useForTransport && status == ProxyController.Status.RUNNING;
-        if (coreOnly || isConnected(controller)) {
+        if (isConnected(controller)) {
             return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyConnected), Theme.key_windowBackgroundWhiteGreenText);
         }
         return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyConnecting), Theme.key_windowBackgroundWhiteGrayText2);
@@ -291,9 +289,14 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
 
 
     // The same rule the chat-list item uses: the core runs and Telegram itself is connected through it.
+    // Without the transport the app connection does not go through the proxy, so only the core matters.
     private boolean isConnected(ProxyController controller) {
-        return controller.status() == ProxyController.Status.RUNNING
-            && (currentConnectionState == ConnectionsManager.ConnectionStateConnected || currentConnectionState == ConnectionsManager.ConnectionStateUpdating);
+        if (controller.status() != ProxyController.Status.RUNNING) {
+            return false;
+        }
+        return !controller.useForTransport()
+            || currentConnectionState == ConnectionsManager.ConnectionStateConnected
+            || currentConnectionState == ConnectionsManager.ConnectionStateUpdating;
     }
 
 
