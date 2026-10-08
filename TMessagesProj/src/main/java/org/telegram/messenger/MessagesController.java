@@ -20470,8 +20470,9 @@ public class MessagesController extends BaseController implements NotificationCe
 //                                continue;
 //                            }
                             // A replay of the call that is already ringing or starting is not "busy".
-                            if ((VoIPService.callIShouldHavePutIntoIntent != null && VoIPService.callIShouldHavePutIntoIntent.id == call.id)
-                                || (svc != null && svc.getPrivateCall() != null && svc.getPrivateCall().id == call.id)) {
+                            TL_phone.PhoneCall startingCall = VoIPService.callIShouldHavePutIntoIntent;
+                            TL_phone.PhoneCall activeCall = svc != null ? svc.getPrivateCall() : null;
+                            if ((startingCall != null && startingCall.id == call.id) || (activeCall != null && activeCall.id == call.id)) {
                                 FileLog.d("Ignoring duplicate request for call " + call.id);
                                 continue;
                             }

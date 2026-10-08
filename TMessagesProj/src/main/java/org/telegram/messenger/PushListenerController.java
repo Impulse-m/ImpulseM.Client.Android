@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 @Keep
 public class PushListenerController {
@@ -52,7 +53,6 @@ public class PushListenerController {
     public static final int NOTIFICATION_ID = 1;
     private static final long CallHoldMillis = 10000L;
     private static final long CallHoldPollMillis = 200L;
-    private static CountDownLatch countDownLatch = new CountDownLatch(1);
 
     public static void sendRegistrationToServer(@PushType int pushType, String token) {
         Utilities.stageQueue.postRunnable(() -> {
@@ -103,6 +103,8 @@ public class PushListenerController {
 
     public static void processRemoteMessage(@PushType int pushType, String data, long time) {
         String tag = pushType == PUSH_TYPE_FIREBASE ? "FCM" : "HCM";
+        // One latch per push, so a push never sees the released latch of an earlier one.
+        final CountDownLatch countDownLatch = new CountDownLatch(1);
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d(tag + " PRE START PROCESSING");
         }
@@ -136,7 +138,7 @@ public class PushListenerController {
                     byte[] inAuthKeyId = new byte[8];
                     buffer.readBytes(inAuthKeyId, true);
                     if (!Arrays.equals(SharedConfig.pushAuthKeyId, inAuthKeyId)) {
-                        onDecryptError();
+                        onDecryptError(countDownLatch);
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(String.format(Locale.US, tag + " DECRYPT ERROR 2 k1=%s k2=%s, key=%s", Utilities.bytesToHex(SharedConfig.pushAuthKeyId), Utilities.bytesToHex(inAuthKeyId), Utilities.bytesToHex(SharedConfig.pushAuthKey)));
                         }
@@ -151,7 +153,7 @@ public class PushListenerController {
 
                     byte[] messageKeyFull = Utilities.computeSHA256(SharedConfig.pushAuthKey, 88 + 8, 32, buffer.buffer, 24, buffer.buffer.limit());
                     if (!Utilities.arraysEquals(messageKey, 0, messageKeyFull, 8)) {
-                        onDecryptError();
+                        onDecryptError(countDownLatch);
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(String.format(tag + " DECRYPT ERROR 3, key = %s", Utilities.bytesToHex(SharedConfig.pushAuthKey)));
                         }
@@ -1495,7 +1497,7 @@ public class PushListenerController {
                             }
                         }
                     }
-                    if ("PHONE_CALL_REQUEST".equals(loc_key) && ringIncomingCallFromPush(accountFinal, custom)) {
+                    if ("PHONE_CALL_REQUEST".equals(loc_key) && ringIncomingCallFromPush(accountFinal, custom, countDownLatch)) {
                         // The latch is released once the incoming-call UI is up, or after CallHoldMillis at the latest.
                         canRelease = false;
                     }
@@ -1511,7 +1513,7 @@ public class PushListenerController {
                         ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
                         countDownLatch.countDown();
                     } else {
-                        onDecryptError();
+                        onDecryptError(countDownLatch);
                     }
                     if (BuildVars.LOGS_ENABLED) {
                         FileLog.e("error in loc_key = " + loc_key + " json " + jsonString);
@@ -1521,7 +1523,9 @@ public class PushListenerController {
             });
         });
         try {
-            countDownLatch.await();
+            if (!countDownLatch.await(15, TimeUnit.SECONDS)) {
+                FileLog.w(tag + " push was not released in time");
+            }
         } catch (Throwable ignore) {
 
         }
@@ -1529,6 +1533,7 @@ public class PushListenerController {
             FileLog.d("finished " + tag + " service, time = " + (SystemClock.elapsedRealtime() - receiveTime));
         }
     }
+
 
     /**
      * Decodes the updates carried by a PHONE_CALL_REQUEST push and feeds them to the updates pipeline, so the phone
@@ -1539,7 +1544,8 @@ public class PushListenerController {
      */
     private static boolean ringIncomingCallFromPush(
         int account,
-        JSONObject custom
+        JSONObject custom,
+        CountDownLatch latch
     ) {
         NativeByteBuffer buffer = null;
         try {
@@ -1567,21 +1573,26 @@ public class PushListenerController {
                 buffer.reuse();
             }
         }
-        holdForIncomingCall(SystemClock.elapsedRealtime() + CallHoldMillis);
+        holdForIncomingCall(latch, SystemClock.elapsedRealtime() + CallHoldMillis);
         return true;
     }
 
+
     /** Keeps the push alive until the incoming-call UI is up, the call is gone, or the deadline passes. */
-    private static void holdForIncomingCall(long deadline) {
+    private static void holdForIncomingCall(
+        CountDownLatch latch,
+        long deadline
+    ) {
         boolean release = SystemClock.elapsedRealtime() >= deadline
             || isIncomingCallUiShown()
             || (VoIPService.callIShouldHavePutIntoIntent == null && VoIPPreNotificationService.pendingCall == null);
         if (release) {
-            countDownLatch.countDown();
+            latch.countDown();
             return;
         }
-        Utilities.stageQueue.postRunnable(() -> holdForIncomingCall(deadline), CallHoldPollMillis);
+        Utilities.stageQueue.postRunnable(() -> holdForIncomingCall(latch, deadline), CallHoldPollMillis);
     }
+
 
     private static boolean isIncomingCallUiShown() {
         if (VoIPService.getSharedInstance() != null) {
@@ -1602,6 +1613,7 @@ public class PushListenerController {
         }
         return false;
     }
+
 
     private static String getReactedText(String loc_key, Object[] args) {
         switch (loc_key) {
@@ -1727,14 +1739,14 @@ public class PushListenerController {
         return null;
     }
 
-    private static void onDecryptError() {
+    private static void onDecryptError(CountDownLatch latch) {
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             if (UserConfig.getInstance(a).isClientActivated()) {
                 ConnectionsManager.onInternalPushReceived(a);
                 ConnectionsManager.getInstance(a).resumeNetworkMaybe();
             }
         }
-        countDownLatch.countDown();
+        latch.countDown();
     }
 
     @Keep
