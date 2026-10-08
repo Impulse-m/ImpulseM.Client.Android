@@ -24,4 +24,17 @@ public final class ProxyRouting {
         }
         return running ? Route.PROXY : Route.BLOCKED;
     }
+
+
+    /**
+     * Whether a call must be relayed through the tunnel. Deliberately independent of whether the core is running:
+     * with the core down the tunnelled call fails closed instead of going direct.
+     */
+    public static boolean tunnelCalls(
+        boolean vlessFeature,
+        boolean enabled,
+        boolean useForCalls
+    ) {
+        return vlessFeature && enabled && useForCalls;
+    }
 }

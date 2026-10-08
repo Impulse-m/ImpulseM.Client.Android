@@ -10,6 +10,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.math.BigInteger;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -237,13 +239,13 @@ public class DeviceDriver {
             "messages.getDhConfig",
             TlBuilder.method("messages.getDhConfig").put("version", 0).put("random_length", 256)
         );
-        java.math.BigInteger p = new java.math.BigInteger(1, (byte[]) dh.get("p"));
-        java.math.BigInteger g = java.math.BigInteger.valueOf(((Number) dh.get("g")).longValue());
+        BigInteger p = new BigInteger(1, (byte[]) dh.get("p"));
+        BigInteger g = BigInteger.valueOf(((Number) dh.get("g")).longValue());
         byte[] salt = new byte[256];
         random.nextBytes(salt);
-        java.math.BigInteger exponent = new java.math.BigInteger(1, salt);
+        BigInteger exponent = new BigInteger(1, salt);
         byte[] ga = pad256(g.modPow(exponent, p));
-        byte[] gaHash = java.security.MessageDigest.getInstance("SHA-256").digest(ga);
+        byte[] gaHash = MessageDigest.getInstance("SHA-256").digest(ga);
         TlBuilder protocol = TlBuilder.object("phoneCallProtocol")
             .put("udp_p2p", Boolean.TRUE)
             .put("udp_reflector", Boolean.TRUE)
@@ -298,9 +300,9 @@ public class DeviceDriver {
             }
         }
         assertNotNull("not accepted in time", accepted);
-        java.math.BigInteger key = new java.math.BigInteger(1, (byte[]) accepted.get("g_b")).modPow(exponent, p);
+        BigInteger key = new BigInteger(1, (byte[]) accepted.get("g_b")).modPow(exponent, p);
         byte[] authKey = pad256(key);
-        byte[] sha = java.security.MessageDigest.getInstance("SHA-1").digest(authKey);
+        byte[] sha = MessageDigest.getInstance("SHA-1").digest(authKey);
         long fingerprint = 0;
         for (int i = 0; i < 8; i++) {
             fingerprint |= (sha[sha.length - 8 + i] & 0xFFL) << (8 * i);
@@ -331,7 +333,7 @@ public class DeviceDriver {
     }
 
 
-    private static byte[] pad256(java.math.BigInteger value) {
+    private static byte[] pad256(BigInteger value) {
         byte[] raw = value.toByteArray();
         byte[] out = new byte[256];
         if (raw.length > 256) {

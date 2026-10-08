@@ -15,7 +15,6 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.telegram.messenger.ImpulseFeatures
 import org.telegram.tgnet.impulse.proxy.ProxyController
-import java.io.IOException
 import java.net.InetSocketAddress
 
 
@@ -108,13 +107,15 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
                 if (existing != null && existing.socks == runtime.socksEndpoint) {
                     return existing.port
                 }
-                stale = existing
+                // Drop the old entry first so a failed start cannot leave a closed forwarder in the map.
+                stale = forwarders.remove(key)
                 val forwarder: TurnForwarder = TurnForwarder(endpoint, runtime.socksEndpoint, runtime.user, runtime.password)
                 val port: Int = forwarder.start()
                 forwarders[key] = Entry(forwarder, runtime.socksEndpoint, port)
                 return port
             }
-        } catch (exception: IOException) {
+        } catch (exception: Exception) {
+            // IOException or anything unexpected from the forwarder: fail closed, the URL is dropped.
             return 0
         } finally {
             stale?.forwarder?.close()
@@ -208,15 +209,11 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
         private const val DeadEnd: String = "turn:127.0.0.1:9?transport=tcp"
 
 
-        /** True when a new call must be relayed through the VLESS tunnel. */
+        /** True when a new call must be relayed through the VLESS tunnel (fails closed when the core is down). */
         @JvmStatic
         fun shouldTunnel(): Boolean {
-            if (!ImpulseFeatures.VLESS) {
-                return false
-            }
-            val controller: ProxyController = ProxyController.getInstance()
-            val state: ProxyState = controller.snapshot()
-            return state.enabled && state.useForCalls && controller.route() == ProxyRouting.Route.PROXY
+            val state: ProxyState = ProxyController.getInstance().snapshot()
+            return ProxyRouting.tunnelCalls(ImpulseFeatures.VLESS, state.enabled, state.useForCalls)
         }
     }
 }
