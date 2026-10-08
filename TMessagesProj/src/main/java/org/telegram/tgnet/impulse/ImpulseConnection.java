@@ -2,6 +2,7 @@ package org.telegram.tgnet.impulse;
 
 import android.os.SystemClock;
 
+import net.impulsem.proxy.ProxyRouting;
 import net.impulsem.transport.auth.Clock;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
@@ -23,7 +24,6 @@ import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.impulse.proxy.ImpulseProxySelector;
 import org.telegram.tgnet.impulse.proxy.ProxyController;
-import net.impulsem.proxy.ProxyRouting;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -87,6 +87,7 @@ public final class ImpulseConnection {
         boolean listening;
         boolean cancelled;
         boolean waitingRetry;
+        boolean proxyRetry;
         int serverFailures;
         int networkFailures;
         String method = "?";
@@ -126,7 +127,7 @@ public final class ImpulseConnection {
     private boolean configAgain;
     private boolean started;
     private long userId;
-    private int connectionState = ConnectionStateConnecting;
+    private int connectionState = connectingState();
     private int thisDatacenter = 1;
 
     private volatile long timeOffsetMillis;
@@ -472,18 +473,29 @@ public final class ImpulseConnection {
     }
 
 
+    /** Drops everything that was opened over the old route: idle and live sockets, in-flight calls, the realtime socket. */
     public void proxyChanged() {
-        sharedHttpClient().connectionPool().evictAll();
         executor.execute(new Runnable() {
             @Override
             public void run() {
+                synchronized (lock) {
+                    for (Pending pending : pendings.values()) {
+                        if (pending.call != null) {
+                            // The cancelled call fails with an IOException and goes again over the new route.
+                            pending.proxyRetry = true;
+                        }
+                    }
+                }
+                OkHttpClient client = sharedHttpClient();
+                client.connectionPool().evictAll();
+                client.dispatcher().cancelAll();
                 if (ApplicationLoader.isNetworkOnline()) {
                     setState(connectingState());
                     retryNow();
                 }
             }
         });
-        realtime.syncSoon();
+        realtime.reconnect();
     }
 
 
@@ -769,6 +781,12 @@ public final class ImpulseConnection {
             }
         }
         RequestEntry entry = pending.entry;
+        if (pending.proxyRetry) {
+            // Cancelled because the proxy changed: not a failure of the request, so it does not count as an attempt.
+            pending.proxyRetry = false;
+            scheduleRun(pending, 0L, false);
+            return;
+        }
         pending.networkFailures++;
         log("token " + entry.token + " " + pending.method + " network failure " + pending.networkFailures + ": " + failure);
         setState(ApplicationLoader.isNetworkOnline() ? connectingState() : ConnectionStateWaitingForNetwork);

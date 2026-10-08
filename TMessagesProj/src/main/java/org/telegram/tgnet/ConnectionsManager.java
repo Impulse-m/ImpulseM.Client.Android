@@ -45,7 +45,9 @@ import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.StatsController;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
+import net.impulsem.proxy.ProxyRouting;
 import org.telegram.tgnet.impulse.ImpulseConnection;
+import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.tgnet.impulse.RequestEntry;
 import org.telegram.utils.proxy.WebProxyConnectionTester;
 import org.telegram.utils.proxy.WebProxyTransport;
@@ -219,7 +221,9 @@ public class ConnectionsManager extends BaseController {
 
     public ConnectionsManager(int instance) {
         super(instance);
-        connectionState = ConnectionStateConnecting;
+        connectionState = ProxyController.getInstance().route() == ProxyRouting.Route.DIRECT
+            ? ConnectionStateConnecting
+            : ConnectionStateConnectingToProxy;
         impulse = ImpulseConnection.forAccount(currentAccount, this);
         String deviceModel;
         String systemLangCode;

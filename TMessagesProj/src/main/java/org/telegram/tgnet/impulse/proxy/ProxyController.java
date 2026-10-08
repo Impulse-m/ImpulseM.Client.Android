@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.security.SecureRandom;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -76,6 +77,9 @@ public final class ProxyController {
     private volatile Status status = Status.OFF;
     private volatile String lastError;
     private volatile Runtime runtime;
+    // What the transport last saw; guarded by lock.
+    private ProxyRouting.Route publishedRoute;
+    private Runtime publishedRuntime;
     // Worker-thread only: invalidates a pending health check, and tracks the single automatic retry.
     private int generation;
     private boolean autoRetried;
@@ -90,6 +94,7 @@ public final class ProxyController {
         state = ProxyStateCodec.decode(prefs().getString(StateKey, null));
         // Until the first restart runs, an enabled proxy must not look like a direct route.
         status = state.enabled ? Status.STARTING : Status.OFF;
+        publishedRoute = ProxyRouting.decide(state.enabled, false);
     }
 
 
@@ -369,12 +374,28 @@ public final class ProxyController {
 
 
     private void notifyListeners() {
-        ConnectionsManager.onProxyChanged();
+        publishToTransport();
         AndroidUtilities.runOnUIThread(() -> {
             for (Runnable listener : listeners) {
                 listener.run();
             }
         });
+    }
+
+
+    /** Tells the transport only when the route or the running core changed; a rename or reorder must not drop sockets. */
+    private void publishToTransport() {
+        ProxyRouting.Route currentRoute = route();
+        Runtime currentRuntime = runtime();
+        boolean changed;
+        synchronized (lock) {
+            changed = currentRoute != publishedRoute || currentRuntime != publishedRuntime;
+            publishedRoute = currentRoute;
+            publishedRuntime = currentRuntime;
+        }
+        if (changed) {
+            ConnectionsManager.onProxyChanged();
+        }
     }
 
 
@@ -392,7 +413,7 @@ public final class ProxyController {
     private static InetAddress loopbackV4() {
         try {
             return InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
-        } catch (java.net.UnknownHostException e) {
+        } catch (UnknownHostException e) {
             throw new IllegalStateException(e);
         }
     }
