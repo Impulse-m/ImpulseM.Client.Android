@@ -216,6 +216,29 @@ public final class CentrifugoClient {
     }
 
 
+    /**
+     * Skips a pending reconnect backoff and connects now. Does nothing when the client does not want a connection,
+     * or when a socket is open or a connect attempt is in flight.
+     */
+    public void reconnectNow() {
+        synchronized (lock) {
+            if (!wantConnected || connecting || socket != null) {
+                return;
+            }
+            if (reconnectTask != null) {
+                reconnectTask.cancel(false);
+                reconnectTask = null;
+            }
+        }
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                attemptConnect();
+            }
+        });
+    }
+
+
     public void disconnect() {
         WebSocket closing;
         boolean notify;
