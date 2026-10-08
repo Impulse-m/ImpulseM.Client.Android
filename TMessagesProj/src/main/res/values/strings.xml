@@ -11259,6 +11259,7 @@
     <string name="ImpulseProxyDeleteServerTitle">Delete server?</string>
     <string name="ImpulseProxyDeleteServerText">\"%1$s\" will be removed.</string>
     <string name="ImpulseProxyDeleteActiveWarning">The proxy is using a server from it. Until you choose another server, the app will have no connection.</string>
+    <string name="ImpulseProxyDeleteActiveServerWarning">The proxy is using this server. Until you choose another one, the app will have no connection.</string>
     <string name="ImpulseProxyUnavailable">Unavailable</string>
     <string name="ImpulseProxySkipped">%1$d links skipped (not VLESS)</string>
     <string name="ImpulseProxyTraffic">%1$s of %2$s · until %3$s</string>

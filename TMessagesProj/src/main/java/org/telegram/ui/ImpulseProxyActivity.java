@@ -137,7 +137,8 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         thread.setDaemon(true);
         return thread;
     });
-    private boolean destroyed;
+    // Read by the ping loop on the background thread.
+    private volatile boolean destroyed;
     private long lastPingAt;
     private int currentConnectionState;
     private int nextId;
@@ -165,7 +166,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     @Override
     public void onResume() {
         super.onResume();
-        if (System.currentTimeMillis() - lastPingAt >= PingIntervalMs) {
+        if (!pinging && System.currentTimeMillis() - lastPingAt >= PingIntervalMs) {
             pingServers(false, sortDelays.isEmpty());
         }
         scheduleTick();
@@ -488,7 +489,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                 confirmDelete(
                     getString(R.string.ImpulseProxyDeleteSubscriptionTitle),
                     LocaleController.formatString(R.string.ImpulseProxyDeleteSubscriptionText, subscriptionTitle(action.subscription)),
-                    active,
+                    active ? getString(R.string.ImpulseProxyDeleteActiveWarning) : null,
                     () -> controller.update(next -> next.removeSubscription(id))
                 );
             } else {
@@ -498,11 +499,11 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     }
 
 
-    /** Asks before a destructive delete; activeSelected adds the warning when the running proxy uses the target. */
+    /** Asks before a destructive delete; activeWarning (null when the target isn't selected) is shown while the proxy is on. */
     private void confirmDelete(
         String title,
         String message,
-        boolean activeSelected,
+        String activeWarning,
         Runnable onConfirm
     ) {
         Context context = getParentActivity();
@@ -510,8 +511,8 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             return;
         }
         String text = message;
-        if (activeSelected && ProxyController.getInstance().isEnabled()) {
-            text = message + "\n\n" + getString(R.string.ImpulseProxyDeleteActiveWarning);
+        if (activeWarning != null && ProxyController.getInstance().isEnabled()) {
+            text = message + "\n\n" + activeWarning;
         }
         AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
         builder.setTitle(title);
@@ -549,7 +550,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
                 confirmDelete(
                     getString(R.string.ImpulseProxyDeleteServerTitle),
                     LocaleController.formatString(R.string.ImpulseProxyDeleteServerText, displayName(server)),
-                    server.id.equals(ProxyController.getInstance().snapshot().selectedId),
+                    server.id.equals(ProxyController.getInstance().snapshot().selectedId) ? getString(R.string.ImpulseProxyDeleteActiveServerWarning) : null,
                     () -> ProxyController.getInstance().update(next -> next.removeServer(server.id))
                 );
             });
