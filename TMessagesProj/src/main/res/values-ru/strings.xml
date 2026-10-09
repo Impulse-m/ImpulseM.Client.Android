@@ -358,4 +358,7 @@
     <string name="ImpulseProxyAdvMssError">Введите 0 или число от 64 до 1460</string>
     <string name="ImpulseProxyAdvDnsError">Введите адрес DoH с https:// или IPv4-адрес</string>
     <string name="ImpulseProxyAdvUrlError">Введите адрес с https://</string>
+    <string name="DiagnosticsTitle">Диагностика</string>
+    <string name="DiagnosticsLogs">Отправлять диагностические логи</string>
+    <string name="DiagnosticsLogsInfo">Отправляет разработчикам технические события: подключение, синхронизация, звонки, ошибки (без текста исключений). Текст сообщений, номера и имена не отправляются; отправляются идентификаторы чатов, сообщений и звонков. Только в бета-версии.</string>
 </resources>

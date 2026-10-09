@@ -39,6 +39,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.BuildConfig;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.ContactsController;
 import org.telegram.messenger.FileLog;
@@ -48,6 +49,7 @@ import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.tl.TL_account;
@@ -161,6 +163,9 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
     @Keep
     private int secretWebpageRow;
     private int secretDetailRow;
+    private int diagnosticsSectionRow;
+    private int diagnosticsRow;
+    private int diagnosticsDetailRow;
     private int rowCount;
 
     private final ArrayList<BotBiometry.Bot> biometryBots = new ArrayList<>();
@@ -507,6 +512,11 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                 if (view instanceof TextCheckCell) {
                     ((TextCheckCell) view).setChecked(getMessagesController().secretWebpagePreview == 1);
                 }
+            } else if (position == diagnosticsRow) {
+                RemoteLog.setEnabled(!RemoteLog.isEnabled());
+                if (view instanceof TextCheckCell) {
+                    ((TextCheckCell) view).setChecked(RemoteLog.isEnabled());
+                }
             } else if (position == contactsDeleteRow) {
                 if (getParentActivity() == null) {
                     return;
@@ -808,6 +818,15 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
         secretMapRow = rowCount++;
         secretWebpageRow = rowCount++;
         secretDetailRow = rowCount++;
+        if (BuildConfig.DEBUG_VERSION) {
+            diagnosticsSectionRow = rowCount++;
+            diagnosticsRow = rowCount++;
+            diagnosticsDetailRow = rowCount++;
+        } else {
+            diagnosticsSectionRow = -1;
+            diagnosticsRow = -1;
+            diagnosticsDetailRow = -1;
+        }
         if (listAdapter != null && notify) {
             listAdapter.notifyDataSetChanged();
         }
@@ -1034,7 +1053,8 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
         public boolean isEnabled(RecyclerView.ViewHolder holder) {
             int position = holder.getAdapterPosition();
             return position == passcodeRow || position == passwordRow || position == passkeysRow || position == blockedRow || position == sessionsRow || position == secretWebpageRow || position == webSessionsRow ||
-                    position == groupsRow && !getContactsController().getLoadingPrivacyInfo(ContactsController.PRIVACY_RULES_TYPE_INVITE) ||
+                    position == diagnosticsRow ||
+                    position == groupsRow &&!getContactsController().getLoadingPrivacyInfo(ContactsController.PRIVACY_RULES_TYPE_INVITE) ||
                     position == lastSeenRow && !getContactsController().getLoadingPrivacyInfo(ContactsController.PRIVACY_RULES_TYPE_LASTSEEN) ||
                     position == callsRow && !getContactsController().getLoadingPrivacyInfo(ContactsController.PRIVACY_RULES_TYPE_CALLS) ||
                     position == profilePhotoRow && !getContactsController().getLoadingPrivacyInfo(ContactsController.PRIVACY_RULES_TYPE_PHOTO) ||
@@ -1254,6 +1274,8 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                         privacyCell.setText(getString("SessionsSettingsInfo", R.string.SessionsSettingsInfo));
                     } else if (position == secretDetailRow) {
                         privacyCell.setText(getString("SecretWebPageInfo", R.string.SecretWebPageInfo));
+                    } else if (position == diagnosticsDetailRow) {
+                        privacyCell.setText(getString("DiagnosticsLogsInfo", R.string.DiagnosticsLogsInfo));
                     } else if (position == botsDetailRow) {
                         privacyCell.setText(getString("PrivacyBotsInfo", R.string.PrivacyBotsInfo));
                     } else if (position == privacyShadowRow) {
@@ -1279,6 +1301,8 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                         headerCell.setText(getString("DeleteMyAccount", R.string.DeleteMyAccount));
                     } else if (position == secretSectionRow) {
                         headerCell.setText(getString("SecretChat", R.string.SecretChat));
+                    } else if (position == diagnosticsSectionRow) {
+                        headerCell.setText(getString("DiagnosticsTitle", R.string.DiagnosticsTitle));
                     } else if (position == botsSectionRow) {
                         headerCell.setText(getString("PrivacyBots", R.string.PrivacyBots));
                     } else if (position == contactsSectionRow) {
@@ -1291,6 +1315,8 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                     TextCheckCell textCheckCell = (TextCheckCell) holder.itemView;
                     if (position == secretWebpageRow) {
                         textCheckCell.setTextAndCheck(getString("SecretWebPage", R.string.SecretWebPage), getMessagesController().secretWebpagePreview == 1, false);
+                    } else if (position == diagnosticsRow) {
+                        textCheckCell.setTextAndCheck(getString("DiagnosticsLogs", R.string.DiagnosticsLogs), RemoteLog.isEnabled(), false);
                     } else if (position == contactsSyncRow) {
                         textCheckCell.setTextAndCheck(getString("SyncContacts", R.string.SyncContacts), newSync, true);
                     } else if (position == contactsSuggestRow) {
@@ -1406,11 +1432,11 @@ public class PrivacySettingsActivity extends BaseFragment implements Notificatio
                     position == deleteAccountRow || position == webSessionsRow || position == groupsRow || position == paymentsClearRow ||
                     position == secretMapRow || position == contactsDeleteRow || position == botsBiometryRow) {
                 return 0;
-            } else if (position == privacyShadowRow || position == deleteAccountDetailRow || position == groupsDetailRow || position == sessionsDetailRow || position == secretDetailRow || position == botsDetailRow || position == contactsDetailRow || position == newChatsSectionRow) {
+            } else if (position == privacyShadowRow || position == deleteAccountDetailRow || position == groupsDetailRow || position == sessionsDetailRow || position == secretDetailRow || position == botsDetailRow || position == contactsDetailRow || position == newChatsSectionRow || position == diagnosticsDetailRow) {
                 return 1;
-            } else if (position == securitySectionRow || position == advancedSectionRow || position == privacySectionRow || position == secretSectionRow || position == botsSectionRow || position == contactsSectionRow || position == newChatsHeaderRow) {
+            } else if (position == securitySectionRow || position == advancedSectionRow || position == privacySectionRow || position == secretSectionRow || position == botsSectionRow || position == contactsSectionRow || position == newChatsHeaderRow || position == diagnosticsSectionRow) {
                 return 2;
-            } else if (position == secretWebpageRow || position == contactsSyncRow || position == contactsSuggestRow || position == newChatsRow) {
+            } else if (position == secretWebpageRow || position == contactsSyncRow || position == contactsSuggestRow || position == newChatsRow || position == diagnosticsRow) {
                 return 3;
             } else if (position == botsAndWebsitesShadowRow) {
                 return 4;

@@ -25,7 +25,8 @@ import java.util.logging.Logger;
 
 /**
  * Ships structured traces and exceptions to the backend's Loki ({IMPULSEM_ENDPOINT}/loki/api/v1/push). Free-text lines
- * stay in the local log file only. On by default in debug (beta) builds; the debug menu switches it.
+ * stay in the local log file only. Beta builds only (BuildConfig.DEBUG_VERSION), and off until the user turns it on in
+ * Settings > Privacy and Security; a release build never creates the shipper at all.
  */
 public final class RemoteLog {
 
@@ -38,17 +39,16 @@ public final class RemoteLog {
     public static final String ComponentTransport = "transport";
     public static final String ComponentCrash = "crash";
 
-    public static final long PushFlushMillis = 3000L;
-
     private static final String ServiceName = "ImpulseM.Android";
     private static final String PreferencesName = "remoteLog";
-    private static final String EnabledKey = "enabled";
+    private static final String OptInKey = "optIn";
     private static final String InstallIdKey = "installId";
     private static final String TransportLoggerName = "net.impulsem.transport";
     private static final long CrashFlushMillis = 2000L;
+    private static final LogLevel MinimumLevel = LogLevel.DEBUG;
 
     private static volatile LokiShipper shipper;
-    private static volatile LogLevel minimumLevel = LogLevel.DEBUG;
+    private static boolean initialized;
     private static SharedPreferences preferences;
     private static Logger transportLogger;
 
@@ -57,26 +57,35 @@ public final class RemoteLog {
     }
 
 
-    /** Called once from Application.onCreate, before the first FileLog line. */
+    /**
+     * Called once from Application.onCreate, before the first FileLog line. A release build gets no shipper, so nothing
+     * can ship from it; a beta build gets one that stays off until the user opts in.
+     */
     public static synchronized void init(Context context) {
-        if (shipper != null) {
+        if (initialized) {
+            return;
+        }
+        initialized = true;
+        bridgeTransportLogging();
+        if (!BuildConfig.DEBUG_VERSION) {
             return;
         }
         preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE);
-        minimumLevel = BuildConfig.DEBUG_VERSION ? LogLevel.DEBUG : LogLevel.INFO;
         Map<String, String> labels = new LinkedHashMap<>();
         labels.put("service_name", ServiceName);
-        labels.put("app_version", appVersion(context));
-        labels.put("device_model", Build.MODEL == null ? "unknown" : Build.MODEL);
-        labels.put("install_id", installId());
+        Map<String, String> lineFields = new LinkedHashMap<>();
+        lineFields.put("app", appVersion(context));
+        lineFields.put("device", Build.MODEL == null ? "unknown" : Build.MODEL);
+        lineFields.put("install", installId());
         LokiShipper created = new LokiShipper(
             ImpulseConnection::httpClient,
             LokiShipper.pushUrlFor(ImpulseEndpoints.rpcBaseUrl()),
-            labels
+            labels,
+            lineFields,
+            ImpulseConnection::processBearer
         );
-        created.setEnabled(preferences.getBoolean(EnabledKey, BuildConfig.DEBUG_VERSION));
+        created.setEnabled(preferences.getBoolean(OptInKey, false));
         shipper = created;
-        bridgeTransportLogging();
         flushBeforeCrash();
     }
 
@@ -97,20 +106,29 @@ public final class RemoteLog {
     }
 
 
+    /** True in a beta build, the only kind that can ship; the settings row is shown only then. */
+    public static boolean isAvailable() {
+        return shipper != null;
+    }
+
+
     public static boolean isEnabled() {
         LokiShipper current = shipper;
         return current != null && current.isEnabled();
     }
 
 
+    /** The user's opt-in. Turning it off stops shipping at once and drops whatever is queued; nothing is sent about it. */
     public static void setEnabled(boolean enabled) {
         LokiShipper current = shipper;
         if (current == null) {
             return;
         }
-        preferences.edit().putBoolean(EnabledKey, enabled).apply();
+        preferences.edit().putBoolean(OptInKey, enabled).apply();
         current.setEnabled(enabled);
-        trace(ComponentApp, enabled ? "REMOTE_LOG_ENABLED" : "REMOTE_LOG_DISABLED");
+        if (enabled) {
+            trace(ComponentApp, "REMOTE_LOG_ENABLED");
+        }
     }
 
 
@@ -125,7 +143,7 @@ public final class RemoteLog {
         Object... keysAndValues
     ) {
         LokiShipper current = shipper;
-        if (error == null || current == null || !current.isEnabled() || !level.isAtLeast(minimumLevel)) {
+        if (error == null || current == null || !current.isEnabled() || !level.isAtLeast(MinimumLevel)) {
             return;
         }
         current.append(new LogRecord(
@@ -157,12 +175,16 @@ public final class RemoteLog {
         String event,
         Object... keysAndValues
     ) {
+        LokiShipper current = shipper;
+        boolean ships = current != null && current.isEnabled() && level.isAtLeast(MinimumLevel);
+        if (!ships && !BuildVars.LOGS_ENABLED) {
+            return;
+        }
         Map<String, Object> fields = LogRecord.fieldsOf(keysAndValues);
         if (BuildVars.LOGS_ENABLED) {
             FileLog.local(level, component + " " + event + " " + fields);
         }
-        LokiShipper current = shipper;
-        if (current == null || !current.isEnabled() || !level.isAtLeast(minimumLevel)) {
+        if (!ships) {
             return;
         }
         current.append(new LogRecord(

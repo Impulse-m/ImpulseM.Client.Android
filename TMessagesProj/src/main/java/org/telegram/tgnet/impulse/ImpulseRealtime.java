@@ -27,6 +27,7 @@ import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.tl.TL_update;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
@@ -122,6 +123,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             .build();
         this.client = new CentrifugoClient(http, ImpulseEndpoints.realtimeUrl(), this, this, executor);
         this.client.setLogLabel("account=" + account);
+        this.client.setTraceSink(this::traceLifecycle);
         this.lanes = new ChannelLaneManager(account, client, connection);
     }
 
@@ -223,7 +225,14 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             }
             return token;
         } catch (SessionLostException e) {
-            RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentRealtime, "REALTIME_SESSION_LOST", "account", account, "during", "token_fetch", "error", e);
+            RemoteLog.trace(
+                LogLevel.WARN,
+                RemoteLog.ComponentRealtime,
+                "REALTIME_SESSION_LOST",
+                "account", account,
+                "during", "token_fetch",
+                "error", e
+            );
             connection.onRealtimeSessionLost();
             throw e;
         }
@@ -404,6 +413,19 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
                 return thread;
             }
         };
+    }
+
+
+    /** The transport's typed lifecycle fields, tagged with the account, on their way to the remote log. */
+    private void traceLifecycle(
+        LogLevel level,
+        String event,
+        Object... keysAndValues
+    ) {
+        Object[] tagged = Arrays.copyOf(keysAndValues, keysAndValues.length + 2);
+        tagged[keysAndValues.length] = "account";
+        tagged[keysAndValues.length + 1] = account;
+        RemoteLog.trace(level, RemoteLog.ComponentRealtime, event, tagged);
     }
 
 
