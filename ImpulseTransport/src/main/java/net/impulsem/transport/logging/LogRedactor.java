@@ -15,6 +15,7 @@ public final class LogRedactor {
     private static final Pattern ErrorCode = Pattern.compile("[A-Z][A-Z0-9_]{0,63}");
     private static final Set<String> KnownTokens = new HashSet<String>(Arrays.asList(
         "token_fetch",
+        "silent_socket", "backoff_skipped", "connect_failed",
         "user", "channel",
         "subscribe_position_dropped", "subscribe_not_recovered", "publication_requests_difference",
         "publication_unexpected_constructor", "publication_decode_failed",

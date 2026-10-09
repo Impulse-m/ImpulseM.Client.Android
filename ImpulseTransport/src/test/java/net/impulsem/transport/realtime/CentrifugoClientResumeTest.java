@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.util.List;
 import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -15,6 +16,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.SocketFactory;
+import net.impulsem.transport.logging.LogLevel;
+import net.impulsem.transport.logging.LogRecord;
+import net.impulsem.transport.logging.TraceSink;
 import okhttp3.OkHttpClient;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
@@ -260,6 +264,40 @@ public class CentrifugoClientResumeTest {
         Thread.sleep(BackoffMillis + 700L);
         assertEquals(2, server.getRequestCount());
         assertEquals(2, tokenCounter.get());
+    }
+
+
+    @Test
+    public void reconnectNowTracesWhyItActed() throws Exception {
+        final List<String> events = new CopyOnWriteArrayList<String>();
+        final List<Object> causes = new CopyOnWriteArrayList<Object>();
+        client.setTraceSink(new TraceSink() {
+            @Override
+            public void trace(
+                LogLevel level,
+                String event,
+                Object... keysAndValues
+            ) {
+                events.add(event);
+                Object cause = LogRecord.fieldsOf(keysAndValues).get("cause");
+                if (event.equals("REALTIME_RECONNECT_NOW")) {
+                    causes.add(cause);
+                }
+            }
+        });
+        client.connect();
+        assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
+        rawSockets.get(0).close();
+        assertTrue(recorder.reconnecting.await(WaitMillis, TimeUnit.MILLISECONDS));
+        waitForPendingTimer();
+        client.reconnectNow();
+        assertTrue(second.connectSeen.await(ImmediateMillis, TimeUnit.MILLISECONDS));
+        Thread.sleep(300L);
+        setField("lastFrameAt", 0L);
+        client.reconnectNow();
+        assertTrue(third.connectSeen.await(ImmediateMillis, TimeUnit.MILLISECONDS));
+
+        assertEquals(java.util.Arrays.<Object>asList("backoff_skipped", "silent_socket"), causes);
     }
 
 

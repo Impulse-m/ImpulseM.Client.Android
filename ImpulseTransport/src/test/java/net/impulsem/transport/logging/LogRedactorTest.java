@@ -20,6 +20,14 @@ public class LogRedactorTest {
 
 
     @Test
+    public void theRealtimeCauseTokensAreKnown() {
+        assertEquals("silent_socket", LogRedactor.admit("silent_socket"));
+        assertEquals("backoff_skipped", LogRedactor.admit("backoff_skipped"));
+        assertEquals("connect_failed", LogRedactor.admit("connect_failed"));
+    }
+
+
+    @Test
     public void nonFiniteNumbersAreDropped() {
         assertNull(LogRedactor.admit(Double.NaN));
         assertNull(LogRedactor.admit(Double.POSITIVE_INFINITY));
