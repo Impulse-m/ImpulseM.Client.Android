@@ -14,6 +14,10 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
@@ -164,6 +168,13 @@ public class TermsOfServiceView extends FrameLayout {
         params.bottomMargin = AndroidUtilities.dp(75f);
         params.gravity = Gravity.BOTTOM;
         addView(lineView, params);
+
+        // The container lays this view out under the system bars; keep the buttons above the navigation bar.
+        ViewCompat.setOnApplyWindowInsetsListener(this, (v, insets) -> {
+            final Insets systemInsets = AndroidUtilities.getDefaultWindowInsets(insets, false);
+            setPadding(systemInsets.left, 0, systemInsets.right, systemInsets.bottom);
+            return WindowInsetsCompat.CONSUMED;
+        });
     }
 
     private void accept() {
