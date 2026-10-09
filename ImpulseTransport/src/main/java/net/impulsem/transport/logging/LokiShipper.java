@@ -1,9 +1,11 @@
 package net.impulsem.transport.logging;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +32,10 @@ import okhttp3.Response;
  * waiting or 2 s after the first one, a failed batch is requeued and retried with a growing delay, and the buffer is
  * bounded so a dead endpoint cannot grow it without limit. {@link #append} only takes a lock and never blocks on the
  * network.
+ *
+ * <p>A request carries at most {@link #MaxRecordsPerRequest} records and {@link #MaxBodyBytes} bytes. The access token
+ * is attached when a session exists; a token the server rejected with 401 is not sent again, so the push falls back to
+ * the anonymous lane until the session gets a new one.
  */
 public final class LokiShipper {
 
@@ -37,30 +43,80 @@ public final class LokiShipper {
     public static final long FlushIntervalMillis = 2000L;
     public static final int MaxBufferedRecords = 1000;
     public static final int MaxRecordsPerRequest = 200;
+    public static final int MaxBodyBytes = 256 * 1024;
+    public static final long MaxRetryAfterMillis = 600000L;
     public static final String PushPath = "/loki/api/v1/push";
 
     private static final String ShipperComponent = "logging";
+    private static final String LossEvent = "REMOTE_LOG_RECORDS_LOST";
+    private static final String DroppedField = "droppedBufferFull";
+    private static final String RejectedField = "rejectedByServer";
     private static final String ShipperThreadName = "remote-log";
     private static final long RetryInitialMillis = 2000L;
     private static final long RetryMaxMillis = 60000L;
     private static final double RetryJitter = 0.2;
     private static final long CallTimeoutSeconds = 15L;
+    private static final int Unauthorized = 401;
     private static final int TooManyRequests = 429;
     private static final int ClientErrorFloor = 400;
     private static final int ServerErrorFloor = 500;
+    private static final String HeaderAuthorization = "Authorization";
+    private static final String HeaderRetryAfter = "Retry-After";
     private static final MediaType Json = MediaType.get("application/json; charset=utf-8");
+    private static final Clock SystemClock = new Clock() {
+        @Override
+        public long nanoTime() {
+            return System.nanoTime();
+        }
+    };
+
+
+    /** The current access token of the session, or null before login. Called on the shipper thread. */
+    public interface TokenSource {
+
+        String bearer();
+    }
+
+
+    /** A monotonic clock; wall-clock jumps must not move the retry schedule. */
+    interface Clock {
+
+        long nanoTime();
+    }
 
 
     private enum Outcome {
         DELIVERED,
         REJECTED,
+        UNAUTHORIZED,
+        RATE_LIMITED,
         FAILED
+    }
+
+
+    private static final class PostResult {
+
+        final Outcome outcome;
+        final long retryAfterMillis;
+
+
+        PostResult(
+            Outcome outcome,
+            long retryAfterMillis
+        ) {
+            this.outcome = outcome;
+            this.retryAfterMillis = retryAfterMillis;
+        }
     }
 
 
     private final Callable<OkHttpClient> httpSource;
     private final HttpUrl pushUrl;
     private final Map<String, String> labels;
+    private final Map<String, String> context;
+    private final TokenSource tokens;
+    private final Clock clock;
+    private final int maxBodyBytes;
     private final ScheduledThreadPoolExecutor executor;
     private final Object lock = new Object();
     private final ArrayDeque<LogRecord> buffer = new ArrayDeque<LogRecord>();
@@ -70,18 +126,37 @@ public final class LokiShipper {
     private volatile boolean enabled = true;
     private OkHttpClient http;
     private ScheduledFuture<?> scheduledDrain;
+    private Runnable scheduledTask;
     private long scheduledDrainAt;
+    private boolean retryPending;
     private long retryAt;
     private int droppedRecords;
     private int rejectedRecords;
+    private String rejectedToken;
 
 
+    /**
+     * @param labels  the Loki stream labels shared by every record (the service name)
+     * @param context plain fields written into every log line (app version, device model, install id)
+     * @param tokens  the access token of the current session; may be null
+     */
     public LokiShipper(
         Callable<OkHttpClient> httpSource,
         HttpUrl pushUrl,
-        Map<String, String> labels
+        Map<String, String> labels,
+        Map<String, String> context,
+        TokenSource tokens
     ) {
-        this(httpSource, pushUrl, labels, new Backoff(RetryInitialMillis, RetryMaxMillis, RetryJitter, new Random()));
+        this(
+            httpSource,
+            pushUrl,
+            labels,
+            context,
+            tokens,
+            new Backoff(RetryInitialMillis, RetryMaxMillis, RetryJitter, new Random()),
+            SystemClock,
+            MaxBodyBytes
+        );
     }
 
 
@@ -89,12 +164,20 @@ public final class LokiShipper {
         Callable<OkHttpClient> httpSource,
         HttpUrl pushUrl,
         Map<String, String> labels,
-        Backoff retryBackoff
+        Map<String, String> context,
+        TokenSource tokens,
+        Backoff retryBackoff,
+        Clock clock,
+        int maxBodyBytes
     ) {
         this.httpSource = httpSource;
         this.pushUrl = pushUrl;
         this.labels = Collections.unmodifiableMap(new LinkedHashMap<String, String>(labels));
+        this.context = Collections.unmodifiableMap(new LinkedHashMap<String, String>(context));
+        this.tokens = tokens;
         this.retryBackoff = retryBackoff;
+        this.clock = clock;
+        this.maxBodyBytes = maxBodyBytes;
         this.executor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
             @Override
             public Thread newThread(Runnable runnable) {
@@ -114,11 +197,15 @@ public final class LokiShipper {
     }
 
 
+    /** Turning it off at once stops shipping and forgets everything queued, the loss counters included. */
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
         if (!enabled) {
             synchronized (lock) {
                 buffer.clear();
+                droppedRecords = 0;
+                rejectedRecords = 0;
+                retryPending = false;
                 cancelScheduledLocked();
             }
         }
@@ -150,7 +237,10 @@ public final class LokiShipper {
     }
 
 
-    /** Pushes what is buffered now, without waiting, even while a failed push is waiting for its retry. */
+    /**
+     * Pushes what is buffered now, without waiting. A failing endpoint or a rate limit still holds it back until the
+     * retry time.
+     */
     public void flush() {
         synchronized (lock) {
             if (!buffer.isEmpty()) {
@@ -161,8 +251,8 @@ public final class LokiShipper {
 
 
     /**
-     * Pushes what is buffered and waits for it, at most {@code timeoutMillis}. For the moment before the process may
-     * be frozen or killed; never call it on the main thread.
+     * Pushes what is buffered and waits for it, at most {@code timeoutMillis}, ignoring a pending retry time. For the
+     * moment before the process may be frozen or killed; never call it on the main thread.
      *
      * @return true when the buffer was empty afterwards
      */
@@ -173,7 +263,7 @@ public final class LokiShipper {
         Future<?> drained = executor.submit(new Runnable() {
             @Override
             public void run() {
-                drain(true);
+                drain(true, true);
             }
         });
         try {
@@ -202,48 +292,67 @@ public final class LokiShipper {
     }
 
 
+    private static boolean isLossReport(LogRecord record) {
+        return ShipperComponent.equals(record.component) && LossEvent.equals(record.event);
+    }
+
+
     private void scheduleLocked(
         long delayMillis,
-        final boolean forced
+        final boolean drainAll
     ) {
-        long now = System.currentTimeMillis();
-        long dueAt = forced ? now + delayMillis : Math.max(now + delayMillis, retryAt);
-        if (scheduledDrain != null && !scheduledDrain.isDone() && scheduledDrainAt <= dueAt) {
+        long now = clock.nanoTime();
+        long dueAt = now + TimeUnit.MILLISECONDS.toNanos(delayMillis);
+        if (retryPending && dueAt - retryAt < 0L) {
+            dueAt = retryAt;
+        }
+        boolean pendingInFuture = scheduledDrain != null
+            && !scheduledDrain.isDone()
+            && scheduledDrainAt - now > 0L;
+        if (pendingInFuture && scheduledDrainAt - dueAt <= 0L) {
             return;
         }
         cancelScheduledLocked();
         scheduledDrainAt = dueAt;
-        scheduledDrain = executor.schedule(new Runnable() {
+        Runnable task = new Runnable() {
             @Override
             public void run() {
-                drain(forced);
+                synchronized (lock) {
+                    if (scheduledTask == this) {
+                        scheduledTask = null;
+                        scheduledDrain = null;
+                    }
+                }
+                drain(drainAll, false);
             }
-        }, Math.max(0L, dueAt - now), TimeUnit.MILLISECONDS);
+        };
+        scheduledTask = task;
+        scheduledDrain = executor.schedule(task, Math.max(0L, dueAt - now), TimeUnit.NANOSECONDS);
     }
 
 
     private void cancelScheduledLocked() {
         if (scheduledDrain != null) {
             scheduledDrain.cancel(false);
-            scheduledDrain = null;
         }
+        scheduledDrain = null;
+        scheduledTask = null;
     }
 
 
     /** Runs only on the shipper thread. */
-    private void drain(boolean forced) {
+    private void drain(
+        boolean drainAll,
+        boolean ignoreRetry
+    ) {
         while (true) {
             List<LogRecord> batch = new ArrayList<LogRecord>();
             synchronized (lock) {
-                long now = System.currentTimeMillis();
-                if (scheduledDrain != null && scheduledDrainAt <= now) {
-                    scheduledDrain = null;
-                }
                 if (buffer.isEmpty() || !enabled) {
                     return;
                 }
-                if (!forced && now < retryAt) {
-                    scheduleLocked(0L, false);
+                if (!ignoreRetry && retryPending && clock.nanoTime() - retryAt < 0L) {
+                    scheduleLocked(0L, drainAll);
                     return;
                 }
                 LogRecord loss = lossReportLocked();
@@ -254,20 +363,31 @@ public final class LokiShipper {
                     batch.add(buffer.pollFirst());
                 }
             }
-            Outcome outcome = post(batch);
+            String body = fitToBodyLimit(batch);
+            if (batch.isEmpty()) {
+                continue;
+            }
+            PostResult result = body == null ? new PostResult(Outcome.REJECTED, -1L) : post(body);
             synchronized (lock) {
-                if (outcome == Outcome.FAILED) {
+                if (!enabled) {
+                    return;
+                }
+                if (result.outcome == Outcome.FAILED || result.outcome == Outcome.RATE_LIMITED) {
                     requeueLocked(batch);
-                    retryAt = System.currentTimeMillis() + retryBackoff.nextDelayMillis();
+                    long delayMillis = result.retryAfterMillis >= 0L
+                        ? Math.min(result.retryAfterMillis, MaxRetryAfterMillis)
+                        : retryBackoff.nextDelayMillis();
+                    retryAt = clock.nanoTime() + TimeUnit.MILLISECONDS.toNanos(delayMillis);
+                    retryPending = true;
                     scheduleLocked(0L, false);
                     return;
                 }
-                retryAt = 0L;
+                retryPending = false;
                 retryBackoff.reset();
-                if (outcome == Outcome.REJECTED) {
-                    rejectedRecords += batch.size();
+                if (result.outcome != Outcome.DELIVERED) {
+                    discardLocked(batch);
                 }
-                if (buffer.size() < BatchSize && !forced) {
+                if (buffer.size() < BatchSize && !drainAll) {
                     if (!buffer.isEmpty()) {
                         scheduleLocked(FlushIntervalMillis, false);
                     }
@@ -278,13 +398,46 @@ public final class LokiShipper {
     }
 
 
+    /**
+     * Renders the batch, and while the body is over the limit puts the second half back at the head of the buffer. A
+     * single record that alone is over the limit is dropped and counted as rejected, which leaves the batch empty.
+     *
+     * @return the body, or null when the batch is empty or cannot be rendered at all
+     */
+    private String fitToBodyLimit(List<LogRecord> batch) {
+        while (!batch.isEmpty()) {
+            String body;
+            try {
+                body = LokiPayload.build(batch, labels, context);
+            } catch (RuntimeException e) {
+                return null;
+            }
+            if (body.getBytes(StandardCharsets.UTF_8).length <= maxBodyBytes) {
+                return body;
+            }
+            synchronized (lock) {
+                if (batch.size() == 1) {
+                    discardLocked(batch);
+                    batch.clear();
+                    return null;
+                }
+                int keep = (batch.size() + 1) / 2;
+                List<LogRecord> tail = new ArrayList<LogRecord>(batch.subList(keep, batch.size()));
+                batch.subList(keep, batch.size()).clear();
+                requeueLocked(tail);
+            }
+        }
+        return null;
+    }
+
+
     private LogRecord lossReportLocked() {
         if (droppedRecords == 0 && rejectedRecords == 0) {
             return null;
         }
         Map<String, Object> fields = LogRecord.fieldsOf(
-            "droppedBufferFull", droppedRecords,
-            "rejectedByServer", rejectedRecords
+            DroppedField, droppedRecords,
+            RejectedField, rejectedRecords
         );
         droppedRecords = 0;
         rejectedRecords = 0;
@@ -292,7 +445,7 @@ public final class LokiShipper {
             System.currentTimeMillis(),
             LogLevel.WARN,
             ShipperComponent,
-            "REMOTE_LOG_RECORDS_LOST",
+            LossEvent,
             null,
             null,
             null,
@@ -301,15 +454,53 @@ public final class LokiShipper {
     }
 
 
-    /** Puts a failed batch back at the head of the buffer, oldest first, dropping the oldest when the buffer is full. */
+    /** Counts a batch that will not be retried as rejected; a loss report in it gives its counts back. */
+    private void discardLocked(List<LogRecord> batch) {
+        for (LogRecord record : batch) {
+            if (isLossReport(record)) {
+                restoreLossLocked(record);
+            } else {
+                rejectedRecords++;
+            }
+        }
+    }
+
+
+    private void restoreLossLocked(LogRecord report) {
+        droppedRecords += countOf(report, DroppedField);
+        rejectedRecords += countOf(report, RejectedField);
+    }
+
+
+    private static int countOf(
+        LogRecord report,
+        String field
+    ) {
+        Object value = report.fields.get(field);
+        return value instanceof Number ? ((Number) value).intValue() : 0;
+    }
+
+
+    /**
+     * Puts unsent records back at the head of the buffer, oldest first, dropping the oldest when the buffer is full. A
+     * loss report is not requeued; its counts go back to the counters, so the next push reports them.
+     */
     private void requeueLocked(List<LogRecord> batch) {
         for (int i = batch.size() - 1; i >= 0; i--) {
             LogRecord record = batch.get(i);
-            if (ShipperComponent.equals(record.component)) {
+            if (isLossReport(record)) {
+                restoreLossLocked(record);
                 continue;
             }
             if (buffer.size() >= MaxBufferedRecords) {
-                droppedRecords += i + 1;
+                for (int j = 0; j <= i; j++) {
+                    LogRecord lost = batch.get(j);
+                    if (isLossReport(lost)) {
+                        restoreLossLocked(lost);
+                    } else {
+                        droppedRecords++;
+                    }
+                }
                 return;
             }
             buffer.addFirst(record);
@@ -317,31 +508,77 @@ public final class LokiShipper {
     }
 
 
-    private Outcome post(List<LogRecord> batch) {
-        String body;
-        try {
-            body = LokiPayload.build(batch, labels);
-        } catch (RuntimeException e) {
-            return Outcome.REJECTED;
-        }
-        Request request = new Request.Builder()
+    private PostResult post(String body) {
+        String token = effectiveToken();
+        Request.Builder builder = new Request.Builder()
             .url(pushUrl)
-            .post(RequestBody.create(body, Json))
-            .build();
+            .post(RequestBody.create(body, Json));
+        if (token != null) {
+            builder.header(HeaderAuthorization, "Bearer " + token);
+        }
         try {
             OkHttpClient client = client();
-            try (Response response = client.newCall(request).execute()) {
+            try (Response response = client.newCall(builder.build()).execute()) {
                 int code = response.code();
                 if (response.isSuccessful()) {
-                    return Outcome.DELIVERED;
+                    return new PostResult(Outcome.DELIVERED, -1L);
                 }
-                if (code >= ClientErrorFloor && code < ServerErrorFloor && code != TooManyRequests) {
-                    return Outcome.REJECTED;
+                if (code == Unauthorized) {
+                    if (token != null) {
+                        rejectedToken = token;
+                    }
+                    return new PostResult(Outcome.UNAUTHORIZED, -1L);
                 }
-                return Outcome.FAILED;
+                if (code == TooManyRequests) {
+                    return new PostResult(Outcome.RATE_LIMITED, retryAfterMillis(response));
+                }
+                if (code >= ClientErrorFloor && code < ServerErrorFloor) {
+                    return new PostResult(Outcome.REJECTED, -1L);
+                }
+                return new PostResult(Outcome.FAILED, -1L);
             }
         } catch (IOException | RuntimeException e) {
-            return Outcome.FAILED;
+            return new PostResult(Outcome.FAILED, -1L);
+        }
+    }
+
+
+    /** The session token to send, or null when there is none or the server already rejected this very token. */
+    private String effectiveToken() {
+        if (tokens == null) {
+            return null;
+        }
+        String token;
+        try {
+            token = tokens.bearer();
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (token == null || token.isEmpty() || token.equals(rejectedToken)) {
+            return null;
+        }
+        return token;
+    }
+
+
+    /** Retry-After as delta seconds or an HTTP date, in milliseconds from now; -1 when absent or unreadable. */
+    private static long retryAfterMillis(Response response) {
+        String header = response.header(HeaderRetryAfter);
+        if (header == null) {
+            return -1L;
+        }
+        try {
+            long seconds = Long.parseLong(header.trim());
+            if (seconds < 0L) {
+                return -1L;
+            }
+            return TimeUnit.SECONDS.toMillis(Math.min(seconds, MaxRetryAfterMillis / 1000L));
+        } catch (NumberFormatException e) {
+            Date date = response.headers().getDate(HeaderRetryAfter);
+            if (date == null) {
+                return -1L;
+            }
+            return Math.max(0L, date.getTime() - System.currentTimeMillis());
         }
     }
 

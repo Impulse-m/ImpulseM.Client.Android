@@ -5,7 +5,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 
-/** One diagnostic as captured on the calling thread; redaction and serialization happen later, on the shipper thread. */
+/**
+ * One diagnostic as captured on the calling thread; redaction and serialization happen later, on the shipper thread.
+ * The record takes ownership of the field map it is given: the caller must not touch it afterwards.
+ */
 public final class LogRecord {
 
     public final long timestampMillis;
@@ -37,7 +40,7 @@ public final class LogRecord {
         this.thread = thread;
         this.fields = fields == null || fields.isEmpty()
             ? Collections.<String, Object>emptyMap()
-            : Collections.unmodifiableMap(new LinkedHashMap<String, Object>(fields));
+            : Collections.unmodifiableMap(fields);
     }
 
 

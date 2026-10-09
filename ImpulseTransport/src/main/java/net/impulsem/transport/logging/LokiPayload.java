@@ -26,9 +26,15 @@ public final class LokiPayload {
     }
 
 
+    /**
+     * @param labels  the stream labels shared by every record; kept to a minimum because every distinct label value
+     *                makes a new Loki stream
+     * @param context plain fields written into every line instead, e.g. the app version and the install id
+     */
     public static String build(
         List<LogRecord> records,
-        Map<String, String> labels
+        Map<String, String> labels,
+        Map<String, String> context
     ) {
         Map<String, JsonArray> valuesByStream = new LinkedHashMap<String, JsonArray>();
         Map<String, JsonObject> labelsByStream = new LinkedHashMap<String, JsonObject>();
@@ -43,7 +49,7 @@ public final class LokiPayload {
             }
             JsonArray entry = new JsonArray();
             entry.add(new JsonPrimitive(String.valueOf(record.timestampMillis * NanosPerMilli)));
-            entry.add(new JsonPrimitive(line(record, isoFormat)));
+            entry.add(new JsonPrimitive(line(record, isoFormat, context)));
             values.add(entry);
         }
         JsonArray streams = new JsonArray();
@@ -65,12 +71,16 @@ public final class LokiPayload {
      */
     static String line(
         LogRecord record,
-        SimpleDateFormat isoFormat
+        SimpleDateFormat isoFormat,
+        Map<String, String> context
     ) {
         JsonObject line = new JsonObject();
         line.addProperty("ts", isoFormat.format(new Date(record.timestampMillis)));
         line.addProperty("level", record.level.label());
         line.addProperty("component", record.component);
+        for (Map.Entry<String, String> entry : context.entrySet()) {
+            line.addProperty(entry.getKey(), entry.getValue());
+        }
         if (record.event != null && LogRedactor.isEnumToken(record.event)) {
             line.addProperty("event", record.event);
         }

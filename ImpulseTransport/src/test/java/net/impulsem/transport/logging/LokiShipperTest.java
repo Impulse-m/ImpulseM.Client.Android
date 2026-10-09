@@ -3,19 +3,26 @@ package net.impulsem.transport.logging;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.TimeZone;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import net.impulsem.transport.realtime.Backoff;
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
@@ -33,35 +40,54 @@ public class LokiShipperTest {
 
     private MockWebServer server;
     private LokiShipper shipper;
+    private final List<LokiShipper> created = new ArrayList<LokiShipper>();
 
 
     @Before
     public void setUp() throws Exception {
         server = new MockWebServer();
         server.start();
+        shipper = create(realClock(), noToken(), LokiShipper.MaxBodyBytes);
+    }
+
+
+    private LokiShipper create(
+        LokiShipper.Clock clock,
+        LokiShipper.TokenSource tokens,
+        int maxBodyBytes
+    ) {
         Map<String, String> labels = new LinkedHashMap<String, String>();
         labels.put("service_name", "ImpulseM.Android");
-        labels.put("app_version", "12.10.6");
-        labels.put("device_model", "Pixel 8");
-        labels.put("install_id", "install-1");
+        Map<String, String> context = new LinkedHashMap<String, String>();
+        context.put("app", "12.10.6");
+        context.put("device", "Pixel 8");
+        context.put("install", "install-1");
         Callable<OkHttpClient> http = new Callable<OkHttpClient>() {
             @Override
             public OkHttpClient call() {
                 return new OkHttpClient();
             }
         };
-        shipper = new LokiShipper(
+        LokiShipper made = new LokiShipper(
             http,
             LokiShipper.pushUrlFor(server.url("/")),
             labels,
-            new Backoff(100L, 200L, 0.0, new Random(1L))
+            context,
+            tokens,
+            new Backoff(100L, 200L, 0.0, new Random(1L)),
+            clock,
+            maxBodyBytes
         );
+        created.add(made);
+        return made;
     }
 
 
     @After
     public void tearDown() throws Exception {
-        shipper.setEnabled(false);
+        for (LokiShipper made : created) {
+            made.setEnabled(false);
+        }
         server.shutdown();
     }
 
@@ -84,10 +110,11 @@ public class LokiShipperTest {
             JsonObject stream = element.getAsJsonObject().getAsJsonObject("stream");
             assertEquals("ImpulseM.Android", stream.get("service_name").getAsString());
             assertEquals("info", stream.get("level").getAsString());
-            assertEquals("install-1", stream.get("install_id").getAsString());
+            assertEquals("a user id, install id or version must never be a label", 3, stream.size());
             assertTrue(stream.has("component"));
-            assertTrue(stream.has("app_version"));
-            assertTrue(stream.has("device_model"));
+            assertFalse(stream.has("install_id"));
+            assertFalse(stream.has("app_version"));
+            assertFalse(stream.has("device_model"));
             lines += element.getAsJsonObject().getAsJsonArray("values").size();
         }
         assertEquals(LokiShipper.BatchSize, lines);
@@ -313,6 +340,380 @@ public class LokiShipperTest {
     }
 
 
+    @Test
+    public void appDeviceAndInstallTravelInTheLineNotInTheLabels() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(trace("app", LogLevel.INFO, "MARKER", "i", 1));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        JsonObject line = parseFirstLine(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8());
+        assertEquals("12.10.6", line.get("app").getAsString());
+        assertEquals("Pixel 8", line.get("device").getAsString());
+        assertEquals("install-1", line.get("install").getAsString());
+    }
+
+
+    @Test
+    public void theBearerTokenIsSentWhenASessionExistsAndNotBefore() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        final AtomicReference<String> token = new AtomicReference<String>(null);
+        LokiShipper authed = create(realClock(), tokenOf(token), LokiShipper.MaxBodyBytes);
+
+        authed.append(trace("app", LogLevel.INFO, "BEFORE_LOGIN", "i", 1));
+        assertTrue(authed.flushAndWait(AwaitSeconds * 1000L));
+        token.set("access-1");
+        authed.append(trace("app", LogLevel.INFO, "AFTER_LOGIN", "i", 2));
+        assertTrue(authed.flushAndWait(AwaitSeconds * 1000L));
+
+        assertNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getHeader("Authorization"));
+        assertEquals("Bearer access-1", server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getHeader("Authorization"));
+    }
+
+
+    @Test
+    public void a401DropsTheBatchAndTheRejectedTokenIsNotSentAgainUntilItChanges() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(401));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        final AtomicReference<String> token = new AtomicReference<String>("stale");
+        LokiShipper authed = create(realClock(), tokenOf(token), LokiShipper.MaxBodyBytes);
+
+        authed.append(trace("app", LogLevel.INFO, "DROPPED", "i", 1));
+        assertTrue("a 401 drops the batch, it is not retried", authed.flushAndWait(AwaitSeconds * 1000L));
+        authed.append(trace("app", LogLevel.INFO, "ANONYMOUS", "i", 2));
+        assertTrue(authed.flushAndWait(AwaitSeconds * 1000L));
+        token.set("fresh");
+        authed.append(trace("app", LogLevel.INFO, "FRESH", "i", 3));
+        assertTrue(authed.flushAndWait(AwaitSeconds * 1000L));
+
+        RecordedRequest rejected = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        RecordedRequest anonymous = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        RecordedRequest fresh = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        assertEquals("Bearer stale", rejected.getHeader("Authorization"));
+        assertNull(anonymous.getHeader("Authorization"));
+        assertFalse(events(anonymous).contains("DROPPED"));
+        assertEquals("Bearer fresh", fresh.getHeader("Authorization"));
+    }
+
+
+    @Test
+    public void a429WithRetryAfterSecondsWaitsThatLong() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After", "30"));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        TestClock clock = new TestClock();
+        LokiShipper limited = create(clock, noToken(), LokiShipper.MaxBodyBytes);
+
+        limited.append(trace("app", LogLevel.INFO, "LIMITED", "i", 1));
+        limited.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(limited, 1);
+
+        clock.advanceSeconds(29L);
+        limited.flush();
+        assertNull("must wait the full Retry-After", server.takeRequest(700L, TimeUnit.MILLISECONDS));
+        clock.advanceSeconds(2L);
+        limited.flush();
+        RecordedRequest retried = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        assertNotNull(retried);
+        assertEquals("LIMITED", events(retried).get(0));
+    }
+
+
+    @Test
+    public void a429WithRetryAfterHttpDateWaitsUntilThatDate() throws Exception {
+        SimpleDateFormat httpDate = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US);
+        httpDate.setTimeZone(TimeZone.getTimeZone("GMT"));
+        String date = httpDate.format(new Date(System.currentTimeMillis() + 30000L));
+        server.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After", date));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        TestClock clock = new TestClock();
+        LokiShipper limited = create(clock, noToken(), LokiShipper.MaxBodyBytes);
+
+        limited.append(trace("app", LogLevel.INFO, "LIMITED", "i", 1));
+        limited.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(limited, 1);
+
+        clock.advanceSeconds(15L);
+        limited.flush();
+        assertNull(server.takeRequest(700L, TimeUnit.MILLISECONDS));
+        clock.advanceSeconds(25L);
+        limited.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+    }
+
+
+    @Test
+    public void a429RetryAfterIsCappedAtTenMinutes() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(429).setHeader("Retry-After", "86400"));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        TestClock clock = new TestClock();
+        LokiShipper limited = create(clock, noToken(), LokiShipper.MaxBodyBytes);
+
+        limited.append(trace("app", LogLevel.INFO, "LIMITED", "i", 1));
+        limited.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(limited, 1);
+
+        clock.advanceSeconds(599L);
+        limited.flush();
+        assertNull(server.takeRequest(700L, TimeUnit.MILLISECONDS));
+        clock.advanceSeconds(2L);
+        limited.flush();
+        assertNotNull("the wait is capped at 10 minutes", server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+    }
+
+
+    @Test
+    public void a429WithoutRetryAfterUsesTheBackoff() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(429));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        TestClock clock = new TestClock();
+        LokiShipper limited = create(clock, noToken(), LokiShipper.MaxBodyBytes);
+
+        limited.append(trace("app", LogLevel.INFO, "LIMITED", "i", 1));
+        limited.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(limited, 1);
+
+        clock.advanceSeconds(1L);
+        limited.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+    }
+
+
+    @Test
+    public void a413DropsTheBatchAndCountsItAsRejected() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(413));
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(trace("app", LogLevel.INFO, "TOO_BIG", "i", 1));
+        assertTrue("a 413 is not retried", shipper.flushAndWait(AwaitSeconds * 1000L));
+        shipper.append(trace("app", LogLevel.INFO, "NEXT", "i", 2));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        RecordedRequest next = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        assertEquals("REMOTE_LOG_RECORDS_LOST", events(next).get(0));
+        assertFalse(events(next).contains("TOO_BIG"));
+    }
+
+
+    @Test
+    public void everyRequestStaysUnderTheBodyLimitAndNoRecordIsLost() throws Exception {
+        for (int i = 0; i < 40; i++) {
+            server.enqueue(new MockResponse().setResponseCode(204));
+        }
+        int records = 20;
+        for (int i = 0; i < records; i++) {
+            shipper.append(new LogRecord(FixedTimestampMillis, LogLevel.ERROR, "crash", "BIG_" + i, null, bigError(), "test", null));
+        }
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        int delivered = 0;
+        int requests = server.getRequestCount();
+        for (int i = 0; i < requests; i++) {
+            RecordedRequest request = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+            assertTrue("body " + request.getBodySize(), request.getBodySize() <= LokiShipper.MaxBodyBytes);
+            delivered += events(request).size();
+        }
+        assertEquals(records, delivered);
+    }
+
+
+    @Test
+    public void aSingleRecordOverTheLimitIsDroppedAndCountedAsRejected() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        LokiShipper small = create(realClock(), noToken(), 20000);
+
+        small.append(new LogRecord(FixedTimestampMillis, LogLevel.ERROR, "crash", "HUGE", null, bigError(), "test", null));
+        assertTrue(small.flushAndWait(AwaitSeconds * 1000L));
+        small.append(trace("app", LogLevel.INFO, "NEXT", "i", 2));
+        assertTrue(small.flushAndWait(AwaitSeconds * 1000L));
+
+        RecordedRequest only = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        List<String> events = events(only);
+        assertEquals("REMOTE_LOG_RECORDS_LOST", events.get(0));
+        assertEquals("NEXT", events.get(1));
+        assertFalse(events.contains("HUGE"));
+        JsonObject lost = nthLine(only, 0).getAsJsonObject("fields");
+        assertEquals(1, lost.get("rejectedByServer").getAsInt());
+    }
+
+
+    @Test
+    public void theLossReportSurvivesAFailedPushAndShipsWithTheNextOne() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(503));
+        server.enqueue(new MockResponse().setResponseCode(503));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        TestClock clock = new TestClock();
+        LokiShipper lossy = create(clock, noToken(), LokiShipper.MaxBodyBytes);
+
+        lossy.append(trace("app", LogLevel.INFO, "SEED", "i", 0));
+        lossy.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(lossy, 1);
+        int total = LokiShipper.MaxBufferedRecords + 50;
+        for (int i = 0; i < total; i++) {
+            lossy.append(trace("app", LogLevel.INFO, "E" + i, "i", i));
+        }
+        int dropped = 1 + total - LokiShipper.MaxBufferedRecords;
+
+        clock.advanceSeconds(3600L);
+        lossy.flush();
+        assertNotNull("the push carrying the loss report fails", server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(lossy, LokiShipper.MaxBufferedRecords);
+        clock.advanceSeconds(3600L);
+        lossy.flush();
+        RecordedRequest delivered = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+
+        assertEquals("REMOTE_LOG_RECORDS_LOST", events(delivered).get(0));
+        assertEquals(dropped, nthLine(delivered, 0).getAsJsonObject("fields").get("droppedBufferFull").getAsInt());
+    }
+
+
+    @Test
+    public void aForcedFlushDoesNotHitTheEndpointWhileARetryIsPending() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(503));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        TestClock clock = new TestClock();
+        LokiShipper failing = create(clock, noToken(), LokiShipper.MaxBodyBytes);
+
+        failing.append(trace("app", LogLevel.INFO, "RETRY", "i", 1));
+        failing.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(failing, 1);
+
+        failing.flush();
+        failing.flush();
+        assertNull("flush() must wait for the backoff", server.takeRequest(700L, TimeUnit.MILLISECONDS));
+        clock.advanceSeconds(1L);
+        failing.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+    }
+
+
+    @Test
+    public void aPushFailingAfterTheSwitchWasTurnedOffLeavesNothingQueued() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(503).setHeadersDelay(600L, TimeUnit.MILLISECONDS));
+
+        shipper.append(trace("app", LogLevel.INFO, "IN_FLIGHT", "i", 1));
+        shipper.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        shipper.setEnabled(false);
+        Thread.sleep(1500L);
+
+        assertEquals(0, shipper.bufferedCount());
+    }
+
+
+    @Test
+    public void turningTheSwitchOffClearsTheQueueSoNothingShipsOnReEnable() throws Exception {
+        shipper.append(trace("app", LogLevel.INFO, "QUEUED", "i", 1));
+        shipper.setEnabled(false);
+        shipper.setEnabled(true);
+        shipper.flush();
+
+        assertNull(server.takeRequest(700L, TimeUnit.MILLISECONDS));
+        assertEquals(0, shipper.bufferedCount());
+    }
+
+
+    private static void awaitBuffered(
+        LokiShipper target,
+        int count
+    ) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + AwaitSeconds * 1000L;
+        while (target.bufferedCount() != count && System.currentTimeMillis() < deadline) {
+            Thread.sleep(5L);
+        }
+        assertEquals(count, target.bufferedCount());
+    }
+
+
+    private static LokiShipper.Clock realClock() {
+        return new LokiShipper.Clock() {
+            @Override
+            public long nanoTime() {
+                return System.nanoTime();
+            }
+        };
+    }
+
+
+    private static LokiShipper.TokenSource noToken() {
+        return new LokiShipper.TokenSource() {
+            @Override
+            public String bearer() {
+                return null;
+            }
+        };
+    }
+
+
+    private static LokiShipper.TokenSource tokenOf(final AtomicReference<String> token) {
+        return new LokiShipper.TokenSource() {
+            @Override
+            public String bearer() {
+                return token.get();
+            }
+        };
+    }
+
+
+    /** Time that moves only when the test says so; the shipper's schedule is woken with flush() after an advance. */
+    private static final class TestClock implements LokiShipper.Clock {
+
+        private final AtomicLong nanos = new AtomicLong(1000L);
+
+
+        @Override
+        public long nanoTime() {
+            return nanos.get();
+        }
+
+
+        void advanceSeconds(long seconds) {
+            nanos.addAndGet(TimeUnit.SECONDS.toNanos(seconds));
+        }
+    }
+
+
+    /** An exception whose rendering is far over 64 KiB: five levels of cause, each with a full-length stack. */
+    private static Throwable bigError() {
+        Throwable error = null;
+        for (int level = 0; level < 5; level++) {
+            Throwable next = error == null ? new IllegalStateException() : new IllegalStateException(error);
+            StackTraceElement[] frames = new StackTraceElement[400];
+            for (int i = 0; i < frames.length; i++) {
+                frames[i] = new StackTraceElement("org.example.deeply.nested.package.SomeVeryLongClassName" + i, "method" + i, "File.java", i);
+            }
+            next.setStackTrace(frames);
+            error = next;
+        }
+        return error;
+    }
+
+
+    private static JsonObject nthLine(
+        RecordedRequest request,
+        int index
+    ) {
+        JsonArray streams = JsonParser.parseString(request.getBody().clone().readUtf8()).getAsJsonObject().getAsJsonArray("streams");
+        List<JsonObject> lines = new ArrayList<JsonObject>();
+        for (JsonElement stream : streams) {
+            for (JsonElement value : stream.getAsJsonObject().getAsJsonArray("values")) {
+                lines.add(JsonParser.parseString(value.getAsJsonArray().get(1).getAsString()).getAsJsonObject());
+            }
+        }
+        return lines.get(index);
+    }
+
+
     private static LogRecord trace(
         String component,
         LogLevel level,
@@ -347,7 +748,7 @@ public class LokiShipperTest {
 
     private static List<String> events(RecordedRequest request) {
         List<String> events = new ArrayList<String>();
-        JsonArray streams = JsonParser.parseString(request.getBody().readUtf8()).getAsJsonObject().getAsJsonArray("streams");
+        JsonArray streams = JsonParser.parseString(request.getBody().clone().readUtf8()).getAsJsonObject().getAsJsonArray("streams");
         for (JsonElement stream : streams) {
             for (JsonElement value : stream.getAsJsonObject().getAsJsonArray("values")) {
                 String line = value.getAsJsonArray().get(1).getAsString();
