@@ -24,9 +24,8 @@ import java.util.logging.Logger;
 
 
 /**
- * Ships the app's diagnostics to the backend's Loki ({IMPULSEM_ENDPOINT}/loki/api/v1/push), so a trace can be read with
- * LogQL instead of being copied off the phone. Every FileLog line is captured, and {@link #trace} adds structured
- * events. On by default in debug (beta) builds; the debug menu switches it.
+ * Ships structured traces and exceptions to the backend's Loki ({IMPULSEM_ENDPOINT}/loki/api/v1/push). Free-text lines
+ * stay in the local log file only. On by default in debug (beta) builds; the debug menu switches it.
  */
 public final class RemoteLog {
 
@@ -115,24 +114,18 @@ public final class RemoteLog {
     }
 
 
-    /** The FileLog sink: an unstructured line with its level. */
-    public static void capture(
-        LogLevel level,
-        String message,
-        Throwable error
-    ) {
-        capture(level, ComponentApp, message, error);
-    }
-
-
-    public static void capture(
+    /**
+     * An exception with optional typed fields. Only its class and stack frames ship; its message never does, because
+     * messages carry data.
+     */
+    public static void captureException(
         LogLevel level,
         String component,
-        String message,
-        Throwable error
+        Throwable error,
+        Object... keysAndValues
     ) {
         LokiShipper current = shipper;
-        if (current == null || !current.isEnabled() || !level.isAtLeast(minimumLevel)) {
+        if (error == null || current == null || !current.isEnabled() || !level.isAtLeast(minimumLevel)) {
             return;
         }
         current.append(new LogRecord(
@@ -140,10 +133,10 @@ public final class RemoteLog {
             level,
             component,
             null,
-            message,
+            null,
             error,
-            Thread.currentThread().getName(),
-            null
+            null,
+            LogRecord.fieldsOf(keysAndValues)
         ));
     }
 
@@ -219,7 +212,7 @@ public final class RemoteLog {
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, exception) -> {
             try {
-                capture(LogLevel.ERROR, ComponentCrash, "uncaught exception on thread " + thread.getName() + " logsEnabled=" + logsEnabled, exception);
+                captureException(LogLevel.ERROR, ComponentCrash, exception, "logsEnabled", logsEnabled);
                 flushAndWait(CrashFlushMillis);
             } catch (Throwable ignore) {
             }

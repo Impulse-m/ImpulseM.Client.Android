@@ -223,7 +223,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             }
             return token;
         } catch (SessionLostException e) {
-            RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentRealtime, "REALTIME_SESSION_LOST", "account", account, "during", "token_fetch", "error", e.getMessage());
+            RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentRealtime, "REALTIME_SESSION_LOST", "account", account, "during", "token_fetch", "error", e);
             connection.onRealtimeSessionLost();
             throw e;
         }
@@ -294,8 +294,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             "account", account,
             "lane", laneKind(channel),
             "laneId", laneId(channel),
-            "code", code,
-            "reason", reason
+            "code", code
         );
         gaps.onUnsubscribed(channel, code);
     }
@@ -312,7 +311,6 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             "REALTIME_DISCONNECTED",
             "account", account,
             "code", code,
-            "reason", reason,
             "willReconnect", willReconnect
         );
     }

@@ -1514,7 +1514,7 @@ public class PushListenerController {
                     RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_RESUME_NETWORK", "pushType", tag, "locKey", loc_key, "account", currentAccount, "holdsLatch", !canRelease);
                     ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
                 } catch (Throwable e) {
-                    RemoteLog.trace(LogLevel.ERROR, RemoteLog.ComponentPush, "PUSH_FAILED", "pushType", tag, "locKey", loc_key, "decrypted", jsonString != null, "account", currentAccount, "error", e.getClass().getSimpleName());
+                    RemoteLog.trace(LogLevel.ERROR, RemoteLog.ComponentPush, "PUSH_FAILED", "pushType", tag, "locKey", loc_key, "decrypted", jsonString != null, "account", currentAccount, "error", e);
                     if (currentAccount != -1) {
                         ConnectionsManager.onInternalPushReceived(currentAccount);
                         RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_RESUME_NETWORK", "pushType", tag, "locKey", loc_key, "account", currentAccount, "afterFailure", true);
@@ -1577,7 +1577,7 @@ public class PushListenerController {
                 FileLog.e("PHONE_CALL_REQUEST push updates could not be decoded");
                 return false;
             }
-            RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_PUSH_UPDATES", "account", account, "updates", updates.getClass().getSimpleName());
+            RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_PUSH_UPDATES", "account", account, "updates", updates.getClass());
             MessagesController.getInstance(account).processUpdates(updates, false);
         } catch (Throwable e) {
             FileLog.e(e);

@@ -131,11 +131,12 @@ public final class LokiShipper {
 
 
     /**
-     * Queues a record. A record logged on the shipper's own thread (the HTTP stack reporting on the push itself) is
+     * Queues a record that carries something shippable: a structured event or an exception. Free text has neither and is
+     * never queued. A record logged on the shipper's own thread (the HTTP stack reporting on the push itself) is
      * dropped, so a failing push cannot feed itself.
      */
     public void append(LogRecord record) {
-        if (!enabled || Thread.currentThread() == shipperThread) {
+        if (!enabled || Thread.currentThread() == shipperThread || !carriesShippableData(record)) {
             return;
         }
         synchronized (lock) {
@@ -193,6 +194,11 @@ public final class LokiShipper {
         synchronized (lock) {
             return buffer.size();
         }
+    }
+
+
+    private static boolean carriesShippableData(LogRecord record) {
+        return record.event != null || record.error != null;
     }
 
 

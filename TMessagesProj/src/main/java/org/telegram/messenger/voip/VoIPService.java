@@ -944,7 +944,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 				"PHONE_CALL_SERVICE_INCOMING",
 				"account", currentAccount,
 				"callId", privateCall != null ? privateCall.id : null,
-				"state", privateCall != null ? privateCall.getClass().getSimpleName() : null,
+				"state", privateCall != null ? privateCall.getClass() : null,
 				"instantAccept", instantAccept,
 				"connectionService", USE_CONNECTION_SERVICE
 			);

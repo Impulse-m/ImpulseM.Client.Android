@@ -16686,7 +16686,7 @@ public class MessagesController extends BaseController implements NotificationCe
                     "GET_CHANNEL_DIFFERENCE_END",
                     "account", currentAccount,
                     "channelId", channelId,
-                    "result", res.getClass().getSimpleName(),
+                    "result", res.getClass(),
                     "pts", res.pts,
                     "final", res.isFinal,
                     "newMessages", res.new_messages.size(),
@@ -18395,7 +18395,7 @@ public class MessagesController extends BaseController implements NotificationCe
                                 "UNKNOWN_CHANNEL_LOAD",
                                 "account", currentAccount,
                                 "channelId", channelId,
-                                "update", update.getClass().getSimpleName()
+                                "update", update.getClass()
                             );
                         }
                     } else {
@@ -18479,7 +18479,7 @@ public class MessagesController extends BaseController implements NotificationCe
                     "reason", diffReason,
                     "needGetDiff", true,
                     "peerId", diffReasonPeerId == 0 ? null : diffReasonPeerId,
-                    "updates", updates.getClass().getSimpleName(),
+                    "updates", updates.getClass(),
                     "localPts", getMessagesStorage().getLastPtsValue(),
                     "localQts", getMessagesStorage().getLastQtsValue(),
                     "localSeq", getMessagesStorage().getLastSeqValue(),
@@ -18669,7 +18669,7 @@ public class MessagesController extends BaseController implements NotificationCe
                                 RemoteLog.ComponentSync,
                                 "UNKNOWN_PEER_IN_UPDATE",
                                 "account", currentAccount,
-                                "update", baseUpdate.getClass().getSimpleName(),
+                                "update", baseUpdate.getClass(),
                                 "chatId", chatId,
                                 "messageId", message.id,
                                 "needGetDiff", true
@@ -18711,7 +18711,7 @@ public class MessagesController extends BaseController implements NotificationCe
                                     RemoteLog.ComponentSync,
                                     "UNKNOWN_PEER_IN_UPDATE",
                                     "account", currentAccount,
-                                    "update", baseUpdate.getClass().getSimpleName(),
+                                    "update", baseUpdate.getClass(),
                                     "userId", userId,
                                     "role", a == 0 ? "peer" : a == 1 ? "from" : a == 2 ? "fwd_from" : "mention",
                                     "minAllowed", allowMin,
@@ -20582,7 +20582,7 @@ public class MessagesController extends BaseController implements NotificationCe
                             "PHONE_CALL_UPDATE",
                             "account", currentAccount,
                             "callId", call.id,
-                            "state", call.getClass().getSimpleName(),
+                            "state", call.getClass(),
                             "date", call.date,
                             "serverTime", getConnectionsManager().getCurrentTime(),
                             "video", call.video,
@@ -20649,7 +20649,7 @@ public class MessagesController extends BaseController implements NotificationCe
                                     "cause", svc != null ? "voip_service_running" : startingCall != null ? "another_call_starting" : "gsm_call_not_idle",
                                     "serviceAccount", svc != null ? svc.getAccount() : null,
                                     "serviceCallId", activeCall != null ? activeCall.id : null,
-                                    "serviceCallState", activeCall != null ? activeCall.getClass().getSimpleName() : null,
+                                    "serviceCallState", activeCall != null ? activeCall.getClass() : null,
                                     "startingCallId", startingCall != null ? startingCall.id : null,
                                     "gsmCallIdle", callStateIsIdle
                                 );
@@ -20697,21 +20697,21 @@ public class MessagesController extends BaseController implements NotificationCe
                                     ignoreSetOnline = true;
                                 }
                             } catch (Throwable e) {
-                                RemoteLog.trace(LogLevel.ERROR, RemoteLog.ComponentCalls, "PHONE_CALL_SERVICE_START_FAILED", "account", currentAccount, "callId", call.id, "error", e.getClass().getSimpleName());
+                                RemoteLog.trace(LogLevel.ERROR, RemoteLog.ComponentCalls, "PHONE_CALL_SERVICE_START_FAILED", "account", currentAccount, "callId", call.id, "error", e);
                                 FileLog.e(e);
                             }
                         } else {
                             if (svc != null && svc.getAccount() == currentAccount && call != null) {
-                                RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass().getSimpleName(), "to", "voip_service");
+                                RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass(), "to", "voip_service");
                                 svc.onCallUpdated(call);
                             } else {
                                 if (call instanceof TL_phone.TL_phoneCallDiscarded) {
-                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass().getSimpleName(), "to", "pre_notification_dismiss");
+                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass(), "to", "pre_notification_dismiss");
                                     VoIPPreNotificationService.dismiss(ApplicationLoader.applicationContext, false);
                                 }
                                 if (VoIPService.callIShouldHavePutIntoIntent != null) {
                                     boolean sameCall = call.id == VoIPService.callIShouldHavePutIntoIntent.id;
-                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass().getSimpleName(), "to", "starting_service", "sameCall", sameCall);
+                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass(), "to", "starting_service", "sameCall", sameCall);
                                     if (sameCall) {
                                         VoIPService.callIShouldHavePutIntoIntent = call instanceof TL_phone.TL_phoneCallDiscarded ? null : call;
                                     }

@@ -382,7 +382,7 @@ public class FileLog {
     }
 
     public static void e(final String message, final Throwable exception) {
-        RemoteLog.capture(LogLevel.ERROR, message, exception);
+        RemoteLog.captureException(LogLevel.ERROR, RemoteLog.ComponentApp, exception);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -406,7 +406,6 @@ public class FileLog {
     }
 
     public static void e(final String message) {
-        RemoteLog.capture(LogLevel.ERROR, message, null);
         eLocal(message);
     }
 
@@ -444,7 +443,7 @@ public class FileLog {
     }
 
     public static void e(final Throwable e, boolean logToAppCenter) {
-        RemoteLog.capture(LogLevel.ERROR, String.valueOf(e), e);
+        RemoteLog.captureException(LogLevel.ERROR, RemoteLog.ComponentApp, e);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -529,7 +528,7 @@ public class FileLog {
     }
 
     public static void fatal(final Throwable e, boolean logToAppCenter) {
-        RemoteLog.capture(LogLevel.ERROR, "fatal: " + e, e);
+        RemoteLog.captureException(LogLevel.ERROR, RemoteLog.ComponentApp, e);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -582,7 +581,6 @@ public class FileLog {
     }
 
     public static void d(final String message) {
-        RemoteLog.capture(LogLevel.DEBUG, message, null);
         dLocal(message);
     }
 
@@ -608,7 +606,6 @@ public class FileLog {
     }
 
     public static void w(final String message) {
-        RemoteLog.capture(LogLevel.WARN, message, null);
         wLocal(message);
     }
 

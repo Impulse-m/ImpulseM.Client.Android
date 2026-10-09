@@ -14014,7 +14014,7 @@ public class MessagesStorage extends BaseController {
                         "id", newId,
                         "dialogId", did,
                         "action", "temp_row_deleted_server_row_kept",
-                        "error", e.getClass().getSimpleName()
+                        "error", e
                     );
                     try {
                         database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE mid = %d AND uid = %d", oldMessageId, did)).stepThis().dispose();

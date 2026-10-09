@@ -2,6 +2,7 @@ package net.impulsem.transport.logging;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -10,76 +11,72 @@ import org.junit.Test;
 public class LogRedactorTest {
 
     @Test
-    public void messageTextAfterAContentKeyIsRedactedToTheEndOfTheLine() {
-        String sanitized = LogRedactor.sanitizeText("send message=hello there, see you at 5");
-
-        assertEquals("send message=" + LogRedactor.Redacted, sanitized);
+    public void booleansAndFiniteNumbersAreAdmittedUnderAnyName() {
+        assertEquals(Boolean.TRUE, LogRedactor.admit(Boolean.TRUE));
+        assertEquals(5000000001L, LogRedactor.admit(5000000001L));
+        assertEquals(-3, LogRedactor.admit(-3));
+        assertEquals(2.5d, LogRedactor.admit(2.5d));
     }
 
 
     @Test
-    public void jsonMembersNamedLikePersonalDataAreRedactedAndErrorCodesSurvive() {
-        String push = "{\"loc_key\":\"MESSAGE_TEXT\",\"loc_args\":[\"Alice\",\"secret plan\"],"
-            + "\"message\":\"hi\",\"first_name\":\"Alice\",\"error\":\"FLOOD_WAIT_5\",\"text\":\"PEER_ID_INVALID\"}";
-
-        String sanitized = LogRedactor.sanitizeText(push);
-
-        assertFalse(sanitized, sanitized.contains("Alice"));
-        assertFalse(sanitized, sanitized.contains("secret plan"));
-        assertFalse(sanitized, sanitized.contains("\"hi\""));
-        assertTrue(sanitized, sanitized.contains("\"loc_key\":\"MESSAGE_TEXT\""));
-        assertTrue(sanitized, sanitized.contains("FLOOD_WAIT_5"));
-        assertTrue("an error code under a content key is not personal data: " + sanitized, sanitized.contains("PEER_ID_INVALID"));
+    public void nonFiniteNumbersAreDropped() {
+        assertNull(LogRedactor.admit(Double.NaN));
+        assertNull(LogRedactor.admit(Double.POSITIVE_INFINITY));
     }
 
 
     @Test
-    public void tokensAuthKeysAndPushPayloadsAreRedacted() {
-        String fcmToken = "dXJx3kqQ:APA91bHk2l9Zq0vTqY8rW6pLm4nB7cD1eF3gH5iJ7kL9mN0oP2qR4sT6uV8wX0yZ";
-        String hexKey = "a3f19c0b77d24e5f8a6b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f";
-
-        String token = LogRedactor.sanitizeText("Refreshed FCM token: " + fcmToken);
-        String saved = LogRedactor.sanitizeText("saveLogInToken " + fcmToken);
-        String key = LogRedactor.sanitizeText("FCM DECRYPT ERROR 3, key = " + hexKey);
-        String bearer = LogRedactor.sanitizeText("Authorization: Bearer abc.def.ghi");
-        String jwt = LogRedactor.sanitizeText("refresh eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl done");
-
-        assertFalse(token, token.contains("APA91b"));
-        assertFalse(saved, saved.contains("APA91b"));
-        assertFalse(key, key.contains(hexKey));
-        assertFalse(bearer, bearer.contains("abc.def.ghi"));
-        assertFalse(jwt, jwt.contains("eyJ"));
-        assertTrue(jwt, jwt.endsWith(" done"));
+    public void aStringIsAdmittedOnlyWhenItIsAKnownTokenOrAnErrorCode() {
+        assertEquals("token_fetch", LogRedactor.admit("token_fetch"));
+        assertEquals("PHONE_CALL_REQUEST", LogRedactor.admit("PHONE_CALL_REQUEST"));
+        assertEquals("FLOOD_WAIT_5", LogRedactor.admit("FLOOD_WAIT_5"));
+        assertNull(LogRedactor.admit("Alice Smith"));
+        assertNull(LogRedactor.admit("alice_99"));
+        assertNull(LogRedactor.admit("token_fetch "));
+        assertNull(LogRedactor.admit(""));
     }
 
 
     @Test
-    public void phoneNumbersEmailsAndFilePathsAreRedacted() {
-        String sanitized = LogRedactor.sanitizeText(
-            "login +7 999 123-45-67 mail me@example.com file /storage/emulated/0/DCIM/holiday.jpg"
-        );
-
-        assertFalse(sanitized, sanitized.contains("999"));
-        assertFalse(sanitized, sanitized.contains("example.com"));
-        assertFalse(sanitized, sanitized.contains("holiday"));
+    public void anEnumConstantShipsItsName() {
+        assertEquals("CALL_REQUEST", LogRedactor.admit(Sample.CALL_REQUEST));
     }
 
 
     @Test
-    public void ordinaryDiagnosticsAreLeftReadable() {
-        String line = "processUpdates TL_updates seq=12 pts=40 count=1 class org.telegram.messenger.MessagesController";
-
-        assertEquals(line, LogRedactor.sanitizeText(line));
+    public void aClassShipsItsSimpleNameBecauseATypeCarriesNoData() {
+        assertEquals("Sample", LogRedactor.admit(Sample.class));
     }
 
 
     @Test
-    public void structuredNumbersAndBooleansSurviveButSensitiveNamesDoNot() {
-        assertEquals(5000000001L, LogRedactor.sanitizeField("callId", 5000000001L));
-        assertEquals(Boolean.TRUE, LogRedactor.sanitizeField("hasSessionToken", Boolean.TRUE));
-        assertEquals(LogRedactor.Redacted, LogRedactor.sanitizeField("phone", 79991234567L));
-        assertEquals(LogRedactor.Redacted, LogRedactor.sanitizeField("first_name", "Alice"));
-        assertEquals(LogRedactor.Redacted, LogRedactor.sanitizeField("accessToken", "abc"));
-        assertEquals("PHONE_CALL_REQUEST", LogRedactor.sanitizeField("locKey", "PHONE_CALL_REQUEST"));
+    public void anObjectWithNoAllowedShapeIsDropped() {
+        assertNull(LogRedactor.admit(new StringBuilder("Alice")));
+        assertNull(LogRedactor.admit(new Object()));
+    }
+
+
+    @Test
+    public void tokensAreMatchedExactlyNotByShape() {
+        assertTrue(LogRedactor.isEnumToken("getDifference"));
+        assertFalse(LogRedactor.isEnumToken("getDifference2"));
+        assertFalse(LogRedactor.isEnumToken("Getdifference"));
+        assertFalse(LogRedactor.isEnumToken(upperCaseRun(65)));
+        assertTrue(LogRedactor.isEnumToken(upperCaseRun(64)));
+    }
+
+
+    private static String upperCaseRun(int length) {
+        StringBuilder run = new StringBuilder();
+        for (int i = 0; i < length; i++) {
+            run.append('A');
+        }
+        return run.toString();
+    }
+
+
+    private enum Sample {
+        CALL_REQUEST
     }
 }

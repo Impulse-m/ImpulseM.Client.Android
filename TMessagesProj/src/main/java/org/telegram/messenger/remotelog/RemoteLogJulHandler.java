@@ -32,7 +32,9 @@ final class RemoteLogJulHandler extends Handler {
         if (BuildVars.LOGS_ENABLED) {
             FileLog.local(level, component + " " + message);
         }
-        RemoteLog.capture(level, component, message, record.getThrown());
+        if (record.getThrown() != null) {
+            RemoteLog.captureException(level, component, record.getThrown());
+        }
     }
 
 

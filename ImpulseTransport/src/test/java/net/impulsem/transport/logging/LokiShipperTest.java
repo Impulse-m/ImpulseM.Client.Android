@@ -29,6 +29,7 @@ import org.junit.Test;
 public class LokiShipperTest {
 
     private static final long AwaitSeconds = 10L;
+    private static final long FixedTimestampMillis = 1700000000000L;
 
     private MockWebServer server;
     private LokiShipper shipper;
@@ -180,8 +181,125 @@ public class LokiShipperTest {
         assertFalse(body, body.contains("meet at noon"));
         assertFalse(body, body.contains("9991234567"));
         assertFalse(body, body.contains("abcdefabcdefabcdefabcdef0123456789"));
-        assertTrue(body, body.contains("MESSAGE_TEXT"));
+        assertFalse("a free-text message is never shipped: " + body, body.contains("error in loc_key"));
         assertTrue(body, body.contains("IllegalStateException"));
+    }
+
+
+    @Test
+    public void aFreeTextDebugLineIsNotShippedAtAll() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(freeText(LogLevel.DEBUG, "Dinner tomorrow with Bob at Luigi's"));
+        shipper.append(trace("app", LogLevel.INFO, "MARKER", "i", 1));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        String body = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8();
+        assertFalse(body, body.contains("Dinner tomorrow"));
+        assertFalse(body, body.contains("Luigi"));
+        assertTrue(body, body.contains("MARKER"));
+    }
+
+
+    @Test
+    public void aLoginCodeInAFreeTextLineNeverReachesTheWire() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(freeText(LogLevel.DEBUG, "login code 48213 from 777000"));
+        shipper.append(trace("app", LogLevel.INFO, "MARKER", "i", 1));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        String body = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8();
+        assertFalse(body, body.contains("48213"));
+    }
+
+
+    @Test
+    public void aDottedPhoneNumberInAFreeTextLineNeverReachesTheWire() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(freeText(LogLevel.DEBUG, "call +7.999.123.45.67 back"));
+        shipper.append(trace("app", LogLevel.INFO, "MARKER", "i", 1));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        String body = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8();
+        assertFalse(body, body.contains("999"));
+        assertFalse(body, body.contains("123"));
+    }
+
+
+    @Test
+    public void aTlUserDumpWithUsernameAndPhoneNeverReachesTheWire() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(freeText(
+            LogLevel.DEBUG,
+            "req -> TL_user {id=7, username=alice_99, first_name=Alice Smith, phone=79991234567}"
+        ));
+        shipper.append(trace("app", LogLevel.INFO, "MARKER", "i", 1));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        String body = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8();
+        assertFalse(body, body.contains("alice_99"));
+        assertFalse(body, body.contains("Alice"));
+        assertFalse(body, body.contains("Smith"));
+        assertFalse(body, body.contains("79991234567"));
+    }
+
+
+    @Test
+    public void anExceptionShipsItsClassAndFramesButNotItsMessage() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        IllegalStateException failure = new IllegalStateException("contact +7.999.123.45.67");
+        shipper.append(new LogRecord(FixedTimestampMillis, LogLevel.ERROR, "push", null, null, failure, "test", null));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        String body = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8();
+        assertFalse(body, body.contains("999.123"));
+        JsonObject error = parseFirstLine(body).getAsJsonObject("error");
+        assertEquals(IllegalStateException.class.getName(), error.get("type").getAsString());
+        assertFalse("the exception message is never shipped: " + body, error.has("message"));
+        assertTrue(body, error.get("stack").getAsString().contains("LokiShipperTest"));
+    }
+
+
+    @Test
+    public void aStructuredEventWithAnIntegerIdStillShips() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(trace("calls", LogLevel.INFO, "PHONE_CALL_UPDATE", "callId", 5000000001L, "state", "PHONE_CALL_REQUEST"));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        String body = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8();
+        JsonObject line = parseFirstLine(body);
+        assertEquals("PHONE_CALL_UPDATE", line.get("event").getAsString());
+        assertEquals(5000000001L, line.getAsJsonObject("fields").get("callId").getAsLong());
+    }
+
+
+    @Test
+    public void aStructuredStringThatIsNotAKnownEnumIsDropped() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(trace("sync", LogLevel.INFO, "GET_DIFFERENCE_END", "during", "Alice Smith"));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        String body = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8();
+        assertFalse(body, body.contains("Alice"));
+        assertTrue(body, body.contains("GET_DIFFERENCE_END"));
+    }
+
+
+    @Test
+    public void aKnownEnumStringStillShips() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(trace("sync", LogLevel.INFO, "GET_DIFFERENCE_START", "during", "token_fetch"));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        JsonObject line = parseFirstLine(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8());
+        assertEquals("token_fetch", line.getAsJsonObject("fields").get("during").getAsString());
     }
 
 
@@ -202,6 +320,21 @@ public class LokiShipperTest {
         Object... fields
     ) {
         return new LogRecord(System.currentTimeMillis(), level, component, event, null, null, "test", LogRecord.fieldsOf(fields));
+    }
+
+
+    private static LogRecord freeText(
+        LogLevel level,
+        String message
+    ) {
+        return new LogRecord(FixedTimestampMillis, level, "app", null, message, null, "test", null);
+    }
+
+
+    private static JsonObject parseFirstLine(String body) {
+        JsonArray streams = JsonParser.parseString(body).getAsJsonObject().getAsJsonArray("streams");
+        String line = streams.get(0).getAsJsonObject().getAsJsonArray("values").get(0).getAsJsonArray().get(1).getAsString();
+        return JsonParser.parseString(line).getAsJsonObject();
     }
 
 

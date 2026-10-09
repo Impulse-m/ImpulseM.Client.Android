@@ -8288,7 +8288,7 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
                                 "tempId", oldId,
                                 "id", message != null ? message.id : null,
                                 "messageFound", message != null,
-                                "updates", updates.getClass().getSimpleName(),
+                                "updates", updates.getClass(),
                                 "remainingUpdates", updatesArr.size()
                             );
                             if (!ephemeralMessages.isEmpty()) {

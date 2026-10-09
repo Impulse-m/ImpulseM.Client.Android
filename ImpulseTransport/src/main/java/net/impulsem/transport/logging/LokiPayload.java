@@ -1,6 +1,7 @@
 package net.impulsem.transport.logging;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import java.text.SimpleDateFormat;
@@ -12,10 +13,9 @@ import java.util.Map;
 import java.util.TimeZone;
 
 
-/** Renders redacted records as a Loki push body: one stream per (component, level) under the shared labels. */
+/** Renders records as a Loki push body: one stream per (component, level) under the shared labels. */
 public final class LokiPayload {
 
-    public static final int MaxMessageLength = 4096;
     public static final int MaxStackLength = 16384;
 
     private static final int MaxCauseDepth = 4;
@@ -59,7 +59,10 @@ public final class LokiPayload {
     }
 
 
-    /** The log line itself: a JSON object, so LogQL can filter on it with `| json`. */
+    /**
+     * The log line itself, a JSON object so LogQL can filter on it with `| json`. The message and the thread of a record
+     * are never written: free text does not leave the device.
+     */
     static String line(
         LogRecord record,
         SimpleDateFormat isoFormat
@@ -68,20 +71,11 @@ public final class LokiPayload {
         line.addProperty("ts", isoFormat.format(new Date(record.timestampMillis)));
         line.addProperty("level", record.level.label());
         line.addProperty("component", record.component);
-        if (record.event != null) {
+        if (record.event != null && LogRedactor.isEnumToken(record.event)) {
             line.addProperty("event", record.event);
         }
-        if (record.message != null) {
-            line.addProperty("message", truncate(LogRedactor.sanitizeText(record.message), MaxMessageLength));
-        }
-        if (record.thread != null) {
-            line.addProperty("thread", record.thread);
-        }
-        if (!record.fields.isEmpty()) {
-            JsonObject fields = new JsonObject();
-            for (Map.Entry<String, Object> field : record.fields.entrySet()) {
-                fields.add(field.getKey(), toJson(LogRedactor.sanitizeField(field.getKey(), field.getValue())));
-            }
+        JsonObject fields = admittedFields(record.fields);
+        if (fields.size() > 0) {
             line.add("fields", fields);
         }
         if (record.error != null) {
@@ -95,6 +89,36 @@ public final class LokiPayload {
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
         format.setTimeZone(TimeZone.getTimeZone("UTC"));
         return format;
+    }
+
+
+    private static JsonObject admittedFields(Map<String, Object> recordFields) {
+        JsonObject fields = new JsonObject();
+        for (Map.Entry<String, Object> field : recordFields.entrySet()) {
+            JsonElement value = fieldJson(field.getValue());
+            if (value != null) {
+                fields.add(field.getKey(), value);
+            }
+        }
+        return fields;
+    }
+
+
+    private static JsonElement fieldJson(Object value) {
+        if (value instanceof Throwable) {
+            return describeError((Throwable) value, 0);
+        }
+        Object admitted = LogRedactor.admit(value);
+        if (admitted == null) {
+            return null;
+        }
+        if (admitted instanceof Boolean) {
+            return new JsonPrimitive((Boolean) admitted);
+        }
+        if (admitted instanceof Number) {
+            return new JsonPrimitive((Number) admitted);
+        }
+        return new JsonPrimitive(String.valueOf(admitted));
     }
 
 
@@ -112,24 +136,27 @@ public final class LokiPayload {
     }
 
 
+    /** An exception is its class and its stack frames as class, method and line; its message and toString never ship. */
     private static JsonObject describeError(
         Throwable error,
         int depth
     ) {
         JsonObject described = new JsonObject();
         described.addProperty("type", error.getClass().getName());
-        String message = error.getMessage();
-        if (message != null) {
-            described.addProperty("message", truncate(LogRedactor.sanitizeText(message), MaxMessageLength));
-        }
         StringBuilder stack = new StringBuilder();
         for (StackTraceElement frame : error.getStackTrace()) {
             if (stack.length() >= MaxStackLength) {
                 break;
             }
-            stack.append("at ").append(frame).append('\n');
+            stack.append("at ")
+                .append(frame.getClassName())
+                .append('.')
+                .append(frame.getMethodName())
+                .append(':')
+                .append(frame.getLineNumber())
+                .append('\n');
         }
-        described.addProperty("stack", truncate(LogRedactor.sanitizeText(stack.toString()), MaxStackLength));
+        described.addProperty("stack", truncate(stack.toString(), MaxStackLength));
         Throwable cause = error.getCause();
         if (cause != null && cause != error && depth < MaxCauseDepth) {
             described.add("cause", describeError(cause, depth + 1));
@@ -138,25 +165,11 @@ public final class LokiPayload {
     }
 
 
-    private static JsonPrimitive toJson(Object value) {
-        if (value == null) {
-            return new JsonPrimitive("null");
-        }
-        if (value instanceof Boolean) {
-            return new JsonPrimitive((Boolean) value);
-        }
-        if (value instanceof Number) {
-            return new JsonPrimitive((Number) value);
-        }
-        return new JsonPrimitive(String.valueOf(value));
-    }
-
-
     private static String truncate(
         String value,
         int maxLength
     ) {
-        if (value == null || value.length() <= maxLength) {
+        if (value.length() <= maxLength) {
             return value;
         }
         return value.substring(0, maxLength) + "...[truncated]";
