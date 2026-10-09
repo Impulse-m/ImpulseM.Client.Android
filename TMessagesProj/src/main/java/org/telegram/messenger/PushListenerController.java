@@ -112,7 +112,13 @@ public class PushListenerController {
             FileLog.d(tag + " PRE START PROCESSING");
         }
         long receiveTime = SystemClock.elapsedRealtime();
-        RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_RECEIVED", "pushType", tag, "sentAtMs", time, "deliveryDelayMs", System.currentTimeMillis() - time);
+        RemoteLog.trace(
+            RemoteLog.ComponentPush,
+            "PUSH_RECEIVED",
+            "pushType", tag,
+            "sentAtMs", time,
+            "deliveryDelayMs", System.currentTimeMillis() - time
+        );
         AndroidUtilities.runOnUIThread(() -> {
             if (BuildVars.LOGS_ENABLED) {
                 FileLog.d(tag + " PRE INIT APP");
@@ -142,7 +148,13 @@ public class PushListenerController {
                     byte[] inAuthKeyId = new byte[8];
                     buffer.readBytes(inAuthKeyId, true);
                     if (!Arrays.equals(SharedConfig.pushAuthKeyId, inAuthKeyId)) {
-                        RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentPush, "PUSH_DECRYPT_FAILED", "pushType", tag, "stage", "auth_key_id_mismatch");
+                        RemoteLog.trace(
+                            LogLevel.WARN,
+                            RemoteLog.ComponentPush,
+                            "PUSH_DECRYPT_FAILED",
+                            "pushType", tag,
+                            "stage", "auth_key_id_mismatch"
+                        );
                         onDecryptError(countDownLatch);
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(String.format(Locale.US, tag + " DECRYPT ERROR 2 k1=%s k2=%s, key=%s", Utilities.bytesToHex(SharedConfig.pushAuthKeyId), Utilities.bytesToHex(inAuthKeyId), Utilities.bytesToHex(SharedConfig.pushAuthKey)));
@@ -158,7 +170,13 @@ public class PushListenerController {
 
                     byte[] messageKeyFull = Utilities.computeSHA256(SharedConfig.pushAuthKey, 88 + 8, 32, buffer.buffer, 24, buffer.buffer.limit());
                     if (!Utilities.arraysEquals(messageKey, 0, messageKeyFull, 8)) {
-                        RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentPush, "PUSH_DECRYPT_FAILED", "pushType", tag, "stage", "msg_key_mismatch");
+                        RemoteLog.trace(
+                            LogLevel.WARN,
+                            RemoteLog.ComponentPush,
+                            "PUSH_DECRYPT_FAILED",
+                            "pushType", tag,
+                            "stage", "msg_key_mismatch"
+                        );
                         onDecryptError(countDownLatch);
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(String.format(tag + " DECRYPT ERROR 3, key = %s", Utilities.bytesToHex(SharedConfig.pushAuthKey)));
@@ -173,7 +191,12 @@ public class PushListenerController {
                     JSONObject json = new JSONObject(jsonString);
 
                     if (ApplicationLoader.applicationLoaderInstance != null && ApplicationLoader.applicationLoaderInstance.consumePush(currentAccount, json)) {
-                        RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_CONSUMED_BY_APP", "pushType", tag, "decrypted", true);
+                        RemoteLog.trace(
+                            RemoteLog.ComponentPush,
+                            "PUSH_CONSUMED_BY_APP",
+                            "pushType", tag,
+                            "decrypted", true
+                        );
                         countDownLatch.countDown();
                         return;
                     }
@@ -183,7 +206,13 @@ public class PushListenerController {
                     } else {
                         loc_key = "";
                     }
-                    RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_DECRYPTED", "pushType", tag, "locKey", loc_key, "decrypted", true);
+                    RemoteLog.trace(
+                        RemoteLog.ComponentPush,
+                        "PUSH_DECRYPTED",
+                        "pushType", tag,
+                        "locKey", loc_key,
+                        "decrypted", true
+                    );
 
 
 
@@ -225,17 +254,39 @@ public class PushListenerController {
                         }
                     }
                     if (!foundAccount) {
-                        RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentPush, "PUSH_ACCOUNT_NOT_FOUND", "pushType", tag, "locKey", loc_key, "pushUserId", accountUserId, "accountFound", false);
+                        RemoteLog.trace(
+                            LogLevel.WARN,
+                            RemoteLog.ComponentPush,
+                            "PUSH_ACCOUNT_NOT_FOUND",
+                            "pushType", tag,
+                            "locKey", loc_key,
+                            "pushUserId", accountUserId,
+                            "accountFound", false
+                        );
                         countDownLatch.countDown();
                         return;
                     }
                     final int accountFinal = currentAccount = account;
                     if (!UserConfig.getInstance(currentAccount).isClientActivated()) {
-                        RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentPush, "PUSH_ACCOUNT_NOT_ACTIVATED", "pushType", tag, "locKey", loc_key, "account", currentAccount);
+                        RemoteLog.trace(
+                            LogLevel.WARN,
+                            RemoteLog.ComponentPush,
+                            "PUSH_ACCOUNT_NOT_ACTIVATED",
+                            "pushType", tag,
+                            "locKey", loc_key,
+                            "account", currentAccount
+                        );
                         countDownLatch.countDown();
                         return;
                     }
-                    RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_ACCOUNT_FOUND", "pushType", tag, "locKey", loc_key, "account", currentAccount, "accountFound", true);
+                    RemoteLog.trace(
+                        RemoteLog.ComponentPush,
+                        "PUSH_ACCOUNT_FOUND",
+                        "pushType", tag,
+                        "locKey", loc_key,
+                        "account", currentAccount,
+                        "accountFound", true
+                    );
                     if (BuildVars.LOGS_ENABLED) {
                         FileLog.d(tag + " " + loc_key);
                     }
@@ -1511,13 +1562,36 @@ public class PushListenerController {
                     }
 
                     ConnectionsManager.onInternalPushReceived(currentAccount);
-                    RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_RESUME_NETWORK", "pushType", tag, "locKey", loc_key, "account", currentAccount, "holdsLatch", !canRelease);
+                    RemoteLog.trace(
+                        RemoteLog.ComponentPush,
+                        "PUSH_RESUME_NETWORK",
+                        "pushType", tag,
+                        "locKey", loc_key,
+                        "account", currentAccount,
+                        "holdsLatch", !canRelease
+                    );
                     ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
                 } catch (Throwable e) {
-                    RemoteLog.trace(LogLevel.ERROR, RemoteLog.ComponentPush, "PUSH_FAILED", "pushType", tag, "locKey", loc_key, "decrypted", jsonString != null, "account", currentAccount, "error", e);
+                    RemoteLog.trace(
+                        LogLevel.ERROR,
+                        RemoteLog.ComponentPush,
+                        "PUSH_FAILED",
+                        "pushType", tag,
+                        "locKey", loc_key,
+                        "decrypted", jsonString != null,
+                        "account", currentAccount,
+                        "error", e
+                    );
                     if (currentAccount != -1) {
                         ConnectionsManager.onInternalPushReceived(currentAccount);
-                        RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_RESUME_NETWORK", "pushType", tag, "locKey", loc_key, "account", currentAccount, "afterFailure", true);
+                        RemoteLog.trace(
+                            RemoteLog.ComponentPush,
+                            "PUSH_RESUME_NETWORK",
+                            "pushType", tag,
+                            "locKey", loc_key,
+                            "account", currentAccount,
+                            "afterFailure", true
+                        );
                         ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
                         countDownLatch.countDown();
                     } else {
@@ -1543,8 +1617,14 @@ public class PushListenerController {
         if (BuildVars.DEBUG_VERSION) {
             FileLog.d("finished " + tag + " service, time = " + handledMs);
         }
-        RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_HANDLED", "pushType", tag, "released", released, "handledMs", handledMs);
-        RemoteLog.flushAndWait(RemoteLog.PushFlushMillis);
+        RemoteLog.trace(
+            RemoteLog.ComponentPush,
+            "PUSH_HANDLED",
+            "pushType", tag,
+            "released", released,
+            "handledMs", handledMs
+        );
+        RemoteLog.flush();
     }
 
 
@@ -1577,7 +1657,12 @@ public class PushListenerController {
                 FileLog.e("PHONE_CALL_REQUEST push updates could not be decoded");
                 return false;
             }
-            RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_PUSH_UPDATES", "account", account, "updates", updates.getClass());
+            RemoteLog.trace(
+                RemoteLog.ComponentCalls,
+                "PHONE_CALL_PUSH_UPDATES",
+                "account", account,
+                "updates", updates.getClass()
+            );
             MessagesController.getInstance(account).processUpdates(updates, false);
         } catch (Throwable e) {
             FileLog.e(e);
@@ -1601,7 +1686,13 @@ public class PushListenerController {
         boolean uiShown = !expired && isIncomingCallUiShown();
         boolean callGone = VoIPService.callIShouldHavePutIntoIntent == null && VoIPPreNotificationService.pendingCall == null;
         if (expired || uiShown || callGone) {
-            RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_PUSH_RELEASE", "deadlinePassed", expired, "incomingUiShown", uiShown, "callGone", callGone);
+            RemoteLog.trace(
+                RemoteLog.ComponentCalls,
+                "PHONE_CALL_PUSH_RELEASE",
+                "deadlinePassed", expired,
+                "incomingUiShown", uiShown,
+                "callGone", callGone
+            );
             latch.countDown();
             return;
         }
@@ -1758,7 +1849,12 @@ public class PushListenerController {
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             if (UserConfig.getInstance(a).isClientActivated()) {
                 ConnectionsManager.onInternalPushReceived(a);
-                RemoteLog.trace(RemoteLog.ComponentPush, "PUSH_RESUME_NETWORK", "account", a, "afterDecryptError", true);
+                RemoteLog.trace(
+                    RemoteLog.ComponentPush,
+                    "PUSH_RESUME_NETWORK",
+                    "account", a,
+                    "afterDecryptError", true
+                );
                 ConnectionsManager.getInstance(a).resumeNetworkMaybe();
             }
         }
