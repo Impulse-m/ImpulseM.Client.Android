@@ -78,6 +78,7 @@ public class LokiShipperTest {
             clock,
             maxBodyBytes
         );
+        made.setEnabled(true);
         created.add(made);
         return made;
     }
@@ -327,6 +328,61 @@ public class LokiShipperTest {
 
         JsonObject line = parseFirstLine(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS).getBody().readUtf8());
         assertEquals("token_fetch", line.getAsJsonObject("fields").get("during").getAsString());
+    }
+
+
+    @Test
+    public void aRecordFromBeforeAnOptOutNeverShipsEvenAfterReEnabling() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(503).setHeadersDelay(800L, TimeUnit.MILLISECONDS));
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(trace("app", LogLevel.INFO, "BEFORE_OPT_OUT", "i", 1));
+        shipper.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        shipper.setEnabled(false);
+        shipper.setEnabled(true);
+        Thread.sleep(1500L);
+        shipper.flush();
+
+        assertEquals("the failed batch must not come back after the opt-out", 0, shipper.bufferedCount());
+        assertNull(server.takeRequest(700L, TimeUnit.MILLISECONDS));
+    }
+
+
+    @Test
+    public void a401OnTheAnonymousLaneDropsTheBatchWithoutARetryLoop() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(401));
+        server.enqueue(new MockResponse().setResponseCode(204));
+
+        shipper.append(trace("app", LogLevel.INFO, "ANONYMOUS", "i", 1));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        RecordedRequest request = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        assertNull(request.getHeader("Authorization"));
+        assertNull("a rejected anonymous batch is not retried", server.takeRequest(1200L, TimeUnit.MILLISECONDS));
+        assertEquals(1, server.getRequestCount());
+        assertEquals(0, shipper.bufferedCount());
+    }
+
+
+    @Test
+    public void aNewShipperIsOffUntilItIsEnabled() throws Exception {
+        LokiShipper fresh = new LokiShipper(
+            new Callable<OkHttpClient>() {
+                @Override
+                public OkHttpClient call() {
+                    return new OkHttpClient();
+                }
+            },
+            LokiShipper.pushUrlFor(server.url("/")),
+            new LinkedHashMap<String, String>(),
+            new LinkedHashMap<String, String>(),
+            noToken()
+        );
+
+        assertFalse(fresh.isEnabled());
+        fresh.append(trace("app", LogLevel.INFO, "NOT_YET", "i", 1));
+        assertEquals(0, fresh.bufferedCount());
     }
 
 

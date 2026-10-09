@@ -123,7 +123,7 @@ public final class LokiShipper {
     private final Backoff retryBackoff;
 
     private volatile Thread shipperThread;
-    private volatile boolean enabled = true;
+    private volatile boolean enabled;
     private OkHttpClient http;
     private ScheduledFuture<?> scheduledDrain;
     private Runnable scheduledTask;
@@ -133,6 +133,7 @@ public final class LokiShipper {
     private int droppedRecords;
     private int rejectedRecords;
     private String rejectedToken;
+    private int generation;
 
 
     /**
@@ -206,6 +207,7 @@ public final class LokiShipper {
                 droppedRecords = 0;
                 rejectedRecords = 0;
                 retryPending = false;
+                generation++;
                 cancelScheduledLocked();
             }
         }
@@ -347,7 +349,9 @@ public final class LokiShipper {
     ) {
         while (true) {
             List<LogRecord> batch = new ArrayList<LogRecord>();
+            final int batchGeneration;
             synchronized (lock) {
+                batchGeneration = generation;
                 if (buffer.isEmpty() || !enabled) {
                     return;
                 }
@@ -363,13 +367,13 @@ public final class LokiShipper {
                     batch.add(buffer.pollFirst());
                 }
             }
-            String body = fitToBodyLimit(batch);
+            String body = fitToBodyLimit(batch, batchGeneration);
             if (batch.isEmpty()) {
                 continue;
             }
             PostResult result = body == null ? new PostResult(Outcome.REJECTED, -1L) : post(body);
             synchronized (lock) {
-                if (!enabled) {
+                if (!enabled || generation != batchGeneration) {
                     return;
                 }
                 if (result.outcome == Outcome.FAILED || result.outcome == Outcome.RATE_LIMITED) {
@@ -400,11 +404,15 @@ public final class LokiShipper {
 
     /**
      * Renders the batch, and while the body is over the limit puts the second half back at the head of the buffer. A
-     * single record that alone is over the limit is dropped and counted as rejected, which leaves the batch empty.
+     * single record that alone is over the limit is dropped and counted as rejected, which leaves the batch empty. A batch
+     * polled before an opt-out is dropped silently: nothing from before it may come back.
      *
      * @return the body, or null when the batch is empty or cannot be rendered at all
      */
-    private String fitToBodyLimit(List<LogRecord> batch) {
+    private String fitToBodyLimit(
+        List<LogRecord> batch,
+        int batchGeneration
+    ) {
         while (!batch.isEmpty()) {
             String body;
             try {
@@ -416,6 +424,10 @@ public final class LokiShipper {
                 return body;
             }
             synchronized (lock) {
+                if (generation != batchGeneration) {
+                    batch.clear();
+                    return null;
+                }
                 if (batch.size() == 1) {
                     discardLocked(batch);
                     batch.clear();
