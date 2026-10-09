@@ -13952,6 +13952,7 @@ public class MessagesStorage extends BaseController {
         SQLitePreparedStatement state = null;
         SQLitePreparedStatement state2 = null;
         SQLitePreparedStatement state3 = null;
+        Exception renameError = null;
         if (oldMessageId == newId && date != 0) {
             traceTempRename("same_id_date_only", randomId, oldMessageId, newId, did, scheduled);
             try {
@@ -14003,19 +14004,7 @@ public class MessagesStorage extends BaseController {
                     state2.step();
                     traceTempRename("renamed", randomId, oldMessageId, newId, did, scheduled);
                 } catch (Exception e) {
-                    RemoteLog.trace(
-                        LogLevel.WARN,
-                        RemoteLog.ComponentSend,
-                        "SEND_DUPLICATE_INSERT",
-                        "account", currentAccount,
-                        "where", "storage_rename",
-                        "randomId", randomId,
-                        "tempId", oldMessageId,
-                        "id", newId,
-                        "dialogId", did,
-                        "action", "temp_row_deleted_server_row_kept",
-                        "error", e
-                    );
+                    traceDuplicateInsert(randomId, oldMessageId, newId, did, e);
                     try {
                         database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE mid = %d AND uid = %d", oldMessageId, did)).stepThis().dispose();
                         database.executeFast(String.format(Locale.US, "DELETE FROM messages_seq WHERE mid = %d", oldMessageId)).stepThis().dispose();
@@ -14105,6 +14094,7 @@ public class MessagesStorage extends BaseController {
                     state.bindLong(3, did);
                     state.step();
                 } catch (Exception e) {
+                    renameError = e;
                     try {
                         database.executeFast(String.format(Locale.US, "DELETE FROM scheduled_messages_v2 WHERE mid = %d AND uid = %d", oldMessageId, did)).stepThis().dispose();
                     } catch (Exception e2) {
@@ -14124,6 +14114,7 @@ public class MessagesStorage extends BaseController {
                     state.bindLong(4, topicId);
                     state.step();
                 } catch (Exception e) {
+                    renameError = e;
                     try {
                         database.executeFast(String.format(Locale.US, "DELETE FROM quick_replies_messages WHERE mid = %d AND topic_id = %d", oldMessageId, topicId)).stepThis().dispose();
                     } catch (Exception e2) {
@@ -14143,6 +14134,7 @@ public class MessagesStorage extends BaseController {
                     state.bindLong(4, dialogId);
                     state.step();
                 } catch (Exception e) {
+                    renameError = e;
                     try {
                         database.executeFast(String.format(Locale.US, "DELETE FROM welcome_messages WHERE mid = %d AND dialog_id = %d", oldMessageId, dialogId)).stepThis().dispose();
                     } catch (Exception e2) {
@@ -14156,10 +14148,36 @@ public class MessagesStorage extends BaseController {
             }
 
             if (scheduled != 0) {
-                traceTempRename("renamed", randomId, oldMessageId, newId, did, scheduled);
+                if (renameError != null) {
+                    traceDuplicateInsert(randomId, oldMessageId, newId, did, renameError);
+                } else {
+                    traceTempRename("renamed", randomId, oldMessageId, newId, did, scheduled);
+                }
             }
             return new long[]{did, _oldId};
         }
+    }
+
+    private void traceDuplicateInsert(
+        long randomId,
+        int tempId,
+        int newId,
+        long dialogId,
+        Exception error
+    ) {
+        RemoteLog.trace(
+            LogLevel.WARN,
+            RemoteLog.ComponentSend,
+            "SEND_DUPLICATE_INSERT",
+            "account", currentAccount,
+            "where", "storage_rename",
+            "randomId", randomId,
+            "tempId", tempId,
+            "id", newId,
+            "dialogId", dialogId,
+            "action", "temp_row_deleted_server_row_kept",
+            "error", error
+        );
     }
 
     private void traceTempRename(
