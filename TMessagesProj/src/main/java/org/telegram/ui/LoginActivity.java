@@ -2480,7 +2480,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                 });
             }
 
-            final boolean allowTestBackend = (BuildVars.DEBUG_VERSION || TEST_BACKEND_IN_STORE && !BuildConfig.BUNDLE) || getConnectionsManager().isTestBackend();
+            // TODO(impulsem-unimplemented): no test backend, so the debug-only switch stays hidden
+            final boolean allowTestBackend = ImpulseFeatures.TEST_BACKEND && ((BuildVars.DEBUG_VERSION || TEST_BACKEND_IN_STORE && !BuildConfig.BUNDLE) || getConnectionsManager().isTestBackend());
             if (allowTestBackend && activityMode == MODE_LOGIN) {
                 testBackendCheckBox = new CheckBoxCell(context, 2);
                 testBackendCheckBox.setText(getString(R.string.DebugTestBackend), "", testBackend = getConnectionsManager().isTestBackend(), false);
@@ -2919,7 +2920,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                                 allowReadCallLog = true;
                                 allowReadPhoneNumbers = true;
                             }
-                            if (checkPermissions) {
+                            // TODO(impulsem-unimplemented): call permissions only serve flash-call and missed-call codes
+                            if (checkPermissions && ImpulseFeatures.CALL_VERIFICATION) {
                                 permissionsItems.clear();
                                 if (!allowCall) {
                                     permissionsItems.add(Manifest.permission.READ_PHONE_STATE);
@@ -2996,7 +2998,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     allowReadPhoneNumbers = getParentActivity().checkSelfPermission(Manifest.permission.READ_PHONE_NUMBERS) == PackageManager.PERMISSION_GRANTED;
                 }
-                if (checkPermissions) {
+                // TODO(impulsem-unimplemented): call permissions only serve flash-call and missed-call codes
+                if (checkPermissions && ImpulseFeatures.CALL_VERIFICATION) {
                     permissionsItems.clear();
                     if (!allowCall) {
                         permissionsItems.add(Manifest.permission.READ_PHONE_STATE);

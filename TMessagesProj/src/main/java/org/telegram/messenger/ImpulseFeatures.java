@@ -42,6 +42,12 @@ public final class ImpulseFeatures {
     // TODO(impulsem-unimplemented): Ask a Question / FAQ / Privacy Policy point at Telegram support and telegram.org
     public static final boolean HELP_SECTION = false;
 
+    // TODO(impulsem-unimplemented): flash-call and missed-call login codes; the backend sends the code by SMS only
+    public static final boolean CALL_VERIFICATION = false;
+
+    // TODO(impulsem-unimplemented): Telegram's test DC switch on the login screen; there is no ImpulseM test backend
+    public static final boolean TEST_BACKEND = false;
+
 
     /** VLESS proxy through the in-process Xray core. */
     public static final boolean VLESS = true;
