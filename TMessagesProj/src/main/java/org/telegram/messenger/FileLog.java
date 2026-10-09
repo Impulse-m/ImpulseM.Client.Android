@@ -27,6 +27,9 @@ import com.google.gson.TypeAdapter;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 
+import net.impulsem.transport.logging.LogLevel;
+
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.time.FastDateFormat;
 import org.telegram.messenger.video.MediaCodecVideoConvertor;
 import org.telegram.tgnet.TLObject;
@@ -379,6 +382,7 @@ public class FileLog {
     }
 
     public static void e(final String message, final Throwable exception) {
+        RemoteLog.capture(LogLevel.ERROR, message, exception);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -402,6 +406,22 @@ public class FileLog {
     }
 
     public static void e(final String message) {
+        RemoteLog.capture(LogLevel.ERROR, message, null);
+        eLocal(message);
+    }
+
+    /** Writes to logcat and the local log file only; for lines the remote sink already received in structured form. */
+    public static void local(final LogLevel level, final String message) {
+        if (level == LogLevel.ERROR) {
+            eLocal(message);
+        } else if (level == LogLevel.WARN) {
+            wLocal(message);
+        } else {
+            dLocal(message);
+        }
+    }
+
+    private static void eLocal(final String message) {
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -424,6 +444,7 @@ public class FileLog {
     }
 
     public static void e(final Throwable e, boolean logToAppCenter) {
+        RemoteLog.capture(LogLevel.ERROR, String.valueOf(e), e);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -508,6 +529,7 @@ public class FileLog {
     }
 
     public static void fatal(final Throwable e, boolean logToAppCenter) {
+        RemoteLog.capture(LogLevel.ERROR, "fatal: " + e, e);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -560,6 +582,11 @@ public class FileLog {
     }
 
     public static void d(final String message) {
+        RemoteLog.capture(LogLevel.DEBUG, message, null);
+        dLocal(message);
+    }
+
+    private static void dLocal(final String message) {
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -581,6 +608,11 @@ public class FileLog {
     }
 
     public static void w(final String message) {
+        RemoteLog.capture(LogLevel.WARN, message, null);
+        wLocal(message);
+    }
+
+    private static void wLocal(final String message) {
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }

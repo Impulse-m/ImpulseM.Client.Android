@@ -144,6 +144,7 @@ public final class CentrifugoClient {
     private final Map<Integer, Pending> pending = new HashMap<Integer, Pending>();
 
     private volatile String appVersion = "1.0";
+    private volatile String logLabel = "";
 
     private boolean wantConnected;
     private boolean connecting;
@@ -200,6 +201,12 @@ public final class CentrifugoClient {
     }
 
 
+    /** Prefixes this client's log lines, e.g. "account=0", so the connections of several accounts can be told apart. */
+    public void setLogLabel(String logLabel) {
+        this.logLabel = logLabel == null ? "" : logLabel;
+    }
+
+
     /** Starts connecting; the client keeps reconnecting until {@link #disconnect()} or a terminal close. */
     public void connect() {
         synchronized (lock) {
@@ -242,9 +249,11 @@ public final class CentrifugoClient {
         }
         if (staleGen >= 0) {
             Log.log(Level.WARNING, "socket silent beyond the watchdog window on resume, reconnecting");
+            trace("REALTIME_RECONNECT_NOW", "gen=" + staleGen + " cause=silent_socket");
             // handleClosed sees immediateReconnect and starts the next attempt without a delay.
             forceClose(staleGen);
         } else {
+            trace("REALTIME_RECONNECT_NOW", "cause=backoff_skipped");
             connectAsync();
         }
     }
@@ -433,6 +442,7 @@ public final class CentrifugoClient {
             reconnectTask = null;
             serial = attemptSerial;
         }
+        trace("REALTIME_CONNECTING", "attempt=" + serial);
         String token;
         try {
             token = tokens.fetchToken();
@@ -487,6 +497,7 @@ public final class CentrifugoClient {
                 }
             }, delay, TimeUnit.MILLISECONDS);
         }
+        trace("REALTIME_RECONNECT_SCHEDULED", "delayMs=" + delay + " cause=connect_failed reason=" + reason);
         fireDisconnected(AbnormalCloseCode, reason, true);
     }
 
@@ -581,6 +592,7 @@ public final class CentrifugoClient {
         JsonObject reply
     ) {
         JsonObject result = objectOf(reply, "connect");
+        long pingSeconds;
         synchronized (lock) {
             if (gen != generation) {
                 return;
@@ -588,7 +600,7 @@ public final class CentrifugoClient {
             connected = true;
             backoff.reset();
             scheduleRefreshLocked(gen, result);
-            long pingSeconds = longOfSafe(result, "ping");
+            pingSeconds = longOfSafe(result, "ping");
             if (pingSeconds <= 0) {
                 pingSeconds = DefaultPingSeconds;
             }
@@ -596,6 +608,7 @@ public final class CentrifugoClient {
             lastFrameAt = System.currentTimeMillis();
             scheduleWatchdogLocked(gen, watchdogWindowMillis);
         }
+        trace("REALTIME_CONNECT_REPLY", "gen=" + gen + " pingSeconds=" + pingSeconds);
         fireConnected();
         resubscribeAll(gen);
     }
@@ -640,11 +653,12 @@ public final class CentrifugoClient {
     ) {
         long reconnectDelay = -1L;
         boolean willReconnect;
+        boolean wasConnected;
         synchronized (lock) {
             if (gen != generation || socket == null) {
                 return;
             }
-            boolean wasConnected = connected;
+            wasConnected = connected;
             boolean immediate = immediateReconnect;
             immediateReconnect = false;
             socket = null;
@@ -669,6 +683,11 @@ public final class CentrifugoClient {
                 }
             }
         }
+        trace(
+            willReconnect ? "REALTIME_RECONNECT_SCHEDULED" : "REALTIME_CLOSED",
+            "gen=" + gen + " delayMs=" + reconnectDelay + " closeCode=" + code + " wasConnected=" + wasConnected
+                + " terminal=" + !willReconnect + " reason=" + reason
+        );
         // The listener hears about the disconnect before any reconnect can start, so onConnected never overtakes it.
         fireDisconnected(code, reason, willReconnect);
         if (reconnectDelay < 0L) {
@@ -902,6 +921,7 @@ public final class CentrifugoClient {
                 inner.addProperty("epoch", state.epoch);
             }
         }
+        trace("REALTIME_SUBSCRIBE_SENT", "gen=" + gen + " lane=" + laneKind(state.channel) + " recover=" + recover);
         JsonObject body = new JsonObject();
         body.add("subscribe", inner);
         final int sentGen = gen;
@@ -925,6 +945,7 @@ public final class CentrifugoClient {
                         channels.remove(state.channel);
                     }
                 }
+                trace("REALTIME_SUBSCRIBE_FAILED", "gen=" + sentGen + " lane=" + laneKind(state.channel) + " errorCode=" + code + " error=" + message);
                 if (current) {
                     fireUnsubscribed(state.channel, code, message);
                 }
@@ -971,6 +992,11 @@ public final class CentrifugoClient {
                 }
             }
         }
+        trace(
+            "REALTIME_SUBSCRIBE_REPLY",
+            "gen=" + gen + " lane=" + laneKind(state.channel) + " recovered=" + recovered + " wasRecovering=" + wasRecovering
+                + " replayed=" + replayed.size()
+        );
         fireSubscribed(state.channel, recovered, wasRecovering);
         for (Publication publication : replayed) {
             firePublication(publication);
@@ -1213,6 +1239,23 @@ public final class CentrifugoClient {
         } catch (RuntimeException e) {
             Log.log(Level.WARNING, "listener.onDisconnected failed", e);
         }
+    }
+
+
+    /** One connection-lifecycle line: the event name first, so it can be grepped, then the label and the details. */
+    private void trace(
+        String event,
+        String details
+    ) {
+        if (Log.isLoggable(Level.INFO)) {
+            Log.info(event + " " + logLabel + " " + details);
+        }
+    }
+
+
+    private static String laneKind(String channel) {
+        int separator = channel.indexOf(':');
+        return separator < 0 ? channel : channel.substring(0, separator);
     }
 
 

@@ -87,6 +87,7 @@ import org.telegram.utils.settings.SharedSettings;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.UserObject;
 import org.telegram.messenger.browser.Browser;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.ActionBar;
@@ -1482,7 +1483,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 (SharedConfig.frameMetricsEnabled ? "hide frame metrics" : "show frame metrics"),
                 BuildVars.DEBUG_PRIVATE_VERSION ? (SharedConfig.shadowsInSections ? "disable shadows in settings" : "enable shadows in settings") : null,
                 BuildVars.DEBUG_PRIVATE_VERSION ? (SharedConfig.debugViewMetrics ? "disable debug view metrics" : "enable debug view metrics") : null,
-                (SharedSettings.experimentalSettingsAllowed.get() ? "hide experimental settings" : "show experimental settings")
+                (SharedSettings.experimentalSettingsAllowed.get() ? "hide experimental settings" : "show experimental settings"),
+                RemoteLog.isEnabled() ? "Disable remote logs" : "Enable remote logs"
         };
 
         builder.setItems(items, (dialog, which) -> {
@@ -1795,6 +1797,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             } else if (which == 42) {
                 SharedSettings.experimentalSettingsAllowed.toggle();
                 listView.adapter.update(true);
+            } else if (which == 43) {
+                RemoteLog.setEnabled(!RemoteLog.isEnabled());
             }
         });
         builder.setNegativeButton(getString(R.string.Cancel), null);

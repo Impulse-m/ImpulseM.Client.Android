@@ -36,6 +36,7 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 
 import org.json.JSONObject;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.utils.Choreographer60FpsContent;
 import org.telegram.messenger.voip.VideoCapturerDevice;
 import org.telegram.tgnet.ConnectionsManager;
@@ -291,6 +292,8 @@ public class ApplicationLoader extends Application {
 
         super.onCreate();
 
+        RemoteLog.init(applicationContext != null ? applicationContext : this);
+
         // AndroidUtilities must be initialized before FileLog
         final String helloWorld = AndroidUtilities.getHelloWorld();
 
@@ -341,6 +344,7 @@ public class ApplicationLoader extends Application {
                 }
             }
         };
+        RemoteLog.watchForeground(ForegroundDetector.getInstance());
         if (BuildConfig.DEBUG_VERSION) {
             new ANRDetector(FileLog::dumpANR);
         }

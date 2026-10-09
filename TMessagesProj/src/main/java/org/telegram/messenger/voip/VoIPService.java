@@ -96,6 +96,7 @@ import org.json.JSONObject;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.ContactsController;
@@ -756,6 +757,15 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 	@SuppressLint({"MissingPermission", "InlinedApi"})
 	@Override
 	public int onStartCommand(Intent intent, int flags, int startId) {
+		RemoteLog.trace(
+			RemoteLog.ComponentCalls,
+			"PHONE_CALL_SERVICE_ON_START",
+			"account", intent != null ? intent.getIntExtra("account", -1) : null,
+			"outgoing", intent != null && intent.getBooleanExtra("is_outgoing", false),
+			"groupCall", intent != null && intent.getLongExtra("chat_id", 0) != 0,
+			"alreadyRunning", sharedInstance != null,
+			"startingCallId", callIShouldHavePutIntoIntent != null ? callIShouldHavePutIntoIntent.id : null
+		);
 		if (sharedInstance != null) {
 			if (BuildVars.LOGS_ENABLED) {
 				FileLog.e("Tried to start the VoIP service when it's already started");
@@ -929,6 +939,15 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		} else {
 			NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.closeInCallActivity);
 			privateCall = callIShouldHavePutIntoIntent;
+			RemoteLog.trace(
+				RemoteLog.ComponentCalls,
+				"PHONE_CALL_SERVICE_INCOMING",
+				"account", currentAccount,
+				"callId", privateCall != null ? privateCall.id : null,
+				"state", privateCall != null ? privateCall.getClass().getSimpleName() : null,
+				"instantAccept", instantAccept,
+				"connectionService", USE_CONNECTION_SERVICE
+			);
 			videoCall = privateCall != null && privateCall.video;
 			if (videoCall) {
 				isVideoAvailable = true;
@@ -937,7 +956,6 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 				setAudioOutput(0);
 			}
 			callIShouldHavePutIntoIntent = null;
-			FileLog.e("(3) set VoIPService.callIShouldHavePutIntoIntent = null");
 			if (instantAccept) {
 				instantAccept = false;
 				acceptIncomingCall();

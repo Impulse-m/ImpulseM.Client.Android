@@ -29,11 +29,14 @@ import android.util.SparseIntArray;
 import androidx.annotation.UiThread;
 import androidx.collection.LongSparseArray;
 
+import net.impulsem.transport.logging.LogLevel;
+
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.SQLite.SQLiteCursor;
 import org.telegram.SQLite.SQLiteDatabase;
 import org.telegram.SQLite.SQLiteException;
 import org.telegram.SQLite.SQLitePreparedStatement;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.support.LongSparseIntArray;
 import org.telegram.messenger.utils.EphemeralMessagesHelper;
 import org.telegram.tgnet.NativeByteBuffer;
@@ -13838,6 +13841,7 @@ public class MessagesStorage extends BaseController {
                 }
             }
             if (_oldId == null) {
+                traceTempRename("no_random_row", randomId, 0, newId, dialogId, scheduled);
                 return null;
             }
         }
@@ -13877,6 +13881,7 @@ public class MessagesStorage extends BaseController {
             } catch (Exception e) {
                 checkSQLException(e);
             }
+            traceTempRename("scheduled_sent_old_deleted", randomId, oldMessageId, newId, dialogId, scheduled);
             return null;
         }
 
@@ -13941,12 +13946,14 @@ public class MessagesStorage extends BaseController {
         }
 
         if (did == 0 && scheduled != 2) {
+            traceTempRename("temp_row_not_found", randomId, oldMessageId, newId, dialogId, scheduled);
             return null;
         }
         SQLitePreparedStatement state = null;
         SQLitePreparedStatement state2 = null;
         SQLitePreparedStatement state3 = null;
         if (oldMessageId == newId && date != 0) {
+            traceTempRename("same_id_date_only", randomId, oldMessageId, newId, did, scheduled);
             try {
                 if (scheduled == 0) {
                     state = database.executeFast("UPDATE messages_v2 SET send_state = 0, date = ? WHERE mid = ? AND uid = ?");
@@ -13994,7 +14001,21 @@ public class MessagesStorage extends BaseController {
                     state2.bindInteger(2, oldMessageId);
                     state2.bindLong(3, did);
                     state2.step();
+                    traceTempRename("renamed", randomId, oldMessageId, newId, did, scheduled);
                 } catch (Exception e) {
+                    RemoteLog.trace(
+                        LogLevel.WARN,
+                        RemoteLog.ComponentSend,
+                        "SEND_DUPLICATE_INSERT",
+                        "account", currentAccount,
+                        "where", "storage_rename",
+                        "randomId", randomId,
+                        "tempId", oldMessageId,
+                        "id", newId,
+                        "dialogId", did,
+                        "action", "temp_row_deleted_server_row_kept",
+                        "error", e.getClass().getSimpleName()
+                    );
                     try {
                         database.executeFast(String.format(Locale.US, "DELETE FROM messages_v2 WHERE mid = %d AND uid = %d", oldMessageId, did)).stepThis().dispose();
                         database.executeFast(String.format(Locale.US, "DELETE FROM messages_seq WHERE mid = %d", oldMessageId)).stepThis().dispose();
@@ -14134,8 +14155,32 @@ public class MessagesStorage extends BaseController {
                 }
             }
 
+            if (scheduled != 0) {
+                traceTempRename("renamed", randomId, oldMessageId, newId, did, scheduled);
+            }
             return new long[]{did, _oldId};
         }
+    }
+
+    private void traceTempRename(
+        String outcome,
+        long randomId,
+        int tempId,
+        int newId,
+        long dialogId,
+        int scheduled
+    ) {
+        RemoteLog.trace(
+            RemoteLog.ComponentSend,
+            "SEND_TEMP_RENAME",
+            "account", currentAccount,
+            "outcome", outcome,
+            "randomId", randomId,
+            "tempId", tempId,
+            "id", newId,
+            "dialogId", dialogId,
+            "table", scheduled
+        );
     }
 
     public long[] updateMessageStateAndId(long random_id, long dialogId, Integer _oldId, int newId, int date, boolean useQueue, int scheduled, int topicId) {
