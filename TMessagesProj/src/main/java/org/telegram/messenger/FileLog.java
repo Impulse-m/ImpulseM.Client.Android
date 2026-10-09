@@ -406,21 +406,6 @@ public class FileLog {
     }
 
     public static void e(final String message) {
-        eLocal(message);
-    }
-
-    /** Writes to logcat and the local log file only; for lines the remote sink already received in structured form. */
-    public static void local(final LogLevel level, final String message) {
-        if (level == LogLevel.ERROR) {
-            eLocal(message);
-        } else if (level == LogLevel.WARN) {
-            wLocal(message);
-        } else {
-            dLocal(message);
-        }
-    }
-
-    private static void eLocal(final String message) {
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -581,10 +566,6 @@ public class FileLog {
     }
 
     public static void d(final String message) {
-        dLocal(message);
-    }
-
-    private static void dLocal(final String message) {
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -606,10 +587,6 @@ public class FileLog {
     }
 
     public static void w(final String message) {
-        wLocal(message);
-    }
-
-    private static void wLocal(final String message) {
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -624,6 +601,17 @@ public class FileLog {
                     e.printStackTrace();
                 }
             });
+        }
+    }
+
+    /** Writes to logcat and the local log file only; for lines the remote sink already received in structured form. */
+    public static void local(final LogLevel level, final String message) {
+        if (level == LogLevel.ERROR) {
+            e(message);
+        } else if (level == LogLevel.WARN) {
+            w(message);
+        } else {
+            d(message);
         }
     }
 

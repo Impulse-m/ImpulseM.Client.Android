@@ -403,7 +403,12 @@ public class VoIPPreNotificationService { // } extends Service implements AudioM
         }
 
         if (pendingCall != null && pendingCall.id == call.id) {
-            RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_PRE_NOTIFICATION_SHOW", "callId", call.id, "skipped", "already_pending");
+            RemoteLog.trace(
+                RemoteLog.ComponentCalls,
+                "PHONE_CALL_PRE_NOTIFICATION_SHOW",
+                "callId", call.id,
+                "skipped", "already_pending"
+            );
             return;
         }
         RemoteLog.trace(
@@ -590,7 +595,12 @@ public class VoIPPreNotificationService { // } extends Service implements AudioM
 
     public static void dismiss(Context context, boolean answered) {
         if (pendingCall != null) {
-            RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_PRE_NOTIFICATION_DISMISS", "callId", pendingCall.id, "answered", answered);
+            RemoteLog.trace(
+                RemoteLog.ComponentCalls,
+                "PHONE_CALL_PRE_NOTIFICATION_DISMISS",
+                "callId", pendingCall.id,
+                "answered", answered
+            );
         }
         FileLog.d("VoIPPreNotification.dismiss()");
         pendingVoIP = null;

@@ -16907,12 +16907,25 @@ public class MessagesController extends BaseController implements NotificationCe
     public void getDifference(int pts, int date, int qts, boolean slice) {
         registerForPush(SharedConfig.pushType, SharedConfig.pushString);
         if (getMessagesStorage().getLastPtsValue() == 0) {
-            RemoteLog.trace(RemoteLog.ComponentSync, "GET_DIFFERENCE_SKIPPED", "account", currentAccount, "cause", "no_state_load_current_state");
+            RemoteLog.trace(
+                RemoteLog.ComponentSync,
+                "GET_DIFFERENCE_SKIPPED",
+                "account", currentAccount,
+                "cause", "no_state_load_current_state"
+            );
             loadCurrentState();
             return;
         }
         if (!slice && gettingDifference) {
-            RemoteLog.trace(RemoteLog.ComponentSync, "GET_DIFFERENCE_SKIPPED", "account", currentAccount, "cause", "already_in_flight", "pts", pts, "qts", qts, "date", date);
+            RemoteLog.trace(
+                RemoteLog.ComponentSync,
+                "GET_DIFFERENCE_SKIPPED",
+                "account", currentAccount,
+                "cause", "already_in_flight",
+                "pts", pts,
+                "qts", qts,
+                "date", date
+            );
             return;
         }
         gettingDifference = true;
@@ -20597,14 +20610,28 @@ public class MessagesController extends BaseController implements NotificationCe
                         }
                         if (call instanceof TL_phone.phoneCallRequested) {
                             if (call.date + callRingTimeout / 1000 < getConnectionsManager().getCurrentTime()) {
-                                RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_IGNORED", "account", currentAccount, "callId", call.id, "cause", "too_old", "ringTimeoutMs", callRingTimeout);
+                                RemoteLog.trace(
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_IGNORED",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "cause", "too_old",
+                                    "ringTimeoutMs", callRingTimeout
+                                );
                                 continue;
                             }
                             boolean notificationsDisabled = false;
                             if (!NotificationManagerCompat.from(ApplicationLoader.applicationContext).areNotificationsEnabled()) {
                                 notificationsDisabled = true;
                                 if (ApplicationLoader.mainInterfacePaused || !ApplicationLoader.isScreenOn) {
-                                    RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentCalls, "PHONE_CALL_IGNORED", "account", currentAccount, "callId", call.id, "cause", "system_notifications_disabled");
+                                    RemoteLog.trace(
+                                        LogLevel.WARN,
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_IGNORED",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "cause", "system_notifications_disabled"
+                                    );
                                     continue;
                                 }
                             }
@@ -20631,12 +20658,24 @@ public class MessagesController extends BaseController implements NotificationCe
                             TL_phone.PhoneCall startingCall = VoIPService.callIShouldHavePutIntoIntent;
                             TL_phone.PhoneCall activeCall = svc != null ? svc.getPrivateCall() : null;
                             if ((startingCall != null && startingCall.id == call.id) || (activeCall != null && activeCall.id == call.id)) {
-                                RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_IGNORED", "account", currentAccount, "callId", call.id, "cause", "duplicate_request");
+                                RemoteLog.trace(
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_IGNORED",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "cause", "duplicate_request"
+                                );
                                 continue;
                             }
                             if (svc != null || VoIPService.callIShouldHavePutIntoIntent != null || !callStateIsIdle) {
                                 if (svc != null && svc.getAccount() != currentAccount && svc.getUser() != null && svc.getUser().id == getUserConfig().getClientUserId()) {
-                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_IGNORED", "account", currentAccount, "callId", call.id, "cause", "same_device_other_account");
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_IGNORED",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "cause", "same_device_other_account"
+                                    );
                                     // calling from the same device, don't discard
                                     continue;
                                 }
@@ -20684,34 +20723,87 @@ public class MessagesController extends BaseController implements NotificationCe
                             try {
                                 if (Build.VERSION.SDK_INT >= 33) {
                                     intent.putExtra("accept", true);
-                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_SERVICE_START", "account", currentAccount, "callId", call.id, "via", "pre_notification", "appPaused", ApplicationLoader.mainInterfacePaused, "screenOn", ApplicationLoader.isScreenOn);
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_SERVICE_START",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "via", "pre_notification",
+                                        "appPaused", ApplicationLoader.mainInterfacePaused,
+                                        "screenOn", ApplicationLoader.isScreenOn
+                                    );
                                     VoIPPreNotificationService.show(ApplicationLoader.applicationContext, intent, call);
                                 } else if (!notificationsDisabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_SERVICE_START", "account", currentAccount, "callId", call.id, "via", "foreground_service", "appPaused", ApplicationLoader.mainInterfacePaused, "screenOn", ApplicationLoader.isScreenOn);
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_SERVICE_START",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "via", "foreground_service",
+                                        "appPaused", ApplicationLoader.mainInterfacePaused,
+                                        "screenOn", ApplicationLoader.isScreenOn
+                                    );
                                     ApplicationLoader.applicationContext.startForegroundService(intent);
                                 } else {
-                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_SERVICE_START", "account", currentAccount, "callId", call.id, "via", "service", "appPaused", ApplicationLoader.mainInterfacePaused, "screenOn", ApplicationLoader.isScreenOn);
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_SERVICE_START",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "via", "service",
+                                        "appPaused", ApplicationLoader.mainInterfacePaused,
+                                        "screenOn", ApplicationLoader.isScreenOn
+                                    );
                                     ApplicationLoader.applicationContext.startService(intent);
                                 }
                                 if (ApplicationLoader.mainInterfacePaused || !ApplicationLoader.isScreenOn) {
                                     ignoreSetOnline = true;
                                 }
                             } catch (Throwable e) {
-                                RemoteLog.trace(LogLevel.ERROR, RemoteLog.ComponentCalls, "PHONE_CALL_SERVICE_START_FAILED", "account", currentAccount, "callId", call.id, "error", e);
+                                RemoteLog.trace(
+                                    LogLevel.ERROR,
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_SERVICE_START_FAILED",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "error", e
+                                );
                                 FileLog.e(e);
                             }
                         } else {
                             if (svc != null && svc.getAccount() == currentAccount && call != null) {
-                                RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass(), "to", "voip_service");
+                                RemoteLog.trace(
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_ROUTED",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "state", call.getClass(),
+                                    "to", "voip_service"
+                                );
                                 svc.onCallUpdated(call);
                             } else {
                                 if (call instanceof TL_phone.TL_phoneCallDiscarded) {
-                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass(), "to", "pre_notification_dismiss");
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_ROUTED",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "state", call.getClass(),
+                                        "to", "pre_notification_dismiss"
+                                    );
                                     VoIPPreNotificationService.dismiss(ApplicationLoader.applicationContext, false);
                                 }
                                 if (VoIPService.callIShouldHavePutIntoIntent != null) {
                                     boolean sameCall = call.id == VoIPService.callIShouldHavePutIntoIntent.id;
-                                    RemoteLog.trace(RemoteLog.ComponentCalls, "PHONE_CALL_ROUTED", "account", currentAccount, "callId", call.id, "state", call.getClass(), "to", "starting_service", "sameCall", sameCall);
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_ROUTED",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "state", call.getClass(),
+                                        "to", "starting_service",
+                                        "sameCall", sameCall
+                                    );
                                     if (sameCall) {
                                         VoIPService.callIShouldHavePutIntoIntent = call instanceof TL_phone.TL_phoneCallDiscarded ? null : call;
                                     }
