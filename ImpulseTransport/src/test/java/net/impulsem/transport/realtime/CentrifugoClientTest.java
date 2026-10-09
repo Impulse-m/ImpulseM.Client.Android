@@ -400,6 +400,28 @@ public class CentrifugoClientTest {
 
 
     @Test
+    public void aThrowingTraceSinkDoesNotStallTheReconnect() throws Exception {
+        client.setTraceSink(new TraceSink() {
+            @Override
+            public void trace(
+                LogLevel level,
+                String event,
+                Object... keysAndValues
+            ) {
+                throw new IllegalStateException("sink failure");
+            }
+        });
+        client.connect();
+        recorder.expect("connected");
+
+        abort(0);
+
+        recorder.expect("disconnected:1006:true");
+        recorder.expect("connected");
+    }
+
+
+    @Test
     public void aTerminalCloseIsTracedAsClosed() throws Exception {
         client.setTraceSink(traces);
         client.connect();

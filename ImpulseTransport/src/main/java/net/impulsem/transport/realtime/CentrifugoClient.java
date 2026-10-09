@@ -1316,7 +1316,11 @@ public final class CentrifugoClient {
         String details,
         Object... fields
     ) {
-        traceSink.trace(level, event, fields);
+        try {
+            traceSink.trace(level, event, fields);
+        } catch (RuntimeException e) {
+            Log.log(Level.WARNING, "trace sink failed for " + event, e);
+        }
         if (Log.isLoggable(Level.INFO)) {
             Log.info(event + " " + logLabel + " " + details);
         }
