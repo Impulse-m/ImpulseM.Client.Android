@@ -53,6 +53,7 @@ import androidx.core.view.inputmethod.InputContentInfoCompat;
 
 import org.json.JSONObject;
 import org.telegram.messenger.audioinfo.AudioInfo;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.support.SparseLongArray;
 import org.telegram.messenger.utils.EphemeralMessagesHelper;
 import org.telegram.messenger.utils.tlutils.AmountUtils;
@@ -7633,6 +7634,14 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
                         TLRPC.Update update = updatesArr.get(a);
                         if (update instanceof TL_update.TL_updateMessageID) {
                             TL_update.TL_updateMessageID updateMessageID = (TL_update.TL_updateMessageID) update;
+                            RemoteLog.trace(
+                                RemoteLog.ComponentSend,
+                                "SEND_UPDATE_MESSAGE_ID",
+                                "account", currentAccount,
+                                "source", "send_multi_response",
+                                "randomId", updateMessageID.random_id,
+                                "id", updateMessageID.id
+                            );
                             newIds.put(updateMessageID.random_id, updateMessageID.id);
                             updatesArr.remove(a);
                             a--;
@@ -8115,6 +8124,19 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
                         boolean scheduledOnline = newMsgObj.date == 0x7FFFFFFE;
                         if (response instanceof TLRPC.TL_updateShortSentMessage) {
                             final TLRPC.TL_updateShortSentMessage res = (TLRPC.TL_updateShortSentMessage) response;
+                            RemoteLog.trace(
+                                RemoteLog.ComponentSend,
+                                "SEND_SHORT_SENT_MESSAGE",
+                                "account", currentAccount,
+                                "dialogId", newMsgObj.dialog_id,
+                                "randomId", newMsgObj.random_id,
+                                "tempId", oldId,
+                                "id", res.id,
+                                "pts", res.pts,
+                                "ptsCount", res.pts_count,
+                                "date", res.date,
+                                "scheduled", scheduled
+                            );
                             updateMediaPaths(msgObj, null, res.id, null, false, params);
                             existFlags = msgObj.getMediaExistanceFlags();
                             newMsgObj.local_id = newMsgObj.id = res.id;
@@ -8243,8 +8265,32 @@ public class SendMessagesHelper extends BaseController implements NotificationCe
                                         updatesArr.remove(a);
                                         a--;
                                     }
+                                } else if (update instanceof TL_update.TL_updateMessageID) {
+                                    final TL_update.TL_updateMessageID updateMessageID = (TL_update.TL_updateMessageID) update;
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentSend,
+                                        "SEND_UPDATE_MESSAGE_ID",
+                                        "account", currentAccount,
+                                        "source", "send_response",
+                                        "randomId", updateMessageID.random_id,
+                                        "id", updateMessageID.id,
+                                        "tempId", oldId,
+                                        "randomIdMatches", updateMessageID.random_id == newMsgObj.random_id
+                                    );
                                 }
                             }
+                            RemoteLog.trace(
+                                RemoteLog.ComponentSend,
+                                "SEND_UPDATES_RESPONSE",
+                                "account", currentAccount,
+                                "dialogId", newMsgObj.dialog_id,
+                                "randomId", newMsgObj.random_id,
+                                "tempId", oldId,
+                                "id", message != null ? message.id : null,
+                                "messageFound", message != null,
+                                "updates", updates.getClass(),
+                                "remainingUpdates", updatesArr.size()
+                            );
                             if (!ephemeralMessages.isEmpty()) {
                                 getMessagesStorage().putEphemeralMessages(ephemeralMessages, true);
                             }

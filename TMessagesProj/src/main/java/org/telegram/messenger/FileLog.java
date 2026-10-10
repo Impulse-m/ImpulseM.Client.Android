@@ -27,6 +27,9 @@ import com.google.gson.TypeAdapter;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 
+import net.impulsem.transport.logging.LogLevel;
+
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.time.FastDateFormat;
 import org.telegram.messenger.video.MediaCodecVideoConvertor;
 import org.telegram.tgnet.TLObject;
@@ -379,6 +382,7 @@ public class FileLog {
     }
 
     public static void e(final String message, final Throwable exception) {
+        RemoteLog.captureException(LogLevel.ERROR, RemoteLog.ComponentApp, exception);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -424,6 +428,7 @@ public class FileLog {
     }
 
     public static void e(final Throwable e, boolean logToAppCenter) {
+        RemoteLog.captureException(LogLevel.ERROR, RemoteLog.ComponentApp, e);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -508,6 +513,7 @@ public class FileLog {
     }
 
     public static void fatal(final Throwable e, boolean logToAppCenter) {
+        RemoteLog.captureException(LogLevel.ERROR, RemoteLog.ComponentApp, e);
         if (!BuildVars.LOGS_ENABLED) {
             return;
         }
@@ -595,6 +601,17 @@ public class FileLog {
                     e.printStackTrace();
                 }
             });
+        }
+    }
+
+    /** Writes to logcat and the local log file only; for lines the remote sink already received in structured form. */
+    public static void local(final LogLevel level, final String message) {
+        if (level == LogLevel.ERROR) {
+            e(message);
+        } else if (level == LogLevel.WARN) {
+            w(message);
+        } else {
+            d(message);
         }
     }
 

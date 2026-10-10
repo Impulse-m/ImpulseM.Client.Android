@@ -51,11 +51,14 @@ import androidx.core.app.NotificationManagerCompat;
 import androidx.core.graphics.ColorUtils;
 import androidx.core.util.Consumer;
 
+import net.impulsem.transport.logging.LogLevel;
+
 import org.telegram.SQLite.SQLiteCursor;
 import org.telegram.SQLite.SQLiteDatabase;
 import org.telegram.SQLite.SQLiteException;
 import org.telegram.SQLite.SQLitePreparedStatement;
 import org.telegram.messenger.browser.Browser;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.support.LongSparseIntArray;
 import org.telegram.messenger.support.LongSparseLongArray;
 import org.telegram.messenger.utils.EphemeralMessagesHelper;
@@ -16667,12 +16670,28 @@ public class MessagesController extends BaseController implements NotificationCe
         req.pts = channelPts;
         req.limit = limit;
         req.force = newDialogType != 3;
-        if (BuildVars.LOGS_ENABLED) {
-            FileLog.d("start getChannelDifference with pts = " + channelPts + " channelId = " + channelId);
-        }
+        RemoteLog.trace(
+            RemoteLog.ComponentSync,
+            "GET_CHANNEL_DIFFERENCE_START",
+            "account", currentAccount,
+            "channelId", channelId,
+            "pts", channelPts,
+            "newDialogType", newDialogType
+        );
         getConnectionsManager().sendRequest(req, (response, error) -> {
             if (response != null) {
                 TLRPC.updates_ChannelDifference res = (TLRPC.updates_ChannelDifference) response;
+                RemoteLog.trace(
+                    RemoteLog.ComponentSync,
+                    "GET_CHANNEL_DIFFERENCE_END",
+                    "account", currentAccount,
+                    "channelId", channelId,
+                    "result", res.getClass(),
+                    "pts", res.pts,
+                    "final", res.isFinal,
+                    "newMessages", res.new_messages.size(),
+                    "otherUpdates", res.other_updates.size()
+                );
 
                 LongSparseArray<TLRPC.User> usersDict = new LongSparseArray<>();
                 for (int a = 0; a < res.users.size(); a++) {
@@ -16712,6 +16731,17 @@ public class MessagesController extends BaseController implements NotificationCe
                         SparseArray<long[]> corrected = new SparseArray<>();
                         for (TL_update.TL_updateMessageID update : msgUpdates) {
                             long[] ids = getMessagesStorage().updateMessageStateAndId(update.random_id, -channelId, null, update.id, 0, false, -1, 0);
+                            RemoteLog.trace(
+                                RemoteLog.ComponentSend,
+                                "SEND_UPDATE_MESSAGE_ID",
+                                "account", currentAccount,
+                                "source", "getChannelDifference",
+                                "channelId", channelId,
+                                "randomId", update.random_id,
+                                "id", update.id,
+                                "tempId", ids == null ? null : ids[1],
+                                "matchedTemp", ids != null
+                            );
                             if (ids != null) {
                                 corrected.put(update.id, ids);
                             }
@@ -16877,10 +16907,25 @@ public class MessagesController extends BaseController implements NotificationCe
     public void getDifference(int pts, int date, int qts, boolean slice) {
         registerForPush(SharedConfig.pushType, SharedConfig.pushString);
         if (getMessagesStorage().getLastPtsValue() == 0) {
+            RemoteLog.trace(
+                RemoteLog.ComponentSync,
+                "GET_DIFFERENCE_SKIPPED",
+                "account", currentAccount,
+                "cause", "no_state_load_current_state"
+            );
             loadCurrentState();
             return;
         }
         if (!slice && gettingDifference) {
+            RemoteLog.trace(
+                RemoteLog.ComponentSync,
+                "GET_DIFFERENCE_SKIPPED",
+                "account", currentAccount,
+                "cause", "already_in_flight",
+                "pts", pts,
+                "qts", qts,
+                "date", date
+            );
             return;
         }
         gettingDifference = true;
@@ -16900,14 +16945,22 @@ public class MessagesController extends BaseController implements NotificationCe
         if (req.date == 0) {
             req.date = getConnectionsManager().getCurrentTime();
         }
-        if (BuildVars.LOGS_ENABLED) {
-            FileLog.d("start getDifference with date = " + date + " pts = " + pts + " qts = " + qts);
-            FileLog.d("getDifference: isUpdating = true");
-        }
+        final long differenceStartedAt = SystemClock.elapsedRealtime();
+        RemoteLog.trace(
+            RemoteLog.ComponentSync,
+            "GET_DIFFERENCE_START",
+            "account", currentAccount,
+            "pts", req.pts,
+            "qts", req.qts,
+            "date", req.date,
+            "slice", slice,
+            "ptsTotalLimit", req.pts_total_limit
+        );
         getConnectionsManager().setIsUpdating(true);
         getConnectionsManager().sendRequest(req, (response, error) -> {
             if (error == null) {
                 TLRPC.updates_Difference res = (TLRPC.updates_Difference) response;
+                traceDifferenceEnd(res, differenceStartedAt);
                 if (res instanceof TLRPC.TL_updates_differenceTooLong) {
                     AndroidUtilities.runOnUIThread(() -> {
                         loadedFullUsers.clear();
@@ -16970,6 +17023,17 @@ public class MessagesController extends BaseController implements NotificationCe
                             for (int a = 0; a < msgUpdates.size(); a++) {
                                 TL_update.TL_updateMessageID update = msgUpdates.get(a);
                                 long[] ids = getMessagesStorage().updateMessageStateAndId(update.random_id, 0, null, update.id, 0, false, -1, 0);
+                                RemoteLog.trace(
+                                    RemoteLog.ComponentSend,
+                                    "SEND_UPDATE_MESSAGE_ID",
+                                    "account", currentAccount,
+                                    "source", "getDifference",
+                                    "randomId", update.random_id,
+                                    "id", update.id,
+                                    "tempId", ids == null ? null : ids[1],
+                                    "dialogId", ids == null ? null : ids[0],
+                                    "matchedTemp", ids != null
+                                );
                                 if (ids != null) {
                                     corrected.put(update.id, ids);
                                 }
@@ -17110,11 +17174,67 @@ public class MessagesController extends BaseController implements NotificationCe
                     });
                 }
             } else {
+                RemoteLog.trace(
+                    LogLevel.WARN,
+                    RemoteLog.ComponentSync,
+                    "GET_DIFFERENCE_END",
+                    "account", currentAccount,
+                    "result", "error",
+                    "errorCode", error.code,
+                    "error", error.text,
+                    "elapsedMs", SystemClock.elapsedRealtime() - differenceStartedAt
+                );
                 gettingDifference = false;
                 getConnectionsManager().setIsUpdating(false);
-                FileLog.d("received: isUpdating = false");
             }
         });
+    }
+
+
+    private void traceDifferenceEnd(
+        TLRPC.updates_Difference res,
+        long startedAt
+    ) {
+        long elapsedMs = SystemClock.elapsedRealtime() - startedAt;
+        if (res instanceof TLRPC.TL_updates_differenceEmpty) {
+            RemoteLog.trace(
+                RemoteLog.ComponentSync,
+                "GET_DIFFERENCE_END",
+                "account", currentAccount,
+                "result", "empty",
+                "date", res.date,
+                "seq", res.seq,
+                "elapsedMs", elapsedMs
+            );
+            return;
+        }
+        if (res instanceof TLRPC.TL_updates_differenceTooLong) {
+            RemoteLog.trace(
+                RemoteLog.ComponentSync,
+                "GET_DIFFERENCE_END",
+                "account", currentAccount,
+                "result", "too_long",
+                "pts", res.pts,
+                "elapsedMs", elapsedMs
+            );
+            return;
+        }
+        TLRPC.TL_updates_state state = res instanceof TLRPC.TL_updates_differenceSlice ? res.intermediate_state : res.state;
+        RemoteLog.trace(
+            RemoteLog.ComponentSync,
+            "GET_DIFFERENCE_END",
+            "account", currentAccount,
+            "result", res instanceof TLRPC.TL_updates_differenceSlice ? "slice" : "difference",
+            "pts", state == null ? null : state.pts,
+            "qts", state == null ? null : state.qts,
+            "date", state == null ? null : state.date,
+            "seq", state == null ? null : state.seq,
+            "newMessages", res.new_messages.size(),
+            "otherUpdates", res.other_updates.size(),
+            "users", res.users.size(),
+            "chats", res.chats.size(),
+            "elapsedMs", elapsedMs
+        );
     }
 
     public void markDialogAsUnread(long dialogId, TLRPC.InputPeer peer, long taskId) {
@@ -17860,6 +17980,8 @@ public class MessagesController extends BaseController implements NotificationCe
     public void processUpdates(final TLRPC.Updates updates, boolean fromQueue) {
         ArrayList<Long> needGetChannelsDiff = null;
         boolean needGetDiff = false;
+        String diffReason = null;
+        long diffReasonPeerId = 0;
         boolean needReceivedQueue = false;
         boolean updateStatus = false;
         if (updates instanceof TLRPC.TL_updateShort) {
@@ -17956,6 +18078,8 @@ public class MessagesController extends BaseController implements NotificationCe
 
             if (missingData) {
                 needGetDiff = true;
+                diffReason = user == null ? "short_message_unknown_user" : "short_message_missing_peer";
+                diffReasonPeerId = user == null ? userId : -updates.chat_id;
             } else {
                 if (getMessagesStorage().getLastPtsValue() + updates.pts_count == updates.pts) {
                     TLRPC.TL_message message = new TLRPC.TL_message();
@@ -18058,6 +18182,7 @@ public class MessagesController extends BaseController implements NotificationCe
                         updatesQueuePts.add(updates);
                     } else {
                         needGetDiff = true;
+                        diffReason = "short_message_pts_gap";
                     }
                 }
             }
@@ -18093,6 +18218,8 @@ public class MessagesController extends BaseController implements NotificationCe
                                 FileLog.d("need get diff because of min channel " + channelId);
                             }
                             needGetDiff = true;
+                            diffReason = "min_channel";
+                            diffReasonPeerId = -channelId;
                             break;
                         }
                         /*if (message.fwd_from != null && message.fwd_from.channel_id != 0) {
@@ -18138,6 +18265,7 @@ public class MessagesController extends BaseController implements NotificationCe
                                     FileLog.d("need get diff inner TL_updates, pts: " + getMessagesStorage().getLastPtsValue() + " " + updates.seq);
                                 }
                                 needGetDiff = true;
+                                diffReason = "unresolved_peer_in_update";
                             } else {
                                 getMessagesStorage().setLastPtsValue(updatesNew.pts);
                             }
@@ -18155,6 +18283,7 @@ public class MessagesController extends BaseController implements NotificationCe
                                 updatesQueuePts.add(updatesNew);
                             } else {
                                 needGetDiff = true;
+                                diffReason = "pts_gap";
                             }
                         }
                     } else if (getUpdateType(update) == 1) {
@@ -18191,6 +18320,7 @@ public class MessagesController extends BaseController implements NotificationCe
                                 updatesQueueQts.add(updatesNew);
                             } else {
                                 needGetDiff = true;
+                                diffReason = "qts_gap";
                             }
                         }
                     } else if (getUpdateType(update) == 2) {
@@ -18273,9 +18403,13 @@ public class MessagesController extends BaseController implements NotificationCe
                                 }
                             }
                         } else {
-                            if (BuildVars.LOGS_ENABLED) {
-                                FileLog.d("need load unknown channel = " + channelId);
-                            }
+                            RemoteLog.trace(
+                                RemoteLog.ComponentSync,
+                                "UNKNOWN_CHANNEL_LOAD",
+                                "account", currentAccount,
+                                "channelId", channelId,
+                                "update", update.getClass()
+                            );
                         }
                     } else {
                         break;
@@ -18320,6 +18454,7 @@ public class MessagesController extends BaseController implements NotificationCe
                         updatesQueueSeq.add(updates);
                     } else {
                         needGetDiff = true;
+                        diffReason = "seq_gap";
                     }
                 }
             }
@@ -18328,6 +18463,7 @@ public class MessagesController extends BaseController implements NotificationCe
                 FileLog.d("need get diff TL_updatesTooLong");
             }
             needGetDiff = true;
+            diffReason = "updates_too_long";
         } else if (updates instanceof UserActionUpdatesSeq) {
             getMessagesStorage().setLastSeqValue(updates.seq);
         } else if (updates instanceof UserActionUpdatesPts) {
@@ -18349,6 +18485,21 @@ public class MessagesController extends BaseController implements NotificationCe
                 }
             }
             if (needGetDiff) {
+                RemoteLog.trace(
+                    RemoteLog.ComponentSync,
+                    "GET_DIFFERENCE_REASON",
+                    "account", currentAccount,
+                    "reason", diffReason,
+                    "needGetDiff", true,
+                    "peerId", diffReasonPeerId == 0 ? null : diffReasonPeerId,
+                    "updates", updates.getClass(),
+                    "localPts", getMessagesStorage().getLastPtsValue(),
+                    "localQts", getMessagesStorage().getLastQtsValue(),
+                    "localSeq", getMessagesStorage().getLastSeqValue(),
+                    "updatesPts", updates.pts,
+                    "updatesPtsCount", updates.pts_count,
+                    "updatesSeq", updates.seq
+                );
                 getDifference();
             } else {
                 for (int a = 0; a < 3; a++) {
@@ -18527,9 +18678,15 @@ public class MessagesController extends BaseController implements NotificationCe
                 if (!fromGetDifference) {
                     if (chatId != 0) {
                         if (chat == null) {
-                            if (BuildVars.LOGS_ENABLED) {
-                                FileLog.d("not found chat " + chatId);
-                            }
+                            RemoteLog.trace(
+                                RemoteLog.ComponentSync,
+                                "UNKNOWN_PEER_IN_UPDATE",
+                                "account", currentAccount,
+                                "update", baseUpdate.getClass(),
+                                "chatId", chatId,
+                                "messageId", message.id,
+                                "needGetDiff", true
+                            );
                             return false;
                         }
                     }
@@ -18563,9 +18720,18 @@ public class MessagesController extends BaseController implements NotificationCe
                                 putUser(user, true);
                             }
                             if (user == null) {
-                                if (BuildVars.LOGS_ENABLED) {
-                                    FileLog.d("not found user " + userId);
-                                }
+                                RemoteLog.trace(
+                                    RemoteLog.ComponentSync,
+                                    "UNKNOWN_PEER_IN_UPDATE",
+                                    "account", currentAccount,
+                                    "update", baseUpdate.getClass(),
+                                    "userId", userId,
+                                    "role", a == 0 ? "peer" : a == 1 ? "from" : a == 2 ? "fwd_from" : "mention",
+                                    "minAllowed", allowMin,
+                                    "chatId", chatId,
+                                    "messageId", message.id,
+                                    "needGetDiff", true
+                                );
                                 return false;
                             }
                             if (!message.out && a == 1 && user.status != null && user.status.expires <= 0 && Math.abs(getConnectionsManager().getCurrentTime() - message.date) < 30) {
@@ -20424,28 +20590,48 @@ public class MessagesController extends BaseController implements NotificationCe
                         TL_update.TL_updatePhoneCall upd = (TL_update.TL_updatePhoneCall) baseUpdate;
                         TL_phone.PhoneCall call = upd.phone_call;
                         VoIPService svc = VoIPService.getSharedInstance();
-                        if (BuildVars.LOGS_ENABLED) {
-                            FileLog.d("Received call in update: " + call);
-                            FileLog.d("call id " + call.id);
-                        }
+                        RemoteLog.trace(
+                            RemoteLog.ComponentCalls,
+                            "PHONE_CALL_UPDATE",
+                            "account", currentAccount,
+                            "callId", call.id,
+                            "state", call.getClass(),
+                            "date", call.date,
+                            "serverTime", getConnectionsManager().getCurrentTime(),
+                            "video", call.video,
+                            "serviceRunning", svc != null,
+                            "serviceCallId", svc != null && svc.getPrivateCall() != null ? svc.getPrivateCall().id : null,
+                            "startingCallId", VoIPService.callIShouldHavePutIntoIntent != null ? VoIPService.callIShouldHavePutIntoIntent.id : null,
+                            "fromDifference", fromGetDifference
+                        );
                         if (voipDebug != null && call instanceof TL_phone.TL_phoneCallDiscarded) {
                             TL_phone.TL_phoneCallDiscarded p = (TL_phone.TL_phoneCallDiscarded) call;
                             voipDebug.done(p.id, p.need_debug);
                         }
                         if (call instanceof TL_phone.phoneCallRequested) {
                             if (call.date + callRingTimeout / 1000 < getConnectionsManager().getCurrentTime()) {
-                                if (BuildVars.LOGS_ENABLED) {
-                                    FileLog.d("ignoring too old call");
-                                }
+                                RemoteLog.trace(
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_IGNORED",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "cause", "too_old",
+                                    "ringTimeoutMs", callRingTimeout
+                                );
                                 continue;
                             }
                             boolean notificationsDisabled = false;
                             if (!NotificationManagerCompat.from(ApplicationLoader.applicationContext).areNotificationsEnabled()) {
                                 notificationsDisabled = true;
                                 if (ApplicationLoader.mainInterfacePaused || !ApplicationLoader.isScreenOn) {
-                                    if (BuildVars.LOGS_ENABLED) {
-                                        FileLog.d("Ignoring incoming call because notifications are disabled in system");
-                                    }
+                                    RemoteLog.trace(
+                                        LogLevel.WARN,
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_IGNORED",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "cause", "system_notifications_disabled"
+                                    );
                                     continue;
                                 }
                             }
@@ -20464,7 +20650,6 @@ public class MessagesController extends BaseController implements NotificationCe
                             } catch (Throwable e) {
                                 FileLog.e(e);
                             }
-                            FileLog.e("updatePhoneCall: svc=" + svc + " callIShouldHavePutIntoIntent=" + VoIPService.callIShouldHavePutIntoIntent + " callStateIsIdle=" + callStateIsIdle);
 //                            if (svc != null && call.conference_call != null) {
 //                                svc.answerToRequestForConference((TL_phone.phoneCallRequested) call);
 //                                continue;
@@ -20473,24 +20658,55 @@ public class MessagesController extends BaseController implements NotificationCe
                             TL_phone.PhoneCall startingCall = VoIPService.callIShouldHavePutIntoIntent;
                             TL_phone.PhoneCall activeCall = svc != null ? svc.getPrivateCall() : null;
                             if ((startingCall != null && startingCall.id == call.id) || (activeCall != null && activeCall.id == call.id)) {
-                                FileLog.d("Ignoring duplicate request for call " + call.id);
+                                RemoteLog.trace(
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_IGNORED",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "cause", "duplicate_request"
+                                );
                                 continue;
                             }
                             if (svc != null || VoIPService.callIShouldHavePutIntoIntent != null || !callStateIsIdle) {
                                 if (svc != null && svc.getAccount() != currentAccount && svc.getUser() != null && svc.getUser().id == getUserConfig().getClientUserId()) {
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_IGNORED",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "cause", "same_device_other_account"
+                                    );
                                     // calling from the same device, don't discard
                                     continue;
                                 }
-                                if (BuildVars.LOGS_ENABLED) {
-                                    FileLog.d("Auto-declining call " + call.id + " because there's already active one");
-                                }
+                                RemoteLog.trace(
+                                    LogLevel.WARN,
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_AUTO_DECLINE_BUSY",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "cause", svc != null ? "voip_service_running" : startingCall != null ? "another_call_starting" : "gsm_call_not_idle",
+                                    "serviceAccount", svc != null ? svc.getAccount() : null,
+                                    "serviceCallId", activeCall != null ? activeCall.id : null,
+                                    "serviceCallState", activeCall != null ? activeCall.getClass() : null,
+                                    "startingCallId", startingCall != null ? startingCall.id : null,
+                                    "gsmCallIdle", callStateIsIdle
+                                );
                                 final TL_phone.discardCall req = new TL_phone.discardCall();
                                 req.peer = new TLRPC.TL_inputPhoneCall();
                                 req.peer.access_hash = call.access_hash;
                                 req.peer.id = call.id;
                                 req.reason = new TLRPC.TL_phoneCallDiscardReasonBusy();
-                                FileLog.e("discardCall " + req.reason);
+                                final long declinedCallId = call.id;
                                 getConnectionsManager().sendRequest(req, (response, error) -> {
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_AUTO_DECLINE_RESULT",
+                                        "account", currentAccount,
+                                        "callId", declinedCallId,
+                                        "ok", error == null,
+                                        "error", error == null ? null : error.text
+                                    );
                                     if (response != null) {
                                         TLRPC.Updates updates1 = (TLRPC.Updates) response;
                                         processUpdates(updates1, false);
@@ -20498,11 +20714,7 @@ public class MessagesController extends BaseController implements NotificationCe
                                 });
                                 continue;
                             }
-                            if (BuildVars.LOGS_ENABLED) {
-                                FileLog.d("Starting service for call " + call.id);
-                            }
                             VoIPService.callIShouldHavePutIntoIntent = call;
-                            FileLog.e("set VoIPService.callIShouldHavePutIntoIntent = " + call);
                             Intent intent = new Intent(ApplicationLoader.applicationContext, VoIPService.class);
                             intent.putExtra("is_outgoing", false);
                             intent.putExtra("user_id", call.participant_id == getUserConfig().getClientUserId() ? call.admin_id : call.participant_id);
@@ -20511,32 +20723,89 @@ public class MessagesController extends BaseController implements NotificationCe
                             try {
                                 if (Build.VERSION.SDK_INT >= 33) {
                                     intent.putExtra("accept", true);
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_SERVICE_START",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "via", "pre_notification",
+                                        "appPaused", ApplicationLoader.mainInterfacePaused,
+                                        "screenOn", ApplicationLoader.isScreenOn
+                                    );
                                     VoIPPreNotificationService.show(ApplicationLoader.applicationContext, intent, call);
                                 } else if (!notificationsDisabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_SERVICE_START",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "via", "foreground_service",
+                                        "appPaused", ApplicationLoader.mainInterfacePaused,
+                                        "screenOn", ApplicationLoader.isScreenOn
+                                    );
                                     ApplicationLoader.applicationContext.startForegroundService(intent);
                                 } else {
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_SERVICE_START",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "via", "service",
+                                        "appPaused", ApplicationLoader.mainInterfacePaused,
+                                        "screenOn", ApplicationLoader.isScreenOn
+                                    );
                                     ApplicationLoader.applicationContext.startService(intent);
                                 }
                                 if (ApplicationLoader.mainInterfacePaused || !ApplicationLoader.isScreenOn) {
                                     ignoreSetOnline = true;
                                 }
                             } catch (Throwable e) {
+                                RemoteLog.trace(
+                                    LogLevel.ERROR,
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_SERVICE_START_FAILED",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "error", e
+                                );
                                 FileLog.e(e);
                             }
                         } else {
                             if (svc != null && svc.getAccount() == currentAccount && call != null) {
+                                RemoteLog.trace(
+                                    RemoteLog.ComponentCalls,
+                                    "PHONE_CALL_ROUTED",
+                                    "account", currentAccount,
+                                    "callId", call.id,
+                                    "state", call.getClass(),
+                                    "to", "voip_service"
+                                );
                                 svc.onCallUpdated(call);
                             } else {
                                 if (call instanceof TL_phone.TL_phoneCallDiscarded) {
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_ROUTED",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "state", call.getClass(),
+                                        "to", "pre_notification_dismiss"
+                                    );
                                     VoIPPreNotificationService.dismiss(ApplicationLoader.applicationContext, false);
                                 }
                                 if (VoIPService.callIShouldHavePutIntoIntent != null) {
-                                    if (BuildVars.LOGS_ENABLED) {
-                                        FileLog.d("Updated the call while the service is starting");
-                                    }
-                                    if (call.id == VoIPService.callIShouldHavePutIntoIntent.id) {
+                                    boolean sameCall = call.id == VoIPService.callIShouldHavePutIntoIntent.id;
+                                    RemoteLog.trace(
+                                        RemoteLog.ComponentCalls,
+                                        "PHONE_CALL_ROUTED",
+                                        "account", currentAccount,
+                                        "callId", call.id,
+                                        "state", call.getClass(),
+                                        "to", "starting_service",
+                                        "sameCall", sameCall
+                                    );
+                                    if (sameCall) {
                                         VoIPService.callIShouldHavePutIntoIntent = call instanceof TL_phone.TL_phoneCallDiscarded ? null : call;
-                                        FileLog.e("(2) set VoIPService.callIShouldHavePutIntoIntent = " + VoIPService.callIShouldHavePutIntoIntent);
                                     }
                                 }
                             }

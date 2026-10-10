@@ -29,6 +29,7 @@ import android.text.style.ForegroundColorSpan;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.ContactsController;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
@@ -402,8 +403,21 @@ public class VoIPPreNotificationService { // } extends Service implements AudioM
         }
 
         if (pendingCall != null && pendingCall.id == call.id) {
+            RemoteLog.trace(
+                RemoteLog.ComponentCalls,
+                "PHONE_CALL_PRE_NOTIFICATION_SHOW",
+                "callId", call.id,
+                "skipped", "already_pending"
+            );
             return;
         }
+        RemoteLog.trace(
+            RemoteLog.ComponentCalls,
+            "PHONE_CALL_PRE_NOTIFICATION_SHOW",
+            "callId", call.id,
+            "account", intent.getIntExtra("account", UserConfig.selectedAccount),
+            "replacesCallId", pendingCall != null ? pendingCall.id : null
+        );
 
         dismiss(context, false);
 
@@ -580,6 +594,14 @@ public class VoIPPreNotificationService { // } extends Service implements AudioM
     }
 
     public static void dismiss(Context context, boolean answered) {
+        if (pendingCall != null) {
+            RemoteLog.trace(
+                RemoteLog.ComponentCalls,
+                "PHONE_CALL_PRE_NOTIFICATION_DISMISS",
+                "callId", pendingCall.id,
+                "answered", answered
+            );
+        }
         FileLog.d("VoIPPreNotification.dismiss()");
         pendingVoIP = null;
         pendingCall = null;

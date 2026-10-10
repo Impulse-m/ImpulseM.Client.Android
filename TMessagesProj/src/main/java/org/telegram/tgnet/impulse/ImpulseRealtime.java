@@ -2,6 +2,7 @@ package org.telegram.tgnet.impulse;
 
 import net.impulsem.transport.auth.ImpulseRpcPaths;
 import net.impulsem.transport.codec.Transcoder;
+import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.realtime.ActorTagsProto;
 import net.impulsem.transport.realtime.CentrifugoClient;
 import net.impulsem.transport.realtime.CentrifugoListener;
@@ -13,12 +14,12 @@ import net.impulsem.transport.rpc.RpcClient;
 import net.impulsem.transport.rpc.SessionLostException;
 
 import org.telegram.messenger.ApplicationLoader;
-import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.KeepAliveJob;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.UserConfig;
 import org.telegram.messenger.Utilities;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLClassStore;
 import org.telegram.tgnet.TLDataSourceType;
@@ -26,6 +27,7 @@ import org.telegram.tgnet.TLRPC;
 import org.telegram.tgnet.tl.TL_update;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
@@ -120,6 +122,8 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             .readTimeout(0L, TimeUnit.MILLISECONDS)
             .build();
         this.client = new CentrifugoClient(http, ImpulseEndpoints.realtimeUrl(), this, this, executor);
+        this.client.setLogLabel("account=" + account);
+        this.client.setTraceSink(this::traceLifecycle);
         this.lanes = new ChannelLaneManager(account, client, connection);
     }
 
@@ -200,6 +204,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
 
     /** Syncs, then skips any pending reconnect backoff so a resumed or pushed app connects at once. */
     void connectNow() {
+        RemoteLog.trace(RemoteLog.ComponentRealtime, "REALTIME_CONNECT_NOW", "account", account);
         syncExecutor.execute(new Runnable() {
             @Override
             public void run() {
@@ -220,7 +225,14 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             }
             return token;
         } catch (SessionLostException e) {
-            log("session lost while fetching the realtime token: " + e.getMessage());
+            RemoteLog.trace(
+                LogLevel.WARN,
+                RemoteLog.ComponentRealtime,
+                "REALTIME_SESSION_LOST",
+                "account", account,
+                "during", "token_fetch",
+                "error", e
+            );
             connection.onRealtimeSessionLost();
             throw e;
         }
@@ -229,7 +241,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
 
     @Override
     public void onConnected() {
-        log("connected");
+        RemoteLog.trace(RemoteLog.ComponentRealtime, "REALTIME_CONNECTED", "account", account);
     }
 
 
@@ -239,9 +251,19 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         boolean recovered,
         boolean wasRecovering
     ) {
-        log("subscribed " + channel + " recovered=" + recovered + " wasRecovering=" + wasRecovering);
-        if (gaps.onSubscribed(channel, recovered, wasRecovering)) {
-            postDifference();
+        boolean needsDifference = gaps.onSubscribed(channel, recovered, wasRecovering);
+        RemoteLog.trace(
+            RemoteLog.ComponentRealtime,
+            "REALTIME_SUBSCRIBED",
+            "account", account,
+            "lane", laneKind(channel),
+            "laneId", laneId(channel),
+            "recovered", recovered,
+            "wasRecovering", wasRecovering,
+            "getDifference", needsDifference
+        );
+        if (needsDifference) {
+            postDifference(recovered ? "subscribe_position_dropped" : "subscribe_not_recovered", channel);
         }
         if (channel.startsWith(PublicationRouter.UserPrefix)) {
             lanes.requestRecompute();
@@ -254,8 +276,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         PublicationRouter.Action action = PublicationRouter.route(publication);
         switch (action.kind) {
             case GET_DIFFERENCE:
-                log("publication on " + publication.channel + " needs getDifference");
-                postDifference();
+                postDifference("publication_requests_difference", publication.channel);
                 break;
             case CHANNEL_TOO_LONG:
                 postChannelTooLong(action.channelId, action.pts, action.date);
@@ -275,7 +296,15 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         int code,
         String reason
     ) {
-        log("unsubscribed " + channel + " code=" + code + " " + reason);
+        RemoteLog.trace(
+            LogLevel.WARN,
+            RemoteLog.ComponentRealtime,
+            "REALTIME_UNSUBSCRIBED",
+            "account", account,
+            "lane", laneKind(channel),
+            "laneId", laneId(channel),
+            "code", code
+        );
         gaps.onUnsubscribed(channel, code);
     }
 
@@ -286,7 +315,13 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         String reason,
         boolean willReconnect
     ) {
-        log("disconnected code=" + code + " " + reason + " willReconnect=" + willReconnect);
+        RemoteLog.trace(
+            RemoteLog.ComponentRealtime,
+            "REALTIME_DISCONNECTED",
+            "account", account,
+            "code", code,
+            "willReconnect", willReconnect
+        );
     }
 
 
@@ -312,11 +347,11 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
                 });
             } else {
                 FileLog.e("impulse: realtime decoded an unexpected constructor 0x" + Integer.toHexString(constructor));
-                postDifference();
+                postDifference("publication_unexpected_constructor", null);
             }
         } catch (Exception e) {
             FileLog.e(e);
-            postDifference();
+            postDifference("publication_decode_failed", null);
         } finally {
             if (buffer != null) {
                 buffer.reuse();
@@ -347,7 +382,18 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
     }
 
 
-    private void postDifference() {
+    private void postDifference(
+        String reason,
+        String channelOrNull
+    ) {
+        RemoteLog.trace(
+            RemoteLog.ComponentSync,
+            "GET_DIFFERENCE_REASON",
+            "account", account,
+            "reason", reason,
+            "lane", channelOrNull == null ? null : laneKind(channelOrNull),
+            "laneId", channelOrNull == null ? null : laneId(channelOrNull)
+        );
         Utilities.stageQueue.postRunnable(new Runnable() {
             @Override
             public void run() {
@@ -370,9 +416,35 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
     }
 
 
-    private static void log(String message) {
-        if (BuildVars.LOGS_ENABLED) {
-            FileLog.d("impulse realtime: " + message);
+    /** The transport's typed lifecycle fields, tagged with the account, on their way to the remote log. */
+    private void traceLifecycle(
+        LogLevel level,
+        String event,
+        Object... keysAndValues
+    ) {
+        Object[] tagged = Arrays.copyOf(keysAndValues, keysAndValues.length + 2);
+        tagged[keysAndValues.length] = "account";
+        tagged[keysAndValues.length + 1] = account;
+        RemoteLog.trace(level, RemoteLog.ComponentRealtime, event, tagged);
+    }
+
+
+    private static String laneKind(String channel) {
+        int separator = channel.indexOf(':');
+        return separator < 0 ? channel : channel.substring(0, separator);
+    }
+
+
+    /** The lane's numeric id as a number, so the redactor does not mistake a long id inside a string for a phone. */
+    private static Object laneId(String channel) {
+        int separator = channel.indexOf(':');
+        if (separator < 0) {
+            return null;
+        }
+        try {
+            return Long.parseLong(channel.substring(separator + 1));
+        } catch (NumberFormatException e) {
+            return channel.substring(separator + 1);
         }
     }
 }

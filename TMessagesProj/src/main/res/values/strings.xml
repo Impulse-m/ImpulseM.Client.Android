@@ -11330,4 +11330,7 @@
     <string name="ImpulseProxyAdvMssError">Enter 0 or a number from 64 to 1460</string>
     <string name="ImpulseProxyAdvDnsError">Enter an https:// DoH URL or an IPv4 address</string>
     <string name="ImpulseProxyAdvUrlError">Enter an https:// address</string>
+    <string name="DiagnosticsTitle">Diagnostics</string>
+    <string name="DiagnosticsLogs">Send diagnostic logs</string>
+    <string name="DiagnosticsLogsInfo">Sends technical events to the developers: connection, sync, calls and errors (without exception text). Message text, phone numbers and names are not sent; chat, message and call identifiers are. Beta versions only.</string>
 </resources>

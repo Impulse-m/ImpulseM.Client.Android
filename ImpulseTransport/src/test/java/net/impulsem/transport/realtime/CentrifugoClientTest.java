@@ -12,6 +12,7 @@ import com.google.gson.JsonParser;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -20,6 +21,9 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.impulsem.transport.logging.LogLevel;
+import net.impulsem.transport.logging.LogRecord;
+import net.impulsem.transport.logging.TraceSink;
 import okhttp3.OkHttpClient;
 import okhttp3.Response;
 import okhttp3.WebSocket;
@@ -180,6 +184,51 @@ public class CentrifugoClientTest {
     }
 
 
+    /** Keeps every trace with its fields, so a test can look for an event and check what travels with it. */
+    private static final class TraceLog implements TraceSink {
+
+        final List<String> events = new CopyOnWriteArrayList<String>();
+        final List<Map<String, Object>> fields = new CopyOnWriteArrayList<Map<String, Object>>();
+
+
+        @Override
+        public void trace(
+            LogLevel level,
+            String event,
+            Object... keysAndValues
+        ) {
+            fields.add(LogRecord.fieldsOf(keysAndValues));
+            events.add(event);
+        }
+
+
+        Map<String, Object> await(String event) throws InterruptedException {
+            long deadline = System.currentTimeMillis() + WaitMillis;
+            while (System.currentTimeMillis() < deadline) {
+                int index = events.indexOf(event);
+                if (index >= 0) {
+                    return fields.get(index);
+                }
+                Thread.sleep(20L);
+            }
+            throw new AssertionError("trace not seen: " + event + " in " + events);
+        }
+
+
+        void assertNoFreeText() {
+            for (Map<String, Object> traceFields : fields) {
+                for (String key : traceFields.keySet()) {
+                    assertFalse(
+                        "free text must not travel as a field: " + key,
+                        key.equals("reason") || key.equals("message") || key.equals("error")
+                    );
+                }
+            }
+        }
+    }
+
+
+    private final TraceLog traces = new TraceLog();
     private MockWebServer server;
     private ScheduledExecutorService executor;
     private OkHttpClient http;
@@ -305,6 +354,106 @@ public class CentrifugoClientTest {
     ) {
         return "{\"push\":{\"channel\":\"" + channel + "\",\"pub\":{\"data\":{\"type\":1,\"pts\":5,\"ptsCount\":1,\"date\":1700000000,"
             + "\"data\":\"aGVsbG8=\"},\"offset\":" + offset + "}}}";
+    }
+
+
+    @Test
+    public void theConnectionLifecycleIsTracedWithTypedFields() throws Exception {
+        client.setTraceSink(traces);
+        client.connect();
+        recorder.expect("connected");
+        client.subscribe("user:1", null);
+        recorder.expect("subscribed:user:1:false:false");
+
+        assertNotNull(traces.await("REALTIME_CONNECTING").get("attempt"));
+        Map<String, Object> reply = traces.await("REALTIME_CONNECT_REPLY");
+        assertNotNull(reply.get("gen"));
+        assertNotNull(reply.get("pingSeconds"));
+        Map<String, Object> sent = traces.await("REALTIME_SUBSCRIBE_SENT");
+        assertEquals("user", sent.get("lane"));
+        assertEquals(false, sent.get("wasRecovering"));
+        Map<String, Object> subscribed = traces.await("REALTIME_SUBSCRIBE_REPLY");
+        assertEquals("user", subscribed.get("lane"));
+        assertEquals(false, subscribed.get("recovered"));
+        assertEquals(false, subscribed.get("wasRecovering"));
+        assertEquals(0, ((Number) subscribed.get("replayed")).intValue());
+        traces.assertNoFreeText();
+    }
+
+
+    @Test
+    public void aDroppedConnectionTracesTheScheduledReconnect() throws Exception {
+        client.setTraceSink(traces);
+        client.connect();
+        recorder.expect("connected");
+
+        abort(0);
+
+        Map<String, Object> scheduled = traces.await("REALTIME_RECONNECT_SCHEDULED");
+        assertEquals(true, scheduled.get("wasConnected"));
+        assertEquals(false, scheduled.get("terminal"));
+        assertNotNull(scheduled.get("closeCode"));
+        assertNotNull(scheduled.get("delayMs"));
+        assertNotNull(scheduled.get("gen"));
+        traces.assertNoFreeText();
+    }
+
+
+    @Test
+    public void aThrowingTraceSinkDoesNotStallTheReconnect() throws Exception {
+        client.setTraceSink(new TraceSink() {
+            @Override
+            public void trace(
+                LogLevel level,
+                String event,
+                Object... keysAndValues
+            ) {
+                throw new IllegalStateException("sink failure");
+            }
+        });
+        client.connect();
+        recorder.expect("connected");
+
+        abort(0);
+
+        recorder.expect("disconnected:1006:true");
+        recorder.expect("connected");
+    }
+
+
+    @Test
+    public void aTerminalCloseIsTracedAsClosed() throws Exception {
+        client.setTraceSink(traces);
+        client.connect();
+        recorder.expect("connected");
+
+        sessions.get(0).socket.close(3501, "bad request");
+
+        Map<String, Object> closed = traces.await("REALTIME_CLOSED");
+        assertEquals(3501, ((Number) closed.get("closeCode")).intValue());
+        assertEquals(true, closed.get("terminal"));
+        traces.assertNoFreeText();
+    }
+
+
+    @Test
+    public void aFailedSubscribeTracesTheErrorCodeButNotTheServerText() throws Exception {
+        client.setTraceSink(traces);
+        client.connect();
+        recorder.expect("connected");
+        sessions.get(0).subscribeErrors.add(
+            JsonParser.parseString("{\"code\":103,\"message\":\"permission denied for alice\"}").getAsJsonObject()
+        );
+
+        client.subscribe("user:1", null);
+
+        Map<String, Object> failed = traces.await("REALTIME_SUBSCRIBE_FAILED");
+        assertEquals(103, ((Number) failed.get("errorCode")).intValue());
+        assertEquals("user", failed.get("lane"));
+        for (Object value : failed.values()) {
+            assertFalse(String.valueOf(value), String.valueOf(value).contains("alice"));
+        }
+        traces.assertNoFreeText();
     }
 
 

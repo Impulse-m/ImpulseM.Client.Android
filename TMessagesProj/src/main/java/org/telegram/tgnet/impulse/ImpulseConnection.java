@@ -153,6 +153,35 @@ public final class ImpulseConnection {
     }
 
 
+    /**
+     * The access token for process-wide traffic such as log shipping: the selected account's, else the first signed-in
+     * account's, or null before any login. The same bearer the gRPC calls of that account carry.
+     */
+    public static String processBearer() {
+        ImpulseConnection selected = instanceOrNull(UserConfig.selectedAccount);
+        String token = selected == null ? null : selected.tokens.bearer();
+        if (token != null) {
+            return token;
+        }
+        for (int account = 0; account < UserConfig.MAX_ACCOUNT_COUNT; account++) {
+            if (!UserConfig.getInstance(account).isClientActivated()) {
+                continue;
+            }
+            ImpulseConnection connection = instanceOrNull(account);
+            token = connection == null ? null : connection.tokens.bearer();
+            if (token != null) {
+                return token;
+            }
+        }
+        return null;
+    }
+
+
+    private static synchronized ImpulseConnection instanceOrNull(int account) {
+        return account >= 0 && account < Instances.length ? Instances[account] : null;
+    }
+
+
     private static synchronized OkHttpClient sharedHttpClient() {
         if (httpClient == null) {
             Dispatcher dispatcher = new Dispatcher();

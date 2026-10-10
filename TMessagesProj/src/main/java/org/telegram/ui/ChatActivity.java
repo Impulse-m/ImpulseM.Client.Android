@@ -132,6 +132,8 @@ import androidx.viewpager.widget.ViewPager;
 
 import com.google.zxing.common.detector.MathUtils;
 
+import net.impulsem.transport.logging.LogLevel;
+
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
@@ -188,6 +190,7 @@ import org.telegram.messenger.Utilities;
 import org.telegram.messenger.VideoEditedInfo;
 import org.telegram.messenger.browser.Browser;
 import org.telegram.messenger.camera.CameraView;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.support.LongSparseIntArray;
 import org.telegram.messenger.utils.FBool;
 import org.telegram.messenger.utils.OnPostDrawView;
@@ -22366,6 +22369,17 @@ public class ChatActivity extends BaseFragment implements
                 }
                 Integer newMsgId = (Integer) args[1];
                 if (!newMsgId.equals(msgId) && messagesDict[0].indexOfKey(newMsgId) >= 0) {
+                    RemoteLog.trace(
+                        LogLevel.WARN,
+                        RemoteLog.ComponentSend,
+                        "SEND_DUPLICATE_INSERT",
+                        "account", currentAccount,
+                        "where", "chat_view",
+                        "dialogId", dialog_id,
+                        "tempId", msgId,
+                        "id", newMsgId,
+                        "action", "temp_bubble_removed_server_bubble_kept"
+                    );
                     MessageObject removed = messagesDict[0].get(msgId);
                     messagesDict[0].remove(msgId);
                     if (removed != null) {
