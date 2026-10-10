@@ -541,6 +541,32 @@ public class LokiShipperTest {
 
 
     @Test
+    public void aRecordWhoseMinimalLineCannotFitIsNotSentAndIsCountedAsRejected() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(204));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        StringBuilder component = new StringBuilder();
+        for (int i = 0; i < LokiPayload.MaxLineBytes + 100; i++) {
+            component.append('c');
+        }
+
+        shipper.append(trace(component.toString(), LogLevel.INFO, "UNFIT", "i", 1));
+        shipper.append(trace("app", LogLevel.INFO, "FITS", "i", 2));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+        shipper.append(trace("app", LogLevel.INFO, "NEXT", "i", 3));
+        assertTrue(shipper.flushAndWait(AwaitSeconds * 1000L));
+
+        RecordedRequest first = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        assertEquals(java.util.Collections.singletonList("FITS"), events(first));
+        RecordedRequest next = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        List<String> events = events(next);
+        assertEquals("REMOTE_LOG_RECORDS_LOST", events.get(0));
+        assertEquals("NEXT", events.get(1));
+        assertFalse(events.contains("UNFIT"));
+        assertEquals(1, nthLine(next, 0).getAsJsonObject("fields").get("rejectedByServer").getAsInt());
+    }
+
+
+    @Test
     public void a413DropsTheBatchAndCountsItAsRejected() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(413));
         server.enqueue(new MockResponse().setResponseCode(204));
@@ -584,7 +610,7 @@ public class LokiShipperTest {
     public void aSingleRecordOverTheLimitIsDroppedAndCountedAsRejected() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(204));
         server.enqueue(new MockResponse().setResponseCode(204));
-        LokiShipper small = create(realClock(), noToken(), 20000);
+        LokiShipper small = create(realClock(), noToken(), 6000);
 
         small.append(new LogRecord(FixedTimestampMillis, LogLevel.ERROR, "crash", "HUGE", null, bigError(), "test", null));
         assertTrue(small.flushAndWait(AwaitSeconds * 1000L));

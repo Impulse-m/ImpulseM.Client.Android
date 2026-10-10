@@ -404,7 +404,8 @@ public final class LokiShipper {
 
     /**
      * Renders the batch, and while the body is over the limit puts the second half back at the head of the buffer. A
-     * single record that alone is over the limit is dropped and counted as rejected, which leaves the batch empty. A batch
+     * single record that alone is over the limit is dropped and counted as rejected, which leaves the batch empty, and so
+     * is a record whose line cannot fit {@link LokiPayload#MaxLineBytes} even in its minimal form. A batch
      * polled before an opt-out is dropped silently: nothing from before it may come back.
      *
      * @return the body, or null when the batch is empty or cannot be rendered at all
@@ -415,10 +416,22 @@ public final class LokiShipper {
     ) {
         while (!batch.isEmpty()) {
             String body;
+            List<LogRecord> unfit = new ArrayList<LogRecord>();
             try {
-                body = LokiPayload.build(batch, labels, context);
+                body = LokiPayload.build(batch, labels, context, unfit);
             } catch (RuntimeException e) {
                 return null;
+            }
+            if (!unfit.isEmpty()) {
+                synchronized (lock) {
+                    if (generation != batchGeneration) {
+                        batch.clear();
+                        return null;
+                    }
+                    discardLocked(unfit);
+                }
+                batch.removeAll(unfit);
+                continue;
             }
             if (body.getBytes(StandardCharsets.UTF_8).length <= maxBodyBytes) {
                 return body;
