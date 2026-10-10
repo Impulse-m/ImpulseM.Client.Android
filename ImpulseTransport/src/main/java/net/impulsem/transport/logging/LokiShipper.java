@@ -58,6 +58,7 @@ public final class LokiShipper {
     private static final long CallTimeoutSeconds = 15L;
     private static final int Unauthorized = 401;
     private static final int TooManyRequests = 429;
+    private static final int ServiceUnavailable = 503;
     private static final int ClientErrorFloor = 400;
     private static final int ServerErrorFloor = 500;
     private static final String HeaderAuthorization = "Authorization";
@@ -554,7 +555,7 @@ public final class LokiShipper {
                     }
                     return new PostResult(Outcome.UNAUTHORIZED, -1L);
                 }
-                if (code == TooManyRequests) {
+                if (code == TooManyRequests || code == ServiceUnavailable) {
                     return new PostResult(Outcome.RATE_LIMITED, retryAfterMillis(response));
                 }
                 if (code >= ClientErrorFloor && code < ServerErrorFloor) {

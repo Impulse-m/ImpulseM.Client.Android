@@ -541,6 +541,49 @@ public class LokiShipperTest {
 
 
     @Test
+    public void a503WithRetryAfterSecondsRequeuesAndWaitsThatLong() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(503).setHeader("Retry-After", "30"));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        TestClock clock = new TestClock();
+        LokiShipper limited = create(clock, noToken(), LokiShipper.MaxBodyBytes);
+
+        limited.append(trace("app", LogLevel.INFO, "UNAVAILABLE", "i", 1));
+        limited.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(limited, 1);
+
+        clock.advanceSeconds(29L);
+        limited.flush();
+        assertNull("must wait the full Retry-After", server.takeRequest(700L, TimeUnit.MILLISECONDS));
+        clock.advanceSeconds(2L);
+        limited.flush();
+        RecordedRequest retried = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        assertNotNull(retried);
+        assertEquals("UNAVAILABLE", events(retried).get(0));
+    }
+
+
+    @Test
+    public void a503WithoutRetryAfterUsesTheBackoffAndRequeues() throws Exception {
+        server.enqueue(new MockResponse().setResponseCode(503));
+        server.enqueue(new MockResponse().setResponseCode(204));
+        TestClock clock = new TestClock();
+        LokiShipper limited = create(clock, noToken(), LokiShipper.MaxBodyBytes);
+
+        limited.append(trace("app", LogLevel.INFO, "UNAVAILABLE", "i", 1));
+        limited.flush();
+        assertNotNull(server.takeRequest(AwaitSeconds, TimeUnit.SECONDS));
+        awaitBuffered(limited, 1);
+
+        clock.advanceSeconds(1L);
+        limited.flush();
+        RecordedRequest retried = server.takeRequest(AwaitSeconds, TimeUnit.SECONDS);
+        assertNotNull(retried);
+        assertEquals("UNAVAILABLE", events(retried).get(0));
+    }
+
+
+    @Test
     public void aRecordWhoseMinimalLineCannotFitIsNotSentAndIsCountedAsRejected() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(204));
         server.enqueue(new MockResponse().setResponseCode(204));
