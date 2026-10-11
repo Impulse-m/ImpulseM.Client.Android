@@ -5,7 +5,6 @@ import static org.telegram.messenger.LocaleController.getString;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -608,32 +607,36 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
         rule.setText(errorText);
         container.addView(rule, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 8, 0, 4));
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
-        builder.setTitle(title);
-        builder.setView(container);
-        builder.setPositiveButton(getString(R.string.OK), null);
-        builder.setNegativeButton(getString(R.string.Cancel), null);
-        AlertDialog dialog = builder.create();
-        showDialog(dialog);
-        View okButton = dialog.getButton(DialogInterface.BUTTON_POSITIVE);
-        okButton.setOnClickListener(v -> {
+        // As upstream input dialogs do: the buttons do not dismiss by themselves, so a bad value keeps the dialog open.
+        AlertDialog[] dialog = new AlertDialog[1];
+        Runnable submit = () -> {
             String text = field.getText() == null ? "" : field.getText().toString().trim();
             ProxyAdvanced edited = current().copy();
             if (textChange.apply(edited, text)) {
                 save(edited);
-                dialog.dismiss();
+                dialog[0].dismiss();
             } else {
                 rule.setTextColor(getThemedColor(Theme.key_text_RedRegular));
                 AndroidUtilities.shakeView(field);
             }
-        });
+        };
+        AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
+        builder.setTitle(title);
+        builder.setView(container);
+        builder.setPositiveButton(getString(R.string.OK), (d, which) -> submit.run());
+        builder.setNegativeButton(getString(R.string.Cancel), (d, which) -> dialog[0].dismiss());
+        dialog[0] = builder.create();
+        dialog[0].setDismissDialogByButtons(false);
         field.setOnEditorActionListener((view, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_DONE) {
-                okButton.performClick();
+                submit.run();
                 return true;
             }
             return false;
         });
+        if (showDialog(dialog[0]) == null) {
+            return;
+        }
         AndroidUtilities.runOnUIThread(() -> {
             field.requestFocus();
             AndroidUtilities.showKeyboard(field);
