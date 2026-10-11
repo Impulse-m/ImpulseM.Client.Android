@@ -720,6 +720,7 @@ public class ConnectionsManager extends BaseController {
         pushConnectionEnabled = enablePushConnection;
         impulse = ImpulseConnection.forAccount(currentAccount, this);
         impulse.start(userId);
+        impulse.declareConnection(apiId, deviceModel, systemVersion, appVersion, systemLangCode, langCode);
         checkConnection();
     }
 
@@ -727,6 +728,10 @@ public class ConnectionsManager extends BaseController {
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             storedLangCode = langCode;
+            ConnectionsManager manager = Instance[a];
+            if (manager != null && manager.impulse != null) {
+                manager.impulse.setLangCode(langCode);
+            }
         }
     }
 
@@ -751,6 +756,10 @@ public class ConnectionsManager extends BaseController {
         langCode = langCode.replace('_', '-').toLowerCase();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             storedSystemLangCode = langCode;
+            ConnectionsManager manager = Instance[a];
+            if (manager != null && manager.impulse != null) {
+                manager.impulse.setSystemLangCode(langCode);
+            }
         }
     }
 

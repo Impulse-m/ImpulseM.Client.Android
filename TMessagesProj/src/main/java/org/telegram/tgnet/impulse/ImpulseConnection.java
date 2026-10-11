@@ -4,11 +4,14 @@ import android.os.SystemClock;
 
 import net.impulsem.proxy.ProxyRouting;
 import net.impulsem.transport.auth.Clock;
+import net.impulsem.transport.auth.ConnectionDeclaration;
+import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.errors.RpcError;
 import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.policy.RequestPolicy;
+import net.impulsem.transport.rpc.ConnectionDeclarer;
 import net.impulsem.transport.rpc.RpcClient;
 import net.impulsem.transport.rpc.RpcOutcome;
 import net.impulsem.transport.schema.TlProtoSchema;
@@ -19,6 +22,7 @@ import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.UserConfig;
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLRPC;
@@ -69,6 +73,7 @@ public final class ImpulseConnection {
     private static final long TickMillis = 1000L;
     private static final long PauseTickGraceMillis = 10L * 1000L;
     private static final int MaxWorkerThreads = 48;
+    private static final String LangPack = "android";
 
     private static final ImpulseConnection[] Instances = new ImpulseConnection[UserConfig.MAX_ACCOUNT_COUNT];
     private static OkHttpClient httpClient;
@@ -113,6 +118,7 @@ public final class ImpulseConnection {
     private final TokenManager tokens;
     private RpcClient rpc;
     private Transcoder transcoder;
+    private ConnectionDeclarer declarer;
 
     private final ThreadPoolExecutor executor;
     private final ScheduledExecutorService scheduler;
@@ -610,8 +616,107 @@ public final class ImpulseConnection {
         if (rpc == null) {
             transcoder = new Transcoder(TlProtoSchema.load());
             rpc = new RpcClient(transcoder, grpc, tokens);
+            declarer = new ConnectionDeclarer(
+                rpc,
+                tokens,
+                executor,
+                new ConnectionDeclarer.Delayer() {
+                    @Override
+                    public void schedule(
+                        Runnable task,
+                        long delayMillis
+                    ) {
+                        scheduler.schedule(task, delayMillis, TimeUnit.MILLISECONDS);
+                    }
+                },
+                new ConnectionDeclarer.Listener() {
+                    @Override
+                    public void onResult(
+                        String outcome,
+                        int attempt,
+                        int code
+                    ) {
+                        RemoteLog.trace(
+                            ConnectionDeclarer.OutcomeOk.equals(outcome) ? LogLevel.INFO : LogLevel.WARN,
+                            RemoteLog.ComponentTransport,
+                            "INIT_CONNECTION",
+                            "account", account,
+                            "outcome", outcome,
+                            "attempt", attempt,
+                            "code", code
+                        );
+                    }
+                }
+            );
         }
         return rpc;
+    }
+
+
+    private synchronized ConnectionDeclarer declarer() {
+        rpc();
+        return declarer;
+    }
+
+
+    /**
+     * Hands the server what upstream sends in initConnection. It goes out once a session exists, again when the
+     * session token changes and when a language changes; the work runs on the worker pool, never on the caller.
+     */
+    public void declareConnection(
+        final int apiId,
+        final String deviceModel,
+        final String systemVersion,
+        final String appVersion,
+        final String systemLangCode,
+        final String langCode
+    ) {
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    declarer().setDeclaration(new ConnectionDeclaration(
+                        apiId,
+                        deviceModel,
+                        systemVersion,
+                        appVersion,
+                        systemLangCode,
+                        LangPack,
+                        langCode
+                    ));
+                } catch (RuntimeException e) {
+                    FileLog.e(e);
+                }
+            }
+        });
+    }
+
+
+    public void setLangCode(final String langCode) {
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    declarer().setLangCode(langCode);
+                } catch (RuntimeException e) {
+                    FileLog.e(e);
+                }
+            }
+        });
+    }
+
+
+    public void setSystemLangCode(final String langCode) {
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    declarer().setSystemLangCode(langCode);
+                } catch (RuntimeException e) {
+                    FileLog.e(e);
+                }
+            }
+        });
     }
 
 

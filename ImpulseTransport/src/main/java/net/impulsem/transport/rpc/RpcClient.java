@@ -144,7 +144,8 @@ public final class RpcClient {
      * Calls an impulse.* rpc that has no TL counterpart and returns the response message.
      *
      * @throws SessionLostException when the session is unrecoverable.
-     * @throws IOException on transport failures and on any other error status.
+     * @throws RpcStatusException on any other error status.
+     * @throws IOException on transport failures.
      */
     public byte[] callImpulse(
         String path,
@@ -174,7 +175,7 @@ public final class RpcClient {
                 retried = true;
                 continue;
             }
-            throw new IOException(path + " failed: " + error);
+            throw new RpcStatusException(path + " failed: " + error, error);
         }
     }
 

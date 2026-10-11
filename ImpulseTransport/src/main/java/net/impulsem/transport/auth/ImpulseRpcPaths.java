@@ -11,6 +11,7 @@ public final class ImpulseRpcPaths {
     public static final String RefreshSession = "/impulse.auth.AuthService/RefreshSession";
     public static final String GetCentrifugoToken = "/impulse.sync.SyncService/GetCentrifugoToken";
     public static final String GetChannelActorTags = "/impulse.sync.SyncService/GetChannelActorTags";
+    public static final String InitConnection = "/impulse.auth.AuthService/InitConnection";
 
 
     /** The decoded impulse.auth.Authorization message; absent strings are null. */
@@ -31,6 +32,40 @@ public final class ImpulseRpcPaths {
         ProtoWriter writer = new ProtoWriter();
         writer.writeBytesField(1, utf8(refreshToken));
         return writer.toByteArray();
+    }
+
+
+    /**
+     * InitConnectionRequest { ConnectionDeclaration declaration = 1; }
+     * ConnectionDeclaration { int32 api_id = 1; string device_model = 2; string system_version = 3;
+     * string app_version = 4; string system_lang_code = 5; string lang_pack = 6; string lang_code = 7; };
+     * proxy (8) and params (9) stay unset and empty values are omitted, as proto3 does.
+     */
+    public static byte[] encodeInitConnection(ConnectionDeclaration declaration) {
+        ProtoWriter inner = new ProtoWriter();
+        if (declaration.apiId != 0) {
+            inner.writeVarintField(1, declaration.apiId);
+        }
+        writeString(inner, 2, declaration.deviceModel);
+        writeString(inner, 3, declaration.systemVersion);
+        writeString(inner, 4, declaration.appVersion);
+        writeString(inner, 5, declaration.systemLangCode);
+        writeString(inner, 6, declaration.langPack);
+        writeString(inner, 7, declaration.langCode);
+        ProtoWriter writer = new ProtoWriter();
+        writer.writeBytesField(1, inner.toByteArray());
+        return writer.toByteArray();
+    }
+
+
+    private static void writeString(
+        ProtoWriter writer,
+        int field,
+        String value
+    ) {
+        if (!value.isEmpty()) {
+            writer.writeBytesField(field, utf8(value));
+        }
     }
 
 
