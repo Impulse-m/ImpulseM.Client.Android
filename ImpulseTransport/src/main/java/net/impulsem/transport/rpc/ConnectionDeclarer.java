@@ -59,6 +59,8 @@ public final class ConnectionDeclarer {
 
     private final Object lock = new Object();
     private ConnectionDeclaration declaration;
+    private String earlyLangCode;
+    private String earlySystemLangCode;
     private ConnectionDeclaration sentDeclaration;
     private String sentBearer;
     private boolean running;
@@ -90,7 +92,17 @@ public final class ConnectionDeclarer {
     /** Sets the whole declaration, at start-up. Sends it when it is new and a session exists. */
     public void setDeclaration(ConnectionDeclaration value) {
         synchronized (lock) {
-            declaration = value;
+            ConnectionDeclaration result = value;
+            // A language set before the declaration arrived is newer than the one inside it.
+            if (earlyLangCode != null) {
+                result = result.withLangCode(earlyLangCode);
+                earlyLangCode = null;
+            }
+            if (earlySystemLangCode != null) {
+                result = result.withSystemLangCode(earlySystemLangCode);
+                earlySystemLangCode = null;
+            }
+            declaration = result;
         }
         trigger();
     }
@@ -99,6 +111,7 @@ public final class ConnectionDeclarer {
     public void setLangCode(String langCode) {
         synchronized (lock) {
             if (declaration == null) {
+                earlyLangCode = langCode;
                 return;
             }
             declaration = declaration.withLangCode(langCode);
@@ -110,6 +123,7 @@ public final class ConnectionDeclarer {
     public void setSystemLangCode(String langCode) {
         synchronized (lock) {
             if (declaration == null) {
+                earlySystemLangCode = langCode;
                 return;
             }
             declaration = declaration.withSystemLangCode(langCode);

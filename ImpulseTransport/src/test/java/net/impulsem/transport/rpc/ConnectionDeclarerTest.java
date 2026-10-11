@@ -312,6 +312,21 @@ public class ConnectionDeclarerTest {
 
 
     @Test
+    public void languageChangeBeforeTheDeclarationIsNotLost() throws Exception {
+        server.enqueue(ok(new byte[0]));
+
+        declarer.setLangCode("ru");
+        declarer.setDeclaration(declaration);
+
+        RecordedRequest request = nextRequest();
+        assertEquals("ru", declarationField(request, 7));
+        assertEquals("ok", nextResult().outcome);
+        drain();
+        assertEquals(1, server.getRequestCount());
+    }
+
+
+    @Test
     public void systemLanguageChangeResendsToo() throws Exception {
         server.enqueue(ok(new byte[0]));
         server.enqueue(ok(new byte[0]));
