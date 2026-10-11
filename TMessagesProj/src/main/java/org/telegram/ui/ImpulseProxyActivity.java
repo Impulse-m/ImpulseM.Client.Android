@@ -218,7 +218,10 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         contentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray, resourceProvider));
 
         listView = new UniversalRecyclerView(this, this::fillItems, this::onClick, (item, view, position, x, y) -> false);
+        listView.setSections();
+        listView.adapter.setApplyBackground(false);
         contentView.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.FILL));
+        actionBar.setAdaptiveBackground(listView);
 
         return fragmentView = contentView;
     }
