@@ -5,13 +5,15 @@ import static org.telegram.messenger.LocaleController.getString;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.Toast;
+import android.widget.TextView;
 
 import net.impulsem.proxy.ProxyAdvanced;
 import net.impulsem.proxy.ProxyState;
@@ -26,6 +28,7 @@ import org.telegram.ui.ActionBar.BackDrawable;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.AlertsCreator;
+import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.EditTextBoldCursor;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.UItem;
@@ -62,6 +65,9 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
     private static final int IdUseForCalls = 21;
     private static final String PacketsExample = "1-3";
     private static final int InvalidNumber = Integer.MIN_VALUE;
+    private static final int UnitNone = 0;
+    private static final int UnitMillis = 1;
+    private static final int UnitSeconds = 2;
 
 
     private final Runnable proxyListener = new Runnable() {
@@ -172,9 +178,16 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
 
         items.add(UItem.asHeader(getString(R.string.ImpulseProxyAdvFragmentation)));
         items.add(UItem.asButton(IdFragMode, getString(R.string.ImpulseProxyAdvMode), fragmentModeName(advanced.fragmentMode)));
-        items.add(UItem.asButton(IdFragPackets, getString(R.string.ImpulseProxyAdvPackets), advanced.fragmentPackets).setEnabled(fragmentOn));
-        items.add(UItem.asButton(IdFragLength, getString(R.string.ImpulseProxyAdvLength), advanced.fragmentLength).setEnabled(fragmentOn));
-        items.add(UItem.asButton(IdFragInterval, getString(R.string.ImpulseProxyAdvInterval), advanced.fragmentInterval).setEnabled(fragmentOn));
+        // The rows that only matter while fragmentation is on appear and disappear with it, as in Telegram's dependent settings.
+        if (fragmentOn) {
+            items.add(UItem.asButton(IdFragPackets, getString(R.string.ImpulseProxyAdvPackets), advanced.fragmentPackets));
+            items.add(UItem.asButton(IdFragLength, getString(R.string.ImpulseProxyAdvLength), advanced.fragmentLength));
+            items.add(UItem.asButton(
+                IdFragInterval,
+                getString(R.string.ImpulseProxyAdvInterval),
+                LocaleController.formatString(R.string.ImpulseProxyAdvMillisValue, advanced.fragmentInterval)
+            ));
+        }
         items.add(UItem.asCheck(IdFragFromLink, getString(R.string.ImpulseProxyAdvFromLink)).setChecked(advanced.fragmentFromLink));
         items.add(UItem.asShadow(getString(R.string.ImpulseProxyAdvFragmentInfo)));
 
@@ -188,12 +201,14 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
 
         items.add(UItem.asHeader(getString(R.string.ImpulseProxyAdvMultiplexing)));
         items.add(UItem.asCheck(IdMux, getString(R.string.ImpulseProxyAdvMux)).setChecked(advanced.muxEnabled));
-        items.add(UItem.asButton(IdMuxConcurrency, getString(R.string.ImpulseProxyAdvMuxConcurrency), String.valueOf(advanced.muxConcurrency)));
+        if (advanced.muxEnabled) {
+            items.add(UItem.asButton(IdMuxConcurrency, getString(R.string.ImpulseProxyAdvMuxConcurrency), String.valueOf(advanced.muxConcurrency)));
+        }
         items.add(UItem.asShadow(getString(R.string.ImpulseProxyAdvMuxInfo)));
 
         items.add(UItem.asHeader(getString(R.string.ImpulseProxyAdvTcp)));
-        items.add(UItem.asButton(IdKeepIdle, getString(R.string.ImpulseProxyAdvKeepIdle), systemOr(advanced.keepAliveIdle)));
-        items.add(UItem.asButton(IdKeepInterval, getString(R.string.ImpulseProxyAdvKeepInterval), systemOr(advanced.keepAliveInterval)));
+        items.add(UItem.asButton(IdKeepIdle, getString(R.string.ImpulseProxyAdvKeepIdle), secondsOrSystem(advanced.keepAliveIdle)));
+        items.add(UItem.asButton(IdKeepInterval, getString(R.string.ImpulseProxyAdvKeepInterval), secondsOrSystem(advanced.keepAliveInterval)));
         items.add(UItem.asCheck(IdFastOpen, getString(R.string.ImpulseProxyAdvFastOpen)).setChecked(advanced.tcpFastOpen));
         items.add(UItem.asButton(IdMss, getString(R.string.ImpulseProxyAdvMss), systemOr(advanced.tcpMaxSeg)));
         items.add(UItem.asShadow(getString(R.string.ImpulseProxyAdvTcpInfo)));
@@ -204,8 +219,16 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
 
         items.add(UItem.asHeader(getString(R.string.ImpulseProxyAdvChecks)));
         items.add(UItem.asButton(IdPingMode, getString(R.string.ImpulseProxyAdvMode), pingModeName(advanced.pingMode)));
-        items.add(UItem.asButton(IdPingPause, getString(R.string.ImpulseProxyAdvPause), String.valueOf(advanced.pingPauseMillis)));
-        items.add(UItem.asButton(IdPingTimeout, getString(R.string.ImpulseProxyAdvTimeout), String.valueOf(advanced.pingTimeoutSeconds)));
+        items.add(UItem.asButton(
+            IdPingPause,
+            getString(R.string.ImpulseProxyAdvPause),
+            LocaleController.formatString(R.string.ImpulseProxyAdvMillisValue, String.valueOf(advanced.pingPauseMillis))
+        ));
+        items.add(UItem.asButton(
+            IdPingTimeout,
+            getString(R.string.ImpulseProxyAdvTimeout),
+            LocaleController.formatString(R.string.ImpulseProxyAdvSecondsValue, advanced.pingTimeoutSeconds)
+        ));
         items.add(UItem.asButton(IdPingUrl, getString(R.string.ImpulseProxyAdvUrl), advanced.pingUrl));
         items.add(UItem.asCheck(IdPingSkip, getString(R.string.ImpulseProxyAdvSkipConnected)).setChecked(advanced.pingSkipWhileConnected));
         items.add(UItem.asShadow(getString(R.string.ImpulseProxyAdvChecksInfo)));
@@ -276,6 +299,7 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
                     advanced.muxConcurrency,
                     1,
                     128,
+                    UnitNone,
                     (edited, value) -> edited.muxConcurrency = value
                 );
                 break;
@@ -285,6 +309,7 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
                     advanced.keepAliveIdle,
                     0,
                     86400,
+                    UnitSeconds,
                     (edited, value) -> edited.keepAliveIdle = value
                 );
                 break;
@@ -294,6 +319,7 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
                     advanced.keepAliveInterval,
                     0,
                     86400,
+                    UnitSeconds,
                     (edited, value) -> edited.keepAliveInterval = value
                 );
                 break;
@@ -328,6 +354,7 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
                     advanced.pingPauseMillis,
                     0,
                     10000,
+                    UnitMillis,
                     (edited, value) -> edited.pingPauseMillis = value
                 );
                 break;
@@ -337,6 +364,7 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
                     advanced.pingTimeoutSeconds,
                     1,
                     30,
+                    UnitSeconds,
                     (edited, value) -> edited.pingTimeoutSeconds = value
                 );
                 break;
@@ -523,13 +551,15 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
         int initial,
         int min,
         int max,
+        int unit,
         NumberChange numberChange
     ) {
+        int hintRes = unit == UnitMillis ? R.string.ImpulseProxyAdvMillisError : (unit == UnitSeconds ? R.string.ImpulseProxyAdvSecondsError : R.string.ImpulseProxyAdvNumberError);
         askText(
             title,
             String.valueOf(initial),
             true,
-            LocaleController.formatString(R.string.ImpulseProxyAdvNumberError, min, max),
+            LocaleController.formatString(hintRes, min, max),
             (edited, text) -> {
                 int value = parseNumber(text, min, max);
                 if (value == InvalidNumber) {
@@ -542,7 +572,7 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
     }
 
 
-    /** Asks for text; on OK an invalid value shows errorText and keeps the old setting. */
+    /** Asks for text. The rule (errorText) is shown under the field; an invalid value shakes the field, turns the rule red and keeps the dialog open. */
     private void askText(
         String title,
         String initial,
@@ -566,25 +596,44 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
         field.setBackgroundDrawable(Theme.createEditTextDrawable(context, true));
         field.setInputType(numeric ? InputType.TYPE_CLASS_NUMBER : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         field.setSingleLine(true);
+        field.setImeOptions(EditorInfo.IME_ACTION_DONE);
         field.setPadding(0, dp(8), 0, dp(8));
         field.setText(initial);
         field.setSelection(field.length());
         container.addView(field, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
+        TextView rule = new TextView(context);
+        rule.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+        rule.setTextColor(getThemedColor(Theme.key_windowBackgroundWhiteGrayText));
+        rule.setText(errorText);
+        container.addView(rule, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 8, 0, 4));
+
         AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
         builder.setTitle(title);
         builder.setView(container);
-        builder.setPositiveButton(getString(R.string.OK), (dialog, which) -> {
+        builder.setPositiveButton(getString(R.string.OK), null);
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        AlertDialog dialog = builder.create();
+        showDialog(dialog);
+        View okButton = dialog.getButton(DialogInterface.BUTTON_POSITIVE);
+        okButton.setOnClickListener(v -> {
             String text = field.getText() == null ? "" : field.getText().toString().trim();
             ProxyAdvanced edited = current().copy();
             if (textChange.apply(edited, text)) {
                 save(edited);
+                dialog.dismiss();
             } else {
-                toast(errorText);
+                rule.setTextColor(getThemedColor(Theme.key_text_RedRegular));
+                AndroidUtilities.shakeView(field);
             }
         });
-        builder.setNegativeButton(getString(R.string.Cancel), null);
-        showDialog(builder.create());
+        field.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                okButton.performClick();
+                return true;
+            }
+            return false;
+        });
         AndroidUtilities.runOnUIThread(() -> {
             field.requestFocus();
             AndroidUtilities.showKeyboard(field);
@@ -678,6 +727,11 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
     }
 
 
+    private String secondsOrSystem(int value) {
+        return value == 0 ? getString(R.string.ImpulseProxyAdvSystem) : LocaleController.formatString(R.string.ImpulseProxyAdvSecondsValue, value);
+    }
+
+
     private static int indexOf(
         String[] values,
         String value
@@ -711,9 +765,8 @@ public class ImpulseProxyAdvancedActivity extends BaseFragment {
 
 
     private void toast(String message) {
-        Context context = destroyed ? null : getParentActivity();
-        if (context != null) {
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+        if (!destroyed && getParentActivity() != null) {
+            BulletinFactory.of(this).createErrorBulletin(message).show();
         }
     }
 }

@@ -11279,7 +11279,7 @@
     <string name="ImpulseProxyAdvPackets">Packets</string>
     <string name="ImpulseProxyAdvCustom">Custom…</string>
     <string name="ImpulseProxyAdvLength">Length</string>
-    <string name="ImpulseProxyAdvInterval">Interval, ms</string>
+    <string name="ImpulseProxyAdvInterval">Interval</string>
     <string name="ImpulseProxyAdvFromLink">Use fragment settings from the link</string>
     <string name="ImpulseProxyAdvFragmentInfo">Splits the TLS handshake so DPI can\'t read the server name. Classic works everywhere; finalmask works after TLS/REALITY. Link settings apply only when fragmentation here is off.</string>
     <string name="ImpulseProxyAdvFingerprint">TLS fingerprint</string>
@@ -11290,8 +11290,8 @@
     <string name="ImpulseProxyAdvMuxConcurrency">Concurrency</string>
     <string name="ImpulseProxyAdvMuxInfo">Fewer connections and handshakes. Not used for servers with xtls-rprx-vision.</string>
     <string name="ImpulseProxyAdvTcp">TCP</string>
-    <string name="ImpulseProxyAdvKeepIdle">Keepalive: idle, s</string>
-    <string name="ImpulseProxyAdvKeepInterval">Keepalive: interval, s</string>
+    <string name="ImpulseProxyAdvKeepIdle">Keepalive: idle</string>
+    <string name="ImpulseProxyAdvKeepInterval">Keepalive: interval</string>
     <string name="ImpulseProxyAdvSystem">System</string>
     <string name="ImpulseProxyAdvFastOpen">TCP Fast Open</string>
     <string name="ImpulseProxyAdvMss">MSS</string>
@@ -11304,8 +11304,8 @@
     <string name="ImpulseProxyAdvChecks">Server checks</string>
     <string name="ImpulseProxyAdvChecksBatch">In batches of 5</string>
     <string name="ImpulseProxyAdvChecksOne">One by one</string>
-    <string name="ImpulseProxyAdvPause">Pause between checks, ms</string>
-    <string name="ImpulseProxyAdvTimeout">Timeout, s</string>
+    <string name="ImpulseProxyAdvPause">Pause between checks</string>
+    <string name="ImpulseProxyAdvTimeout">Timeout</string>
     <string name="ImpulseProxyAdvUrl">Check URL</string>
     <string name="ImpulseProxyAdvSkipConnected">Don\'t check while connected</string>
     <string name="ImpulseProxyAdvUseFor">Use VPN for</string>
@@ -11320,6 +11320,10 @@
     <string name="ImpulseProxyAdvRangeError">Enter a number or a range, for example 100-200</string>
     <string name="ImpulseProxyAdvPacketsError">Enter a number or a range such as 1-3, or tlshello</string>
     <string name="ImpulseProxyAdvNumberError">Enter a number from %1$d to %2$d</string>
+    <string name="ImpulseProxyAdvMillisError">Enter milliseconds, from %1$d to %2$d</string>
+    <string name="ImpulseProxyAdvSecondsError">Enter seconds, from %1$d to %2$d</string>
+    <string name="ImpulseProxyAdvMillisValue">%1$s ms</string>
+    <string name="ImpulseProxyAdvSecondsValue">%1$d s</string>
     <string name="ImpulseProxyAdvMssError">Enter 0 or a number from 64 to 1460</string>
     <string name="ImpulseProxyAdvDnsError">Enter an https:// DoH URL or an IPv4 address</string>
     <string name="ImpulseProxyAdvUrlError">Enter an https:// address</string>

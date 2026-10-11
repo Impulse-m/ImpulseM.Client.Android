@@ -307,7 +307,7 @@
     <string name="ImpulseProxyAdvPackets">Пакеты</string>
     <string name="ImpulseProxyAdvCustom">Своё…</string>
     <string name="ImpulseProxyAdvLength">Длина</string>
-    <string name="ImpulseProxyAdvInterval">Интервал, мс</string>
+    <string name="ImpulseProxyAdvInterval">Интервал</string>
     <string name="ImpulseProxyAdvFromLink">Брать настройки из ссылки</string>
     <string name="ImpulseProxyAdvFragmentInfo">Разбивает TLS-рукопожатие на части, чтобы DPI не мог прочитать имя сервера. Классическая работает везде; finalmask работает после TLS/REALITY. Настройки из ссылки применяются, только если фрагментация здесь выключена.</string>
     <string name="ImpulseProxyAdvFingerprint">TLS-отпечаток</string>
@@ -318,8 +318,8 @@
     <string name="ImpulseProxyAdvMuxConcurrency">Параллельность</string>
     <string name="ImpulseProxyAdvMuxInfo">Меньше соединений и рукопожатий. Не используется для серверов с xtls-rprx-vision.</string>
     <string name="ImpulseProxyAdvTcp">TCP</string>
-    <string name="ImpulseProxyAdvKeepIdle">Keepalive: простой, с</string>
-    <string name="ImpulseProxyAdvKeepInterval">Keepalive: интервал, с</string>
+    <string name="ImpulseProxyAdvKeepIdle">Keepalive: простой</string>
+    <string name="ImpulseProxyAdvKeepInterval">Keepalive: интервал</string>
     <string name="ImpulseProxyAdvSystem">Системный</string>
     <string name="ImpulseProxyAdvFastOpen">TCP Fast Open</string>
     <string name="ImpulseProxyAdvMss">MSS</string>
@@ -332,8 +332,8 @@
     <string name="ImpulseProxyAdvChecks">Проверка серверов</string>
     <string name="ImpulseProxyAdvChecksBatch">Пачками по 5</string>
     <string name="ImpulseProxyAdvChecksOne">По одному</string>
-    <string name="ImpulseProxyAdvPause">Пауза между проверками, мс</string>
-    <string name="ImpulseProxyAdvTimeout">Таймаут, с</string>
+    <string name="ImpulseProxyAdvPause">Пауза между проверками</string>
+    <string name="ImpulseProxyAdvTimeout">Таймаут</string>
     <string name="ImpulseProxyAdvUrl">Адрес проверки</string>
     <string name="ImpulseProxyAdvSkipConnected">Не проверять при подключении</string>
     <string name="ImpulseProxyAdvUseFor">Использовать VPN для</string>
@@ -348,6 +348,10 @@
     <string name="ImpulseProxyAdvRangeError">Введите число или диапазон, например 100-200</string>
     <string name="ImpulseProxyAdvPacketsError">Введите число, диапазон вида 1-3 или tlshello</string>
     <string name="ImpulseProxyAdvNumberError">Введите число от %1$d до %2$d</string>
+    <string name="ImpulseProxyAdvMillisError">Введите миллисекунды, от %1$d до %2$d</string>
+    <string name="ImpulseProxyAdvSecondsError">Введите секунды, от %1$d до %2$d</string>
+    <string name="ImpulseProxyAdvMillisValue">%1$s мс</string>
+    <string name="ImpulseProxyAdvSecondsValue">%1$d с</string>
     <string name="ImpulseProxyAdvMssError">Введите 0 или число от 64 до 1460</string>
     <string name="ImpulseProxyAdvDnsError">Введите адрес DoH с https:// или IPv4-адрес</string>
     <string name="ImpulseProxyAdvUrlError">Введите адрес с https://</string>
