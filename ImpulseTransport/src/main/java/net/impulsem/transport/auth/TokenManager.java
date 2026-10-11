@@ -53,6 +53,7 @@ public final class TokenManager {
     private volatile SessionTokens tokens;
     private volatile Pending pending;
     private volatile String qrTicket;
+    private volatile Runnable sessionListener;
 
 
     public TokenManager(
@@ -89,6 +90,7 @@ public final class TokenManager {
             pending = null;
             store.save(value);
         }
+        notifySessionChanged();
     }
 
 
@@ -106,8 +108,9 @@ public final class TokenManager {
             }
             tokens = value;
             store.save(value);
-            return true;
         }
+        notifySessionChanged();
+        return true;
     }
 
 
@@ -141,6 +144,20 @@ public final class TokenManager {
 
     public void setQrExporterTicket(String ticket) {
         qrTicket = ticket;
+    }
+
+
+    /** Called after login or refresh stored a new token pair, never on clear. */
+    public void setSessionListener(Runnable listener) {
+        sessionListener = listener;
+    }
+
+
+    private void notifySessionChanged() {
+        Runnable listener = sessionListener;
+        if (listener != null) {
+            listener.run();
+        }
     }
 
 
