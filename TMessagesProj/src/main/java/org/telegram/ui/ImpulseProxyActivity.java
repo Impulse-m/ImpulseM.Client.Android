@@ -7,16 +7,19 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.net.Uri;
 import android.text.InputType;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.google.gson.JsonArray;
 
@@ -41,12 +44,15 @@ import org.telegram.tgnet.impulse.proxy.ProxyController;
 import org.telegram.tgnet.impulse.proxy.ProxyErrors;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.ActionBarMenu;
+import org.telegram.ui.ActionBar.ActionBarMenuItem;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BackDrawable;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.EditTextBoldCursor;
 import org.telegram.ui.Components.LayoutHelper;
+import org.telegram.ui.Components.NumberTextView;
 import org.telegram.ui.Components.UItem;
 import org.telegram.ui.Components.UniversalAdapter;
 import org.telegram.ui.Components.UniversalRecyclerView;
@@ -58,6 +64,7 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -72,8 +79,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private static final int IdUse = 1;
     private static final int IdAdd = 3;
     private static final int IdRefreshPing = 4;
-    private static final int IdInfo = 5;
     private static final int IdAdvanced = 6;
+    private static final int IdShare = 7;
+    private static final int IdDeleteSelected = 8;
     private static final int IdDynamicStart = 100;
     private static final long PingIntervalMs = 60000L;
     private static final int LogLimit = 120;
@@ -109,10 +117,13 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     private final Set<String> pending = new HashSet<String>();
     private final Map<Integer, Object> targets = new HashMap<Integer, Object>();
     private final Set<String> refreshing = new HashSet<String>();
+    // Manual servers picked in selection mode; subscription servers are never selectable.
+    private final Set<String> picked = new LinkedHashSet<String>();
     private final Runnable proxyListener = new Runnable() {
         @Override
         public void run() {
             if (!destroyed && listView != null && listView.adapter != null) {
+                prunePicked();
                 listView.adapter.update(true);
             }
         }
@@ -129,6 +140,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         }
     };
     private UniversalRecyclerView listView;
+    private NumberTextView selectedCountTextView;
+    private ActionBarMenuItem shareMenuItem;
+    private ActionBarMenuItem deleteMenuItem;
     private boolean pinging;
     private boolean pingAgain;
     private boolean pingAgainMarkAll;
@@ -205,22 +219,57 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             @Override
             public void onItemClick(int id) {
                 if (id == -1) {
-                    finishFragment();
+                    if (picked.isEmpty()) {
+                        finishFragment();
+                    } else {
+                        clearPicked();
+                    }
                 } else if (id == IdRefreshPing) {
                     pingServers(true, true);
+                } else if (id == IdDeleteSelected) {
+                    confirmDeletePicked();
+                } else if (id == IdShare) {
+                    sharePicked(context);
                 }
             }
         });
         ActionBarMenu menu = actionBar.createMenu();
         menu.addItem(IdRefreshPing, R.drawable.msg_retry).setContentDescription(getString(R.string.ImpulseProxyCheckServers));
 
+        ActionBarMenu actionMode = actionBar.createActionMode();
+        selectedCountTextView = new NumberTextView(actionMode.getContext());
+        selectedCountTextView.setTextSize(18);
+        selectedCountTextView.setTypeface(AndroidUtilities.bold());
+        selectedCountTextView.setTextColor(Theme.getColor(Theme.key_actionBarActionModeDefaultIcon));
+        actionMode.addView(selectedCountTextView, LayoutHelper.createLinear(0, LayoutHelper.MATCH_PARENT, 1.0f, 72, 0, 0, 0));
+        selectedCountTextView.setOnTouchListener((v, event) -> true);
+        shareMenuItem = actionMode.addItemWithWidth(IdShare, R.drawable.msg_share, dp(54));
+        shareMenuItem.setContentDescription(getString(R.string.StickersShare));
+        deleteMenuItem = actionMode.addItemWithWidth(IdDeleteSelected, R.drawable.msg_delete, dp(54));
+        deleteMenuItem.setContentDescription(getString(R.string.Delete));
+
         FrameLayout contentView = new FrameLayout(context);
         contentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray, resourceProvider));
 
-        listView = new UniversalRecyclerView(this, this::fillItems, this::onClick, (item, view, position, x, y) -> false);
+        listView = new UniversalRecyclerView(this, this::fillItems, this::onClick, this::onLongClick);
+        listView.setSections();
+        listView.adapter.setApplyBackground(false);
         contentView.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.FILL));
+        actionBar.setAdaptiveBackground(listView);
 
         return fragmentView = contentView;
+    }
+
+
+    @Override
+    public boolean onBackPressed(boolean invoked) {
+        if (!picked.isEmpty()) {
+            if (invoked) {
+                clearPicked();
+            }
+            return false;
+        }
+        return super.onBackPressed(invoked);
     }
 
 
@@ -247,23 +296,22 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
 
         items.add(UItem.asHeader(getString(R.string.ImpulseProxyMyLinks)));
         for (ProxyServer server : sorted(state.manual)) {
-            items.add(serverItem(server, state));
+            items.add(serverItem(server, state, true));
         }
-        items.add(UItem.asButton(IdAdd, R.drawable.msg_add, getString(R.string.ImpulseProxyAdd)).accent());
+        items.add(UItem.asButton(IdAdd, getString(R.string.AddProxy)));
         items.add(UItem.asShadow(""));
 
         for (Subscription subscription : state.subscriptions) {
             items.add(UItem.asHeader(subscriptionTitle(subscription)));
-            addSubscriptionInfo(items, subscription);
             for (ProxyServer server : sorted(subscription.servers)) {
-                items.add(serverItem(server, state));
+                items.add(serverItem(server, state, false));
             }
             boolean busy = refreshing.contains(subscription.id);
             items.add(UItem.asButton(register(new SubscriptionAction(subscription, false)), R.drawable.msg_retry, getString(R.string.ImpulseProxyRefresh))
                 .setEnabled(!busy));
-            items.add(UItem.asButton(register(new SubscriptionAction(subscription, true)), R.drawable.msg_delete, getString(R.string.ImpulseProxyDelete))
+            items.add(UItem.asButton(register(new SubscriptionAction(subscription, true)), R.drawable.msg_delete, getString(R.string.Delete))
                 .red());
-            items.add(UItem.asShadow(""));
+            items.add(UItem.asShadow(subscriptionInfo(subscription)));
         }
     }
 
@@ -282,9 +330,9 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             return ImpulseProxyServerCell.StatusFactory.as(LocaleController.formatString(R.string.ImpulseProxyStatusError, reason), Theme.key_text_RedRegular);
         }
         if (isConnected(controller)) {
-            return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyConnected), Theme.key_windowBackgroundWhiteGreenText);
+            return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.Connected), Theme.key_windowBackgroundWhiteBlueText6);
         }
-        return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.ImpulseProxyConnecting), Theme.key_windowBackgroundWhiteGrayText2);
+        return ImpulseProxyServerCell.StatusFactory.as(getString(R.string.Connecting), Theme.key_windowBackgroundWhiteGrayText2);
     }
 
 
@@ -300,9 +348,11 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     }
 
 
+    // The colors follow ProxyListActivity: blue for the connected server, gray while checking or connecting, green for available, red for unavailable.
     private UItem serverItem(
         ProxyServer server,
-        ProxyState state
+        ProxyState state,
+        boolean manual
     ) {
         ProxyController controller = ProxyController.getInstance();
         boolean selected = server.id.equals(state.selectedId);
@@ -312,28 +362,49 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         boolean skipping = state.advanced.pingSkipWhileConnected && state.enabled && controller.status() == ProxyController.Status.RUNNING;
         if (selected && state.enabled && controller.status() != ProxyController.Status.FAILED) {
             if (isConnected(controller)) {
-                status = getString(R.string.ImpulseProxyConnected);
+                status = withPing(getString(R.string.Connected), delay);
                 colorKey = Theme.key_windowBackgroundWhiteBlueText6;
             } else {
-                status = getString(R.string.ImpulseProxyConnecting);
+                status = getString(R.string.Connecting);
                 colorKey = Theme.key_windowBackgroundWhiteGrayText2;
             }
         } else if (pending.contains(server.id) || (delay == null && !skipping)) {
-            status = getString(R.string.ImpulseProxyChecking);
+            status = getString(R.string.Checking);
             colorKey = Theme.key_windowBackgroundWhiteGrayText2;
         } else if (delay == null) {
             // Automatic checks are off while connected, so there is nothing to wait for.
             status = getString(R.string.ImpulseProxyNotChecked);
             colorKey = Theme.key_windowBackgroundWhiteGrayText2;
         } else if (delay >= 0) {
-            status = LocaleController.formatString(R.string.ImpulseProxyAvailable, delay.intValue());
+            status = withPing(getString(R.string.Available), delay);
             colorKey = Theme.key_windowBackgroundWhiteGreenText;
         } else {
-            status = getString(R.string.ImpulseProxyUnavailable);
+            status = getString(R.string.Unavailable);
             colorKey = Theme.key_text_RedRegular;
         }
-        ImpulseProxyServerCell.Row row = new ImpulseProxyServerCell.Row(server, displayName(server), status, colorKey, selected);
+        ImpulseProxyServerCell.Row row = new ImpulseProxyServerCell.Row(
+            server,
+            displayName(server),
+            status,
+            colorKey,
+            selected,
+            manual,
+            !picked.isEmpty(),
+            picked.contains(server.id)
+        );
         return ImpulseProxyServerCell.Factory.as(register(server), row, infoListener);
+    }
+
+
+    // "Available, Ping: 120 ms" as in the upstream list; a zero or missing ping is left out.
+    private static String withPing(
+        String text,
+        Long delay
+    ) {
+        if (delay == null || delay <= 0) {
+            return text;
+        }
+        return text + ", " + LocaleController.formatString("Ping", R.string.Ping, delay.intValue());
     }
 
 
@@ -370,13 +441,12 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     }
 
 
-    private void addSubscriptionInfo(
-        ArrayList<UItem> items,
-        Subscription subscription
-    ) {
+    // The subscription facts go into the info text under its section, as Telegram puts explanations under a section; an error line is red.
+    private CharSequence subscriptionInfo(Subscription subscription) {
+        List<CharSequence> lines = new ArrayList<CharSequence>();
         // total is 0 or -1 when the panel reports no limit: show only the expiry date then.
         if (subscription.meta != null && subscription.meta.total <= 0 && subscription.meta.expire > 0) {
-            items.add(infoItem(DateFormat.getDateInstance(DateFormat.MEDIUM).format(new Date(subscription.meta.expire * 1000L)), false));
+            lines.add(DateFormat.getDateInstance(DateFormat.MEDIUM).format(new Date(subscription.meta.expire * 1000L)));
         }
         if (subscription.meta != null && subscription.meta.total > 0) {
             long used = Math.max(0L, subscription.meta.upload) + Math.max(0L, subscription.meta.download);
@@ -389,30 +459,28 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             } else {
                 text = usedText + " / " + total;
             }
-            items.add(infoItem(text, false));
+            lines.add(text);
         }
         if (subscription.skipped > 0) {
-            items.add(infoItem(LocaleController.formatString(R.string.ImpulseProxySkipped, subscription.skipped), false));
+            lines.add(LocaleController.formatString(R.string.ImpulseProxySkipped, subscription.skipped));
         }
         if (subscription.updatedAt > 0) {
             String when = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(new Date(subscription.updatedAt));
-            items.add(infoItem(LocaleController.formatString(R.string.ImpulseProxyUpdated, when), false));
+            lines.add(LocaleController.formatString(R.string.ImpulseProxyUpdated, when));
         }
         if (!TextUtils.isEmpty(subscription.lastError)) {
-            items.add(infoItem(describeError(subscription.lastError), true));
+            SpannableStringBuilder error = new SpannableStringBuilder(describeError(subscription.lastError));
+            error.setSpan(new ForegroundColorSpan(Theme.getColor(Theme.key_text_RedRegular, resourceProvider)), 0, error.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            lines.add(error);
         }
-    }
-
-
-    private UItem infoItem(
-        CharSequence text,
-        boolean error
-    ) {
-        UItem item = UItem.asButton(IdInfo, text).setEnabled(false);
-        if (error) {
-            item.red();
+        SpannableStringBuilder info = new SpannableStringBuilder();
+        for (CharSequence line : lines) {
+            if (info.length() > 0) {
+                info.append('\n');
+            }
+            info.append(line);
         }
-        return item;
+        return info;
     }
 
 
@@ -462,7 +530,17 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         if (item.id == IdUse) {
             ProxyState state = controller.snapshot();
             if (!state.enabled && state.selected() == null) {
-                toast(getString(R.string.ImpulseProxyNoSelection));
+                // As upstream: with nothing to use, turning the proxy on opens the add form; otherwise it takes the first listed server.
+                ProxyServer first = firstListed(state);
+                if (first == null) {
+                    showAddDialog();
+                    return;
+                }
+                String firstId = first.id;
+                controller.update(next -> {
+                    next.selectedId = firstId;
+                    next.enabled = true;
+                });
                 return;
             }
             controller.update(next -> next.enabled = !next.enabled);
@@ -479,6 +557,11 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         Object target = targets.get(item.id);
         if (target instanceof ProxyServer) {
             String id = ((ProxyServer) target).id;
+            if (!picked.isEmpty()) {
+                // While selecting, a tap only toggles; subscription servers do nothing.
+                togglePicked(id);
+                return;
+            }
             controller.update(next -> next.selectedId = id);
         } else if (target instanceof SubscriptionAction) {
             SubscriptionAction action = (SubscriptionAction) target;
@@ -507,6 +590,162 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
     }
 
 
+    // The server at the top of the list as drawn: the manual links first, then each subscription in order.
+    private ProxyServer firstListed(ProxyState state) {
+        List<ProxyServer> manual = sorted(state.manual);
+        if (!manual.isEmpty()) {
+            return manual.get(0);
+        }
+        for (Subscription subscription : state.subscriptions) {
+            List<ProxyServer> servers = sorted(subscription.servers);
+            if (!servers.isEmpty()) {
+                return servers.get(0);
+            }
+        }
+        return null;
+    }
+
+
+    private boolean onLongClick(
+        UItem item,
+        View view,
+        int position,
+        float x,
+        float y
+    ) {
+        Object target = targets.get(item.id);
+        if (target instanceof ProxyServer && isManual(((ProxyServer) target).id)) {
+            togglePicked(((ProxyServer) target).id);
+            return true;
+        }
+        return false;
+    }
+
+
+    private boolean isManual(String serverId) {
+        for (ProxyServer candidate : ProxyController.getInstance().snapshot().manual) {
+            if (candidate.id.equals(serverId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    private void togglePicked(String serverId) {
+        if (!isManual(serverId)) {
+            return;
+        }
+        if (!picked.remove(serverId)) {
+            picked.add(serverId);
+        }
+        checkActionMode();
+        listView.adapter.update(true);
+    }
+
+
+    private void clearPicked() {
+        picked.clear();
+        checkActionMode();
+        listView.adapter.update(true);
+    }
+
+
+    // Drops picks whose server is gone, e.g. deleted from the info dialog or by a state change elsewhere.
+    private void prunePicked() {
+        if (picked.isEmpty()) {
+            return;
+        }
+        Set<String> manualIds = new HashSet<String>();
+        for (ProxyServer server : ProxyController.getInstance().snapshot().manual) {
+            manualIds.add(server.id);
+        }
+        if (picked.retainAll(manualIds)) {
+            checkActionMode();
+        }
+    }
+
+
+    private void checkActionMode() {
+        boolean shown = actionBar.isActionModeShowed();
+        if (!picked.isEmpty()) {
+            selectedCountTextView.setNumber(picked.size(), shown);
+            if (!shown) {
+                actionBar.showActionMode();
+            }
+        } else if (shown) {
+            actionBar.hideActionMode();
+        }
+    }
+
+
+    private List<ProxyServer> pickedServers() {
+        List<ProxyServer> result = new ArrayList<ProxyServer>();
+        for (ProxyServer server : ProxyController.getInstance().snapshot().manual) {
+            if (picked.contains(server.id)) {
+                result.add(server);
+            }
+        }
+        return result;
+    }
+
+
+    private void confirmDeletePicked() {
+        if (picked.isEmpty()) {
+            return;
+        }
+        List<String> ids = new ArrayList<String>();
+        boolean active = false;
+        String selectedId = ProxyController.getInstance().snapshot().selectedId;
+        for (ProxyServer server : pickedServers()) {
+            ids.add(server.id);
+            active |= server.id.equals(selectedId);
+        }
+        confirmDelete(
+            getString(R.string.DeleteProxyTitle),
+            getString(ids.size() > 1 ? R.string.DeleteProxyMultiConfirm : R.string.DeleteProxyConfirm),
+            active ? getString(R.string.ImpulseProxyDeleteActiveServerWarning) : null,
+            () -> {
+                ProxyController.getInstance().update(next -> {
+                    for (String id : ids) {
+                        next.removeServer(id);
+                    }
+                });
+                picked.clear();
+                checkActionMode();
+                listView.adapter.update(true);
+            }
+        );
+    }
+
+
+    // The links go out through the system share sheet, as the upstream list does for its proxy links.
+    private void sharePicked(Context context) {
+        StringBuilder links = new StringBuilder();
+        int count = 0;
+        for (ProxyServer server : pickedServers()) {
+            if (TextUtils.isEmpty(server.shareLink)) {
+                continue;
+            }
+            if (links.length() > 0) {
+                links.append("\n\n");
+            }
+            links.append(server.shareLink);
+            count++;
+        }
+        if (count == 0) {
+            return;
+        }
+        Intent shareIntent = new Intent(Intent.ACTION_SEND);
+        shareIntent.setType("text/plain");
+        shareIntent.putExtra(Intent.EXTRA_TEXT, links.toString());
+        Intent chooserIntent = Intent.createChooser(shareIntent, getString(count > 1 ? R.string.ShareLinks : R.string.ShareLink));
+        chooserIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(chooserIntent);
+        clearPicked();
+    }
+
+
     /** Asks before a destructive delete; activeWarning (null when the target isn't selected) is shown while the proxy is on. */
     private void confirmDelete(
         String title,
@@ -525,7 +764,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
         builder.setTitle(title);
         builder.setMessage(text);
-        builder.setPositiveButton(getString(R.string.ImpulseProxyDelete), (dialog, which) -> onConfirm.run());
+        builder.setPositiveButton(getString(R.string.Delete), (dialog, which) -> onConfirm.run());
         builder.setNegativeButton(getString(R.string.Cancel), null);
         AlertDialog dialog = builder.create();
         showDialog(dialog);
@@ -555,7 +794,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
             });
         }
         if (manual) {
-            builder.setNegativeButton(getString(R.string.ImpulseProxyDelete), (dialog, which) -> {
+            builder.setNegativeButton(getString(R.string.Delete), (dialog, which) -> {
                 confirmDelete(
                     getString(R.string.ImpulseProxyDeleteServerTitle),
                     LocaleController.formatString(R.string.ImpulseProxyDeleteServerText, displayName(server)),
@@ -795,7 +1034,7 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
         container.addView(buttons, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 8, 0, 0));
 
         AlertDialog.Builder builder = new AlertDialog.Builder(context, resourceProvider);
-        builder.setTitle(getString(R.string.ImpulseProxyAdd));
+        builder.setTitle(getString(R.string.AddProxy));
         builder.setView(container);
         builder.setPositiveButton(getString(R.string.OK), (dialog, which) -> {
             addInput(field.getText() == null ? "" : field.getText().toString());
@@ -962,9 +1201,8 @@ public class ImpulseProxyActivity extends BaseFragment implements NotificationCe
 
 
     private void toast(String message) {
-        Context context = destroyed ? null : getParentActivity();
-        if (context != null) {
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show();
+        if (!destroyed && getParentActivity() != null) {
+            BulletinFactory.of(this).createErrorBulletin(message).show();
         }
     }
 }
