@@ -1,47 +1,53 @@
 package net.impulsem.transport.realtime;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import io.github.centrifugal.centrifuge.Client;
+import io.github.centrifugal.centrifuge.ConnectedEvent;
+import io.github.centrifugal.centrifuge.ConnectingEvent;
+import io.github.centrifugal.centrifuge.ConnectionTokenEvent;
+import io.github.centrifugal.centrifuge.ConnectionTokenGetter;
+import io.github.centrifugal.centrifuge.DisconnectedEvent;
+import io.github.centrifugal.centrifuge.DuplicateSubscriptionException;
+import io.github.centrifugal.centrifuge.ErrorEvent;
+import io.github.centrifugal.centrifuge.EventListener;
+import io.github.centrifugal.centrifuge.FilterNodeBuilder;
+import io.github.centrifugal.centrifuge.Options;
+import io.github.centrifugal.centrifuge.PublicationEvent;
+import io.github.centrifugal.centrifuge.ReplyError;
+import io.github.centrifugal.centrifuge.SubscribedEvent;
+import io.github.centrifugal.centrifuge.SubscribingEvent;
+import io.github.centrifugal.centrifuge.Subscription;
+import io.github.centrifugal.centrifuge.SubscriptionErrorEvent;
+import io.github.centrifugal.centrifuge.SubscriptionEventListener;
+import io.github.centrifugal.centrifuge.SubscriptionOptions;
+import io.github.centrifugal.centrifuge.SubscriptionSubscribeError;
+import io.github.centrifugal.centrifuge.TokenCallback;
+import io.github.centrifugal.centrifuge.UnauthorizedException;
+import io.github.centrifugal.centrifuge.UnsubscribedEvent;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.logging.TraceSink;
 import net.impulsem.transport.rpc.SessionLostException;
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.WebSocket;
-import okhttp3.WebSocketListener;
 
 
 /**
- * Hand-written Centrifugo client (JSON protocol) over an OkHttp WebSocket.
+ * Realtime client for the Centrifugo server, on top of the ImpulseM Protobuf SDK ({@code io.github.centrifugal.centrifuge}).
  *
- * <p>All state lives behind one lock. Frames are processed on the OkHttp reader thread, in order. Anything
- * that can block (minting a token) or that must not run on the reader (resubscribing after a server
- * unsubscribe) goes through the supplied executor. Listener callbacks are never invoked with the lock held.
+ * <p>The SDK owns the socket, the handshake, the reconnect backoff, the ping watchdog, token refresh and the
+ * subscription recovery. This class maps its events onto {@link CentrifugoListener}, keeps the wanted channel set, and
+ * adds the one behaviour the SDK does not give: {@link #reconnectNow()} resumes at once after the device wakes up.
  *
- * <p>Requirements on the caller:
- * <ul>
- * <li>The executor needs at least 2 threads: a token fetch blocks one while timers and resubscribes need another.</li>
- * <li>The 32 channel-lane cap is the caller's responsibility; this client does not enforce it.</li>
- * <li>Liveness is detected with a watchdog on the server's application-level {@code {}} pings (interval taken
- * from the connect reply, 25 s by default, plus a 10 s grace). The supplied {@code OkHttpClient} should not set
- * {@code pingInterval}: it is not needed, and its coexistence with Centrifugo's own pings was not verified.</li>
- * <li>Publications that cannot be decoded are still delivered, with {@code envelope.undecodable() == true}.</li>
- * </ul>
+ * <p>Listener callbacks arrive on the SDK's thread and are never invoked while a lock is held. Calls that can block on
+ * the SDK (token fetches) run on the supplied executor, which needs at least two threads.
  */
 public final class CentrifugoClient {
 
@@ -51,118 +57,65 @@ public final class CentrifugoClient {
     }
 
 
-    private interface ReplyHandler {
-
-        void onSuccess(JsonObject reply);
-
-
-        void onError(
-            int code,
-            String message
-        );
-    }
-
-
-    private static final Logger Log = Logger.getLogger(CentrifugoClient.class.getName());
-
-    private static final String ClientName = "impulsem-android";
-    private static final long ReplyTimeoutMillis = 30000L;
-    private static final long[] TemporaryRetryDelaysMillis = {250L, 500L, 1000L};
-    private static final int TemporaryErrorCode = 100;
-    private static final int ConnectionExpiredCloseCode = 3005;
-    private static final int ResubscribeFromUnsubscribeCode = 2500;
-    private static final int StateInvalidatedUnsubscribeCode = 2502;
-    private static final int AbnormalCloseCode = 1006;
-    private static final long TokenRetryMillis = 2000L;
-    private static final int RefreshMarginSeconds = 30;
-    private static final int DefaultPingSeconds = 25;
-    private static final long DefaultPingGraceMillis = 10000L;
-
-
-    private static final class Pending {
-
-        final int id;
-        final JsonObject body;
-        final ReplyHandler handler;
-        final int attempt;
-        ScheduledFuture<?> timeout;
-
-
-        Pending(
-            int id,
-            JsonObject body,
-            ReplyHandler handler,
-            int attempt
-        ) {
-            this.id = id;
-            this.body = body;
-            this.handler = handler;
-            this.attempt = attempt;
-        }
-    }
-
-
-    private static final class ChannelState {
+    /** One wanted channel: the SDK subscription that serves it, and the state the listener contract needs. */
+    private static final class Wanted {
 
         final String channel;
-        String actorTag;
-        boolean resubscribeAfterReply;
-        long offset;
-        String epoch;
-        boolean subscribed;
-        boolean inFlight;
+        final String actorTag;
+        /** Null while the subscription waits for the unsubscribe of the one it replaces. */
+        volatile Subscription subscription;
+        boolean positioned;
+        boolean positionDropped;
+        int lastSubscribeErrorCode = NoError;
 
 
-        ChannelState(
+        Wanted(
             String channel,
             String actorTag
         ) {
             this.channel = channel;
             this.actorTag = actorTag;
         }
-
-
-        boolean canRecover() {
-            return epoch != null && !epoch.isEmpty();
-        }
-
-
-        void dropPosition() {
-            offset = 0L;
-            epoch = null;
-        }
     }
 
 
-    private final OkHttpClient http;
-    private final String wsUrl;
+    private static final Logger Log = Logger.getLogger(CentrifugoClient.class.getName());
+
+    private static final String ClientName = "impulsem-android";
+    private static final String DefaultAppVersion = "1.0";
+    private static final int MinReconnectMillis = 1000;
+    private static final int MaxReconnectMillis = 30000;
+    /** The SDK keeps the server's ping interval private, so the liveness rule assumes the Centrifugo default. */
+    private static final int AssumedPingSeconds = 25;
+    private static final int AbnormalCloseCode = 1006;
+    /** The SDK reports a dropped transport with this code and the reason "transport closed". */
+    private static final int TransportClosedCode = 1;
+    /** The SDK reports its own disconnect() with this code. */
+    private static final int DisconnectCalledCode = 0;
+    private static final String UnauthorizedReason = "unauthorized";
+    private static final int ResubscribeFromUnsubscribeCode = 2500;
+    private static final int StateInvalidatedUnsubscribeCode = 2502;
+    private static final int NoError = -1;
+
+
     private final TokenProvider tokens;
     private final CentrifugoListener listener;
     private final ScheduledExecutorService executor;
-    private final Backoff backoff;
+    private final Options options;
+    private final Client sdk;
+    /** Serializes the calls that touch the SDK's subscription registry; SDK callbacks never take it. */
+    private final Object commandLock = new Object();
     private final Object lock = new Object();
+    private final Map<String, Wanted> channels = new LinkedHashMap<String, Wanted>();
 
-    private final Map<String, ChannelState> channels = new LinkedHashMap<String, ChannelState>();
-    private final Map<Integer, Pending> pending = new HashMap<Integer, Pending>();
-
-    private volatile String appVersion = "1.0";
     private volatile String logLabel = "";
     private volatile TraceSink traceSink = TraceSink.None;
 
     private boolean wantConnected;
-    private boolean connecting;
-    private boolean immediateReconnect;
-    private int attemptSerial;
-    private boolean connected;
-    private int generation;
-    private int nextId;
-    private WebSocket socket;
-    private ScheduledFuture<?> refreshTask;
-    private ScheduledFuture<?> reconnectTask;
-    private ScheduledFuture<?> watchdogTask;
+    private boolean connectedUp;
+    private boolean reconnectWaiting;
+    private int attempts;
     private long lastFrameAt;
-    private long watchdogWindowMillis;
-    private long pingGraceMillis = DefaultPingGraceMillis;
 
 
     public CentrifugoClient(
@@ -172,35 +125,30 @@ public final class CentrifugoClient {
         CentrifugoListener listener,
         ScheduledExecutorService executor
     ) {
-        this(http, wsUrl, tokens, listener, executor, new Backoff());
-    }
-
-
-    CentrifugoClient(
-        OkHttpClient http,
-        String wsUrl,
-        TokenProvider tokens,
-        CentrifugoListener listener,
-        ScheduledExecutorService executor,
-        Backoff backoff
-    ) {
-        this.http = http;
-        this.wsUrl = wsUrl;
         this.tokens = tokens;
         this.listener = listener;
         this.executor = executor;
-        this.backoff = backoff;
-    }
-
-
-    /** Test hook: how long past the server ping interval silence is tolerated. */
-    void setPingGraceMillis(long pingGraceMillis) {
-        this.pingGraceMillis = pingGraceMillis;
+        this.options = new Options();
+        this.options.setName(ClientName);
+        this.options.setVersion(DefaultAppVersion);
+        this.options.setOkHttpClient(http);
+        this.options.setMinReconnectDelay(MinReconnectMillis);
+        this.options.setMaxReconnectDelay(MaxReconnectMillis);
+        this.options.setTokenGetter(new ConnectionTokenGetter() {
+            @Override
+            public void getConnectionToken(
+                ConnectionTokenEvent event,
+                TokenCallback callback
+            ) {
+                fetchToken(callback);
+            }
+        });
+        this.sdk = new Client(wsUrl, options, new SdkEvents());
     }
 
 
     public void setAppVersion(String appVersion) {
-        this.appVersion = appVersion;
+        this.options.setVersion(appVersion == null ? "" : appVersion);
     }
 
 
@@ -218,92 +166,67 @@ public final class CentrifugoClient {
 
     /** Starts connecting; the client keeps reconnecting until {@link #disconnect()} or a terminal close. */
     public void connect() {
-        synchronized (lock) {
-            if (wantConnected) {
-                return;
+        synchronized (commandLock) {
+            synchronized (lock) {
+                if (wantConnected) {
+                    return;
+                }
+                wantConnected = true;
             }
-            wantConnected = true;
-            immediateReconnect = false;
+            sdk.setToken("");
+            sdk.connect();
         }
-        connectAsync();
     }
 
 
     /**
-     * Connects at once when a reconnect is waiting on its backoff timer, or when the open socket has been silent for
-     * longer than the watchdog window (a process freeze leaves a dead socket that still looks open). Does nothing when
-     * the client does not want a connection, or when the socket is healthy or a connect attempt is in flight.
+     * Connects at once when the SDK waits on a reconnect backoff, or when the open socket has been silent for longer
+     * than the server's ping interval plus the SDK's maxServerPingDelay (a frozen process leaves a dead socket that still
+     * looks open). Does nothing when the client does not want a connection, or while a connect attempt is in flight.
+     * The internal disconnect does not reach the listener.
      */
     public void reconnectNow() {
-        int staleGen = -1;
-        synchronized (lock) {
-            if (!wantConnected) {
-                return;
-            }
-            if (socket != null) {
-                if (!connected || System.currentTimeMillis() - lastFrameAt <= watchdogWindowMillis) {
+        String cause;
+        synchronized (commandLock) {
+            synchronized (lock) {
+                if (!wantConnected) {
                     return;
                 }
-                staleGen = generation;
-                immediateReconnect = true;
-                backoff.reset();
-            } else {
-                if (connecting || reconnectTask == null) {
+                if (connectedUp) {
+                    long silentMillis = System.currentTimeMillis() - lastFrameAt;
+                    if (silentMillis <= livenessWindowMillis()) {
+                        return;
+                    }
+                    cause = "silent_socket";
+                    connectedUp = false;
+                } else if (reconnectWaiting) {
+                    cause = "backoff_skipped";
+                    reconnectWaiting = false;
+                } else {
                     return;
                 }
-                reconnectTask.cancel(false);
-                reconnectTask = null;
-                backoff.reset();
             }
-        }
-        if (staleGen >= 0) {
-            Log.log(Level.WARNING, "socket silent beyond the watchdog window on resume, reconnecting");
-            trace(
-                LogLevel.INFO,
-                "REALTIME_RECONNECT_NOW",
-                "gen=" + staleGen + " cause=silent_socket",
-                "gen", staleGen,
-                "cause", "silent_socket"
-            );
-            // handleClosed sees immediateReconnect and starts the next attempt without a delay.
-            forceClose(staleGen);
-        } else {
-            trace(
-                LogLevel.INFO,
-                "REALTIME_RECONNECT_NOW",
-                "cause=backoff_skipped",
-                "cause", "backoff_skipped"
-            );
-            connectAsync();
+            if (cause.equals("silent_socket")) {
+                Log.log(Level.WARNING, "socket silent beyond the ping window on resume, reconnecting");
+            }
+            trace(LogLevel.INFO, "REALTIME_RECONNECT_NOW", "cause", cause);
+            sdk.disconnect();
+            sdk.setToken("");
+            sdk.connect();
         }
     }
 
 
     public void disconnect() {
-        WebSocket closing;
         boolean notify;
-        synchronized (lock) {
-            notify = wantConnected;
-            wantConnected = false;
-            connected = false;
-            generation++;
-            closing = socket;
-            socket = null;
-            cancelRefreshLocked();
-            cancelWatchdogLocked();
-            if (reconnectTask != null) {
-                reconnectTask.cancel(false);
-                reconnectTask = null;
+        synchronized (commandLock) {
+            synchronized (lock) {
+                notify = wantConnected;
+                wantConnected = false;
+                connectedUp = false;
+                reconnectWaiting = false;
             }
-            clearPendingLocked();
-            resetChannelFlagsLocked();
-            // Orphans a token fetch that is still in flight, so a later connect() starts cleanly.
-            connecting = false;
-            immediateReconnect = false;
-            attemptSerial++;
-        }
-        if (closing != null) {
-            closing.close(1000, "client disconnect");
+            sdk.disconnect();
         }
         if (notify) {
             fireDisconnected(1000, "client disconnect", false);
@@ -312,122 +235,45 @@ public final class CentrifugoClient {
 
 
     /**
-     * Declares interest in a channel. The subscription is sent now when connected, and again after every
-     * reconnect. Pass the account's own actor tag for {@code channel:} lanes and null for {@code user:}.
+     * Declares interest in a channel. The subscription is sent now when connected, and again after every reconnect.
+     * Pass the account's own actor tag for {@code channel:} lanes and null for {@code user:}. The same channel with a
+     * different tag leaves the old subscription and starts a new one without a position.
      */
     public void subscribe(
         String channel,
         String actorTagOrNull
     ) {
-        ChannelState state;
-        int gen;
-        boolean retag = false;
-        synchronized (lock) {
-            state = channels.get(channel);
-            if (state != null) {
-                boolean same = state.actorTag == null ? actorTagOrNull == null : state.actorTag.equals(actorTagOrNull);
-                if (same) {
+        synchronized (commandLock) {
+            Wanted previous;
+            Wanted next = new Wanted(channel, actorTagOrNull);
+            synchronized (lock) {
+                previous = channels.get(channel);
+                if (previous != null && Objects.equals(previous.actorTag, actorTagOrNull)) {
                     return;
                 }
-                state.actorTag = actorTagOrNull;
-                if (!connected) {
-                    return;
-                }
-                if (state.inFlight) {
-                    state.resubscribeAfterReply = true;
-                    return;
-                }
-                if (!state.subscribed) {
-                    return;
-                }
-                retag = true;
-            } else {
-                state = new ChannelState(channel, actorTagOrNull);
-                channels.put(channel, state);
-                if (!connected) {
-                    return;
-                }
+                channels.put(channel, next);
             }
-            gen = generation;
+            if (previous == null) {
+                next.subscription = newSdkSubscription(next);
+                next.subscription.subscribe();
+            } else if (previous.subscription != null) {
+                // The replacement starts from the old subscription's unsubscribed callback, so its subscribe goes
+                // out after the unsubscribe; see SubscriptionEvents.onUnsubscribed.
+                sdk.removeSubscription(previous.subscription);
+            }
         }
-        if (retag) {
-            resubscribeWithNewTag(gen, state);
-        } else {
-            sendSubscribe(gen, state);
-        }
-    }
-
-
-    /** A subscription's tag filter cannot change in place: leave the channel, then subscribe again without a position. */
-    private void resubscribeWithNewTag(
-        final int gen,
-        final ChannelState state
-    ) {
-        synchronized (lock) {
-            if (gen != generation || channels.get(state.channel) != state) {
-                return;
-            }
-            state.subscribed = false;
-            state.inFlight = true;
-            state.dropPosition();
-        }
-        JsonObject inner = new JsonObject();
-        inner.addProperty("channel", state.channel);
-        JsonObject body = new JsonObject();
-        body.add("unsubscribe", inner);
-        ReplyHandler next = new ReplyHandler() {
-            @Override
-            public void onSuccess(JsonObject reply) {
-                proceed();
-            }
-
-
-            @Override
-            public void onError(
-                int code,
-                String message
-            ) {
-                proceed();
-            }
-
-
-            private void proceed() {
-                synchronized (lock) {
-                    state.inFlight = false;
-                }
-                sendSubscribe(gen, state);
-            }
-        };
-        sendCommand(gen, body, next, 0);
     }
 
 
     public void unsubscribe(String channel) {
-        int gen = -1;
-        synchronized (lock) {
-            ChannelState state = channels.remove(channel);
-            if (state != null && connected && (state.subscribed || state.inFlight)) {
-                gen = generation;
+        synchronized (commandLock) {
+            Wanted removed;
+            synchronized (lock) {
+                removed = channels.remove(channel);
             }
-        }
-        if (gen >= 0) {
-            JsonObject body = new JsonObject();
-            JsonObject inner = new JsonObject();
-            inner.addProperty("channel", channel);
-            body.add("unsubscribe", inner);
-            sendCommand(gen, body, new ReplyHandler() {
-                @Override
-                public void onSuccess(JsonObject reply) {
-                }
-
-
-                @Override
-                public void onError(
-                    int code,
-                    String message
-                ) {
-                }
-            }, 0);
+            if (removed != null && removed.subscription != null) {
+                sdk.removeSubscription(removed.subscription);
+            }
         }
     }
 
@@ -440,809 +286,349 @@ public final class CentrifugoClient {
     }
 
 
-    // Connection lifecycle.
+    // Token supply. The SDK calls this on connect and on refresh; the blocking fetch runs on our executor.
 
-    private void connectAsync() {
-        executor.execute(new Runnable() {
-            @Override
-            public void run() {
-                attemptConnect();
-            }
-        });
+    private void fetchToken(final TokenCallback callback) {
+        try {
+            executor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    answerToken(callback);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            callback.Done(e, null);
+        }
     }
 
 
-    private void attemptConnect() {
-        final int serial;
+    private void answerToken(TokenCallback callback) {
+        int attempt;
         synchronized (lock) {
-            if (!wantConnected || connecting) {
-                return;
-            }
-            connecting = true;
-            reconnectTask = null;
-            serial = attemptSerial;
+            attempts++;
+            attempt = attempts;
+            reconnectWaiting = false;
         }
-        trace(
-            LogLevel.INFO,
-            "REALTIME_CONNECTING",
-            "attempt=" + serial,
-            "attempt", serial
-        );
+        trace(LogLevel.INFO, "REALTIME_CONNECTING", "attempt", attempt);
         String token;
         try {
             token = tokens.fetchToken();
         } catch (SessionLostException e) {
+            sessionLost(e);
+            callback.Done(new UnauthorizedException(), null);
+            return;
+        } catch (IOException e) {
+            callback.Done(e, null);
+            return;
+        } catch (RuntimeException e) {
+            callback.Done(e, null);
+            return;
+        }
+        if (token == null) {
+            callback.Done(new IOException("token provider returned no token"), null);
+            return;
+        }
+        callback.Done(null, token);
+    }
+
+
+    /** The session is gone for good: report it once here, and stay disconnected until the next connect(). */
+    private void sessionLost(SessionLostException e) {
+        boolean notify;
+        synchronized (lock) {
+            notify = wantConnected;
+            wantConnected = false;
+            connectedUp = false;
+            reconnectWaiting = false;
+        }
+        if (notify) {
+            fireDisconnected(0, "session lost: " + e.getMessage(), false);
+        }
+    }
+
+
+    // Wiring to the SDK.
+
+    private Subscription newSdkSubscription(Wanted wanted) {
+        SubscriptionOptions subscriptionOptions = new SubscriptionOptions();
+        subscriptionOptions.setPositioned(true);
+        subscriptionOptions.setRecoverable(true);
+        Subscription subscription;
+        try {
+            subscription = sdk.newSubscription(wanted.channel, subscriptionOptions, new SubscriptionEvents(wanted));
+        } catch (DuplicateSubscriptionException e) {
+            throw new IllegalStateException("the SDK still holds a subscription for a channel that was removed", e);
+        }
+        if (wanted.actorTag != null) {
+            subscription.setTagsFilter(FilterNodeBuilder.neq("actor", wanted.actorTag));
+        }
+        return subscription;
+    }
+
+
+    private boolean isWanted(Wanted wanted) {
+        synchronized (lock) {
+            return channels.get(wanted.channel) == wanted;
+        }
+    }
+
+
+    private long livenessWindowMillis() {
+        return AssumedPingSeconds * 1000L + options.getMaxServerPingDelay();
+    }
+
+
+    /** Client-level events of the SDK. */
+    private final class SdkEvents extends EventListener {
+
+        @Override
+        public void onConnecting(
+            Client client,
+            ConnectingEvent event
+        ) {
+            boolean wasUp;
             synchronized (lock) {
-                if (serial != attemptSerial) {
+                wasUp = connectedUp;
+                connectedUp = false;
+                if (!wasUp) {
+                    // The first connect() of a session: an attempt starts at once, nothing to report.
                     return;
                 }
-                connecting = false;
+                reconnectWaiting = true;
+            }
+            // The SDK keeps its last token for the next attempt; a reconnect needs a fresh one from the provider.
+            sdk.setToken("");
+            int closeCode = mapCloseCode(event.getCode());
+            trace(
+                LogLevel.INFO,
+                "REALTIME_RECONNECT_SCHEDULED",
+                "wasConnected", true,
+                "closeCode", closeCode,
+                "terminal", false
+            );
+            fireDisconnected(closeCode, event.getReason(), true);
+        }
+
+
+        @Override
+        public void onConnected(
+            Client client,
+            ConnectedEvent event
+        ) {
+            synchronized (lock) {
+                connectedUp = true;
+                reconnectWaiting = false;
+                lastFrameAt = System.currentTimeMillis();
+            }
+            trace(LogLevel.INFO, "REALTIME_CONNECT_REPLY");
+            fireConnected();
+        }
+
+
+        @Override
+        public void onDisconnected(
+            Client client,
+            DisconnectedEvent event
+        ) {
+            int code = event.getCode();
+            String reason = event.getReason();
+            if (code == DisconnectCalledCode) {
+                // disconnect() reports itself, and the internal step of reconnectNow() reports nothing.
+                synchronized (lock) {
+                    connectedUp = false;
+                    reconnectWaiting = false;
+                }
+                return;
+            }
+            if (code == TransportClosedCode && UnauthorizedReason.equals(reason)) {
+                // The session-lost path has already reported this, see sessionLost().
+                synchronized (lock) {
+                    connectedUp = false;
+                }
+                return;
+            }
+            boolean wasUp;
+            synchronized (lock) {
+                wasUp = connectedUp;
+                connectedUp = false;
+                reconnectWaiting = false;
                 wantConnected = false;
             }
-            fireDisconnected(0, "session lost: " + e.getMessage(), false);
-            return;
-        } catch (IOException e) {
-            failedAttempt(serial, "token: " + e.getMessage());
-            return;
-        } catch (RuntimeException e) {
-            failedAttempt(serial, "token: " + e);
-            return;
-        }
-        synchronized (lock) {
-            if (!wantConnected || serial != attemptSerial) {
-                return;
-            }
-            generation++;
-            nextId = 1;
-            connected = false;
-            Request request = new Request.Builder().url(wsUrl).build();
-            socket = http.newWebSocket(request, new SocketEvents(generation, token));
-        }
-    }
-
-
-    private void failedAttempt(
-        int serial,
-        String reason
-    ) {
-        long delay;
-        synchronized (lock) {
-            if (serial != attemptSerial) {
-                return;
-            }
-            connecting = false;
-            if (!wantConnected) {
-                return;
-            }
-            delay = backoff.nextDelayMillis();
-            reconnectTask = executor.schedule(new Runnable() {
-                @Override
-                public void run() {
-                    attemptConnect();
-                }
-            }, delay, TimeUnit.MILLISECONDS);
-        }
-        trace(
-            LogLevel.WARN,
-            "REALTIME_RECONNECT_SCHEDULED",
-            "delayMs=" + delay + " cause=connect_failed reason=" + reason,
-            "attempt", serial,
-            "delayMs", delay,
-            "cause", "connect_failed"
-        );
-        fireDisconnected(AbnormalCloseCode, reason, true);
-    }
-
-
-    private final class SocketEvents extends WebSocketListener {
-
-        private final int gen;
-        private final String token;
-
-
-        SocketEvents(
-            int gen,
-            String token
-        ) {
-            this.gen = gen;
-            this.token = token;
+            int closeCode = mapCloseCode(code);
+            trace(
+                LogLevel.WARN,
+                "REALTIME_CLOSED",
+                "closeCode", closeCode,
+                "wasConnected", wasUp,
+                "terminal", true
+            );
+            fireDisconnected(closeCode, reason, false);
         }
 
 
         @Override
-        public void onOpen(
-            WebSocket webSocket,
-            Response response
+        public void onError(
+            Client client,
+            ErrorEvent event
         ) {
-            JsonObject connect = new JsonObject();
-            connect.addProperty("token", token);
-            connect.addProperty("name", ClientName);
-            connect.addProperty("version", appVersion);
-            JsonObject body = new JsonObject();
-            body.add("connect", connect);
-            sendCommand(gen, body, new ReplyHandler() {
-                @Override
-                public void onSuccess(JsonObject reply) {
-                    onConnectReply(gen, reply);
+            synchronized (lock) {
+                if (!connectedUp) {
+                    reconnectWaiting = true;
                 }
+            }
+            Log.log(Level.WARNING, "realtime error: " + describe(event.getError()));
+        }
+    }
 
 
-                @Override
-                public void onError(
-                    int code,
-                    String message
-                ) {
-                    forceClose(gen);
-                }
-            }, TemporaryRetryDelaysMillis.length);
+    /** Events of one channel's SDK subscription. A subscription that is no longer wanted reports nothing. */
+    private final class SubscriptionEvents extends SubscriptionEventListener {
+
+        private final Wanted wanted;
+
+
+        SubscriptionEvents(Wanted wanted) {
+            this.wanted = wanted;
         }
 
 
         @Override
-        public void onMessage(
-            WebSocket webSocket,
-            String text
+        public void onSubscribing(
+            Subscription sub,
+            SubscribingEvent event
         ) {
-            handleFrame(gen, webSocket, text);
+            if (!isWanted(wanted)) {
+                return;
+            }
+            int code = event.getCode();
+            boolean recovering;
+            synchronized (lock) {
+                if (code == StateInvalidatedUnsubscribeCode) {
+                    wanted.positioned = false;
+                    wanted.positionDropped = true;
+                }
+                recovering = wanted.positioned;
+            }
+            if (code >= ResubscribeFromUnsubscribeCode) {
+                // The server took the channel away temporarily; the SDK resubscribes by itself.
+                fireUnsubscribed(wanted.channel, code, event.getReason());
+            }
+            trace(
+                LogLevel.INFO,
+                "REALTIME_SUBSCRIBE_SENT",
+                "lane", laneKind(wanted.channel),
+                "wasRecovering", recovering
+            );
         }
 
 
         @Override
-        public void onClosing(
-            WebSocket webSocket,
-            int code,
-            String reason
+        public void onSubscribed(
+            Subscription sub,
+            SubscribedEvent event
         ) {
-            webSocket.close(1000, null);
-            handleClosed(gen, code, reason);
+            boolean recovered = Boolean.TRUE.equals(event.getRecovered());
+            boolean wasRecovering;
+            synchronized (lock) {
+                if (channels.get(wanted.channel) != wanted) {
+                    return;
+                }
+                wanted.positioned = Boolean.TRUE.equals(event.getRecoverable());
+                // After a 2502 the position was dropped, so the listener must not hear a recovery.
+                wasRecovering = Boolean.TRUE.equals(event.wasRecovering()) && !wanted.positionDropped;
+                wanted.positionDropped = false;
+                wanted.lastSubscribeErrorCode = NoError;
+                lastFrameAt = System.currentTimeMillis();
+            }
+            trace(
+                LogLevel.INFO,
+                "REALTIME_SUBSCRIBE_REPLY",
+                "lane", laneKind(wanted.channel),
+                "recovered", recovered,
+                "wasRecovering", wasRecovering
+            );
+            fireSubscribed(wanted.channel, recovered, wasRecovering);
         }
 
 
         @Override
-        public void onClosed(
-            WebSocket webSocket,
-            int code,
-            String reason
+        public void onPublication(
+            Subscription sub,
+            PublicationEvent event
         ) {
-            handleClosed(gen, code, reason);
+            if (!isWanted(wanted)) {
+                return;
+            }
+            synchronized (lock) {
+                lastFrameAt = System.currentTimeMillis();
+            }
+            Envelope envelope = Envelope.parseBytes(event.getData());
+            firePublication(new Publication(wanted.channel, envelope, event.getOffset()));
         }
 
 
+        /**
+         * The SDK queues the unsubscribe frame of this subscription before it calls back, so a replacement that starts
+         * here sends its subscribe after that unsubscribe. The registry and the wanted map change under the lock, so a
+         * concurrent subscribe() sees either this subscription still wanted or the channel already gone.
+         */
         @Override
-        public void onFailure(
-            WebSocket webSocket,
-            Throwable t,
-            Response response
+        public void onUnsubscribed(
+            Subscription sub,
+            UnsubscribedEvent event
         ) {
-            handleClosed(gen, AbnormalCloseCode, String.valueOf(t.getMessage()));
-        }
-    }
-
-
-    private void onConnectReply(
-        int gen,
-        JsonObject reply
-    ) {
-        JsonObject result = objectOf(reply, "connect");
-        long pingSeconds;
-        synchronized (lock) {
-            if (gen != generation) {
-                return;
-            }
-            connected = true;
-            backoff.reset();
-            scheduleRefreshLocked(gen, result);
-            pingSeconds = longOfSafe(result, "ping");
-            if (pingSeconds <= 0) {
-                pingSeconds = DefaultPingSeconds;
-            }
-            watchdogWindowMillis = pingSeconds * 1000L + pingGraceMillis;
-            lastFrameAt = System.currentTimeMillis();
-            scheduleWatchdogLocked(gen, watchdogWindowMillis);
-        }
-        trace(
-            LogLevel.INFO,
-            "REALTIME_CONNECT_REPLY",
-            "gen=" + gen + " pingSeconds=" + pingSeconds,
-            "gen", gen,
-            "pingSeconds", pingSeconds
-        );
-        fireConnected();
-        resubscribeAll(gen);
-    }
-
-
-    private void resubscribeAll(int gen) {
-        List<ChannelState> due = new ArrayList<ChannelState>();
-        synchronized (lock) {
-            if (gen != generation) {
-                return;
-            }
-            for (ChannelState state : channels.values()) {
-                if (!state.subscribed && !state.inFlight) {
-                    due.add(state);
+            Wanted starting = null;
+            boolean terminal = false;
+            int failedCode = NoError;
+            synchronized (lock) {
+                Wanted current = channels.get(wanted.channel);
+                if (current != null && current.subscription == null) {
+                    current.subscription = newSdkSubscription(current);
+                    starting = current;
+                } else if (current == wanted) {
+                    channels.remove(wanted.channel);
+                    sdk.removeSubscription(sub);
+                    terminal = true;
+                    failedCode = wanted.lastSubscribeErrorCode;
                 }
             }
-        }
-        for (ChannelState state : due) {
-            sendSubscribe(gen, state);
-        }
-    }
-
-
-    private void forceClose(int gen) {
-        WebSocket current;
-        synchronized (lock) {
-            if (gen != generation) {
+            if (starting != null) {
+                starting.subscription.subscribe();
                 return;
             }
-            current = socket;
-        }
-        if (current != null) {
-            current.cancel();
-        }
-    }
-
-
-    private void handleClosed(
-        final int gen,
-        int code,
-        String reason
-    ) {
-        long reconnectDelay = -1L;
-        boolean willReconnect;
-        boolean wasConnected;
-        synchronized (lock) {
-            if (gen != generation || socket == null) {
+            if (!terminal) {
                 return;
             }
-            wasConnected = connected;
-            boolean immediate = immediateReconnect;
-            immediateReconnect = false;
-            socket = null;
-            connected = false;
-            connecting = false;
-            cancelRefreshLocked();
-            cancelWatchdogLocked();
-            clearPendingLocked();
-            resetChannelFlagsLocked();
-            if (!wantConnected) {
-                return;
-            }
-            if (isTerminalClose(code)) {
-                wantConnected = false;
-                willReconnect = false;
-            } else {
-                willReconnect = true;
-                if ((code == ConnectionExpiredCloseCode && wasConnected) || immediate) {
-                    reconnectDelay = 0L;
-                } else {
-                    reconnectDelay = backoff.nextDelayMillis();
-                }
-            }
-        }
-        trace(
-            willReconnect ? LogLevel.INFO : LogLevel.WARN,
-            willReconnect ? "REALTIME_RECONNECT_SCHEDULED" : "REALTIME_CLOSED",
-            "gen=" + gen + " delayMs=" + reconnectDelay + " closeCode=" + code + " wasConnected=" + wasConnected
-                + " terminal=" + !willReconnect + " reason=" + reason,
-            "gen", gen,
-            "delayMs", reconnectDelay,
-            "closeCode", code,
-            "wasConnected", wasConnected,
-            "terminal", !willReconnect
-        );
-        // The listener hears about the disconnect before any reconnect can start, so onConnected never overtakes it.
-        fireDisconnected(code, reason, willReconnect);
-        if (reconnectDelay < 0L) {
-            return;
-        }
-        synchronized (lock) {
-            if (!wantConnected || gen != generation) {
-                return;
-            }
-            Runnable attempt = new Runnable() {
-                @Override
-                public void run() {
-                    attemptConnect();
-                }
-            };
-            if (reconnectDelay == 0L) {
-                executor.execute(attempt);
-            } else {
-                reconnectTask = executor.schedule(attempt, reconnectDelay, TimeUnit.MILLISECONDS);
-            }
-        }
-    }
-
-
-    private static boolean isTerminalClose(int code) {
-        return (code >= 3500 && code <= 3999) || (code >= 4500 && code <= 4999);
-    }
-
-
-    // Token refresh.
-
-    private void scheduleRefreshLocked(
-        final int gen,
-        JsonObject result
-    ) {
-        cancelRefreshLocked();
-        if (!boolOf(result, "expires")) {
-            return;
-        }
-        final int ttl = (int) longOf(result, "ttl");
-        if (ttl <= 0) {
-            return;
-        }
-        long delaySeconds = Math.max(ttl - RefreshMarginSeconds, Math.max(ttl / 2, 1));
-        refreshTask = executor.schedule(new Runnable() {
-            @Override
-            public void run() {
-                doRefresh(gen, ttl);
-            }
-        }, delaySeconds, TimeUnit.SECONDS);
-    }
-
-
-    private void doRefresh(
-        final int gen,
-        final int lastTtl
-    ) {
-        synchronized (lock) {
-            if (gen != generation || !connected) {
-                return;
-            }
-        }
-        String token;
-        try {
-            token = tokens.fetchToken();
-        } catch (IOException e) {
-            retryRefreshLater(gen, lastTtl);
-            return;
-        } catch (RuntimeException e) {
-            retryRefreshLater(gen, lastTtl);
-            return;
-        }
-        JsonObject inner = new JsonObject();
-        inner.addProperty("token", token);
-        JsonObject body = new JsonObject();
-        body.add("refresh", inner);
-        sendCommand(gen, body, new ReplyHandler() {
-            @Override
-            public void onSuccess(JsonObject reply) {
-                JsonObject result = objectOf(reply, "refresh");
-                if (!result.has("ttl")) {
-                    result.addProperty("ttl", lastTtl);
-                }
-                if (!result.has("expires")) {
-                    result.addProperty("expires", true);
-                }
-                synchronized (lock) {
-                    if (gen == generation && connected) {
-                        scheduleRefreshLocked(gen, result);
-                    }
-                }
-            }
-
-
-            @Override
-            public void onError(
-                int code,
-                String message
-            ) {
-                forceClose(gen);
-            }
-        }, 0);
-    }
-
-
-    private void retryRefreshLater(
-        final int gen,
-        final int lastTtl
-    ) {
-        synchronized (lock) {
-            if (gen != generation || !connected) {
-                return;
-            }
-            refreshTask = executor.schedule(new Runnable() {
-                @Override
-                public void run() {
-                    doRefresh(gen, lastTtl);
-                }
-            }, TokenRetryMillis, TimeUnit.MILLISECONDS);
-        }
-    }
-
-
-    private void scheduleWatchdogLocked(
-        final int gen,
-        long delayMillis
-    ) {
-        cancelWatchdogLocked();
-        watchdogTask = executor.schedule(new Runnable() {
-            @Override
-            public void run() {
-                long remaining;
-                synchronized (lock) {
-                    if (gen != generation || !connected) {
-                        return;
-                    }
-                    remaining = lastFrameAt + watchdogWindowMillis - System.currentTimeMillis();
-                    if (remaining > 0) {
-                        scheduleWatchdogLocked(gen, remaining);
-                        return;
-                    }
-                }
-                Log.log(Level.WARNING, "no frame from the server for " + watchdogWindowMillis + " ms, reconnecting");
-                forceClose(gen);
-            }
-        }, delayMillis, TimeUnit.MILLISECONDS);
-    }
-
-
-    private void cancelWatchdogLocked() {
-        if (watchdogTask != null) {
-            watchdogTask.cancel(false);
-            watchdogTask = null;
-        }
-    }
-
-
-    private void cancelRefreshLocked() {
-        if (refreshTask != null) {
-            refreshTask.cancel(false);
-            refreshTask = null;
-        }
-    }
-
-
-    // Commands.
-
-    /**
-     * Sends a command and routes its reply to the handler. {@code attempt} is the number of temporary-error
-     * retries already spent; a timeout drops the whole connection.
-     */
-    private void sendCommand(
-        final int gen,
-        final JsonObject body,
-        final ReplyHandler handler,
-        final int attempt
-    ) {
-        synchronized (lock) {
-            if (gen != generation || socket == null) {
-                return;
-            }
-            final int id = nextId++;
-            final Pending command = new Pending(id, body, handler, attempt);
-            command.timeout = executor.schedule(new Runnable() {
-                @Override
-                public void run() {
-                    boolean expired;
-                    synchronized (lock) {
-                        expired = pending.remove(id) == command;
-                    }
-                    if (expired) {
-                        forceClose(gen);
-                    }
-                }
-            }, ReplyTimeoutMillis, TimeUnit.MILLISECONDS);
-            pending.put(id, command);
-            JsonObject frame = new JsonObject();
-            frame.addProperty("id", id);
-            for (Map.Entry<String, JsonElement> entry : body.entrySet()) {
-                frame.add(entry.getKey(), entry.getValue());
-            }
-            socket.send(frame.toString());
-        }
-    }
-
-
-    private void sendSubscribe(
-        int gen,
-        final ChannelState state
-    ) {
-        final boolean recover;
-        JsonObject inner = new JsonObject();
-        synchronized (lock) {
-            if (gen != generation || !connected || channels.get(state.channel) != state || state.inFlight) {
-                return;
-            }
-            state.inFlight = true;
-            state.subscribed = false;
-            recover = state.canRecover();
-            inner.addProperty("channel", state.channel);
-            if (state.actorTag != null) {
-                JsonObject tf = new JsonObject();
-                tf.addProperty("key", "actor");
-                tf.addProperty("cmp", "neq");
-                tf.addProperty("val", state.actorTag);
-                inner.add("tf", tf);
-            }
-            if (recover) {
-                inner.addProperty("recover", true);
-                inner.addProperty("offset", state.offset);
-                inner.addProperty("epoch", state.epoch);
-            }
-        }
-        trace(
-            LogLevel.INFO,
-            "REALTIME_SUBSCRIBE_SENT",
-            "gen=" + gen + " lane=" + laneKind(state.channel) + " recover=" + recover,
-            "gen", gen,
-            "lane", laneKind(state.channel),
-            "wasRecovering", recover
-        );
-        JsonObject body = new JsonObject();
-        body.add("subscribe", inner);
-        final int sentGen = gen;
-        sendCommand(gen, body, new ReplyHandler() {
-            @Override
-            public void onSuccess(JsonObject reply) {
-                onSubscribeReply(sentGen, state, recover, reply);
-            }
-
-
-            @Override
-            public void onError(
-                int code,
-                String message
-            ) {
-                boolean current;
-                synchronized (lock) {
-                    state.inFlight = false;
-                    current = channels.get(state.channel) == state;
-                    if (current) {
-                        channels.remove(state.channel);
-                    }
-                }
+            if (failedCode != NoError && failedCode == event.getCode()) {
                 trace(
                     LogLevel.WARN,
                     "REALTIME_SUBSCRIBE_FAILED",
-                    "gen=" + sentGen + " lane=" + laneKind(state.channel) + " errorCode=" + code + " error=" + message,
-                    "gen", sentGen,
-                    "lane", laneKind(state.channel),
-                    "errorCode", code
+                    "lane", laneKind(wanted.channel),
+                    "errorCode", failedCode
                 );
-                if (current) {
-                    fireUnsubscribed(state.channel, code, message);
-                }
             }
-        }, 0);
-    }
+            fireUnsubscribed(wanted.channel, event.getCode(), event.getReason());
+        }
 
 
-    private void onSubscribeReply(
-        int gen,
-        ChannelState state,
-        boolean wasRecovering,
-        JsonObject reply
-    ) {
-        JsonObject result = objectOf(reply, "subscribe");
-        boolean recovered = boolOf(result, "recovered");
-        List<Publication> replayed = new ArrayList<Publication>();
-        synchronized (lock) {
-            state.inFlight = false;
-            if (gen != generation || channels.get(state.channel) != state) {
+        @Override
+        public void onError(
+            Subscription sub,
+            SubscriptionErrorEvent event
+        ) {
+            Throwable error = event.getError();
+            if (!(error instanceof SubscriptionSubscribeError)) {
                 return;
             }
-            state.subscribed = true;
-            String epoch = stringOf(result, "epoch");
-            if (epoch != null && !epoch.isEmpty()) {
-                state.epoch = epoch;
-                state.offset = longOf(result, "offset");
-            } else {
-                state.dropPosition();
-            }
-            JsonElement publications = result.get("publications");
-            if (publications != null && publications.isJsonArray()) {
-                for (JsonElement element : publications.getAsJsonArray()) {
-                    if (!element.isJsonObject()) {
-                        continue;
-                    }
-                    Publication publication = toPublication(state.channel, element.getAsJsonObject());
-                    if (publication != null) {
-                        replayed.add(publication);
-                        if (publication.offset > state.offset) {
-                            state.offset = publication.offset;
-                        }
-                    }
-                }
-            }
-        }
-        trace(
-            LogLevel.INFO,
-            "REALTIME_SUBSCRIBE_REPLY",
-            "gen=" + gen + " lane=" + laneKind(state.channel) + " recovered=" + recovered + " wasRecovering=" + wasRecovering
-                + " replayed=" + replayed.size(),
-            "gen", gen,
-            "lane", laneKind(state.channel),
-            "recovered", recovered,
-            "wasRecovering", wasRecovering,
-            "replayed", replayed.size()
-        );
-        fireSubscribed(state.channel, recovered, wasRecovering);
-        for (Publication publication : replayed) {
-            firePublication(publication);
-        }
-        boolean retag;
-        synchronized (lock) {
-            retag = state.resubscribeAfterReply && gen == generation && channels.get(state.channel) == state;
-            state.resubscribeAfterReply = false;
-        }
-        if (retag) {
-            resubscribeWithNewTag(gen, state);
-        }
-    }
-
-
-    // Inbound frames.
-
-    private void handleFrame(
-        int gen,
-        WebSocket webSocket,
-        String text
-    ) {
-        synchronized (lock) {
-            if (gen == generation) {
-                lastFrameAt = System.currentTimeMillis();
-            }
-        }
-        for (String line : text.split("\n")) {
-            if (line.trim().isEmpty()) {
-                continue;
-            }
-            try {
-                JsonElement parsed = JsonParser.parseString(line);
-                if (!parsed.isJsonObject()) {
-                    continue;
-                }
-                JsonObject object = parsed.getAsJsonObject();
-                if (object.size() == 0) {
-                    webSocket.send("{}");
-                } else if (object.has("id")) {
-                    handleReply(gen, object);
-                } else if (object.has("push")) {
-                    handlePush(gen, objectOf(object, "push"));
-                }
-            } catch (RuntimeException e) {
-                // Nothing may escape to OkHttp's reader thread: it would tear the connection down.
-                Log.log(Level.WARNING, "realtime frame object skipped", e);
-            }
-        }
-    }
-
-
-    private void handleReply(
-        final int gen,
-        final JsonObject reply
-    ) {
-        int id = (int) longOf(reply, "id");
-        final Pending command;
-        synchronized (lock) {
-            if (gen != generation) {
-                return;
-            }
-            command = pending.remove(id);
-            if (command != null && command.timeout != null) {
-                command.timeout.cancel(false);
-            }
-        }
-        if (command == null) {
-            return;
-        }
-        if (!reply.has("error")) {
-            command.handler.onSuccess(reply);
-            return;
-        }
-        JsonObject error = objectOf(reply, "error");
-        int code = (int) longOf(error, "code");
-        String message = stringOf(error, "message");
-        boolean temporary = code == TemporaryErrorCode || boolOf(error, "temporary");
-        if (temporary && command.attempt < TemporaryRetryDelaysMillis.length) {
-            long delay = TemporaryRetryDelaysMillis[command.attempt];
-            executor.schedule(new Runnable() {
-                @Override
-                public void run() {
-                    sendCommand(gen, command.body, command.handler, command.attempt + 1);
-                }
-            }, delay, TimeUnit.MILLISECONDS);
-            return;
-        }
-        command.handler.onError(code, message == null ? "" : message);
-    }
-
-
-    private void handlePush(
-        final int gen,
-        JsonObject push
-    ) {
-        String channel = stringOf(push, "channel");
-        if (channel == null) {
-            return;
-        }
-        if (push.has("pub")) {
-            Publication publication = toPublication(channel, objectOf(push, "pub"));
-            if (publication == null) {
+            Throwable cause = ((SubscriptionSubscribeError) error).getError();
+            if (!(cause instanceof ReplyError)) {
                 return;
             }
             synchronized (lock) {
-                ChannelState state = channels.get(channel);
-                if (gen != generation) {
-                    return;
-                }
-                if (state != null && publication.offset > state.offset) {
-                    state.offset = publication.offset;
+                if (channels.get(wanted.channel) == wanted) {
+                    wanted.lastSubscribeErrorCode = ((ReplyError) cause).getCode();
                 }
             }
-            firePublication(publication);
-        } else if (push.has("unsubscribe")) {
-            handleServerUnsubscribe(gen, channel, objectOf(push, "unsubscribe"));
-        }
-    }
-
-
-    private void handleServerUnsubscribe(
-        final int gen,
-        final String channel,
-        JsonObject unsubscribe
-    ) {
-        int code = (int) longOf(unsubscribe, "code");
-        String reason = stringOf(unsubscribe, "reason");
-        final ChannelState state;
-        synchronized (lock) {
-            if (gen != generation) {
-                return;
-            }
-            state = channels.get(channel);
-            if (state == null) {
-                return;
-            }
-            state.subscribed = false;
-            state.inFlight = false;
-            if (code < ResubscribeFromUnsubscribeCode) {
-                channels.remove(channel);
-            } else if (code == StateInvalidatedUnsubscribeCode) {
-                state.dropPosition();
-            }
-        }
-        fireUnsubscribed(channel, code, reason == null ? "" : reason);
-        if (code >= ResubscribeFromUnsubscribeCode) {
-            executor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    sendSubscribe(gen, state);
-                }
-            });
-        }
-    }
-
-
-    /** Always yields a publication; an unreadable envelope is flagged so the app can run getDifference. */
-    private static Publication toPublication(
-        String channel,
-        JsonObject pub
-    ) {
-        return new Publication(channel, Envelope.parse(pub.get("data")), longOfSafe(pub, "offset"));
-    }
-
-
-    // State helpers.
-
-    private void clearPendingLocked() {
-        for (Pending command : pending.values()) {
-            if (command.timeout != null) {
-                command.timeout.cancel(false);
-            }
-        }
-        pending.clear();
-    }
-
-
-    private void resetChannelFlagsLocked() {
-        for (ChannelState state : channels.values()) {
-            state.subscribed = false;
-            state.inFlight = false;
         }
     }
 
@@ -1307,23 +693,31 @@ public final class CentrifugoClient {
 
 
     /**
-     * One connection-lifecycle event. The local log line carries the event name first, so it can be grepped, then the
-     * label and the free-text details; the sink gets only the typed fields, never the server's reason or message.
+     * One connection-lifecycle event. The sink gets only the typed fields, never the server's reason or message; the
+     * local log line carries the event name, the label and the same typed fields. A throwing sink is contained here.
      */
     private void trace(
         LogLevel level,
         String event,
-        String details,
-        Object... fields
+        Object... keysAndValues
     ) {
         try {
-            traceSink.trace(level, event, fields);
+            traceSink.trace(level, event, keysAndValues);
         } catch (RuntimeException e) {
             Log.log(Level.WARNING, "trace sink failed for " + event, e);
         }
         if (Log.isLoggable(Level.INFO)) {
-            Log.info(event + " " + logLabel + " " + details);
+            StringBuilder line = new StringBuilder(event).append(' ').append(logLabel);
+            for (int i = 0; i + 1 < keysAndValues.length; i += 2) {
+                line.append(' ').append(keysAndValues[i]).append('=').append(keysAndValues[i + 1]);
+            }
+            Log.info(line.toString());
         }
+    }
+
+
+    private static int mapCloseCode(int sdkCode) {
+        return sdkCode == TransportClosedCode ? AbnormalCloseCode : sdkCode;
     }
 
 
@@ -1333,61 +727,8 @@ public final class CentrifugoClient {
     }
 
 
-    // JSON helpers.
-
-    private static JsonObject objectOf(
-        JsonObject parent,
-        String name
-    ) {
-        JsonElement element = parent.get(name);
-        if (element != null && element.isJsonObject()) {
-            return element.getAsJsonObject();
-        }
-        return new JsonObject();
-    }
-
-
-    private static long longOfSafe(
-        JsonObject object,
-        String name
-    ) {
-        try {
-            return longOf(object, name);
-        } catch (RuntimeException e) {
-            return 0L;
-        }
-    }
-
-
-    private static long longOf(
-        JsonObject object,
-        String name
-    ) {
-        JsonElement element = object.get(name);
-        if (element == null || !element.isJsonPrimitive()) {
-            return 0L;
-        }
-        return element.getAsLong();
-    }
-
-
-    private static boolean boolOf(
-        JsonObject object,
-        String name
-    ) {
-        JsonElement element = object.get(name);
-        return element != null && element.isJsonPrimitive() && element.getAsBoolean();
-    }
-
-
-    private static String stringOf(
-        JsonObject object,
-        String name
-    ) {
-        JsonElement element = object.get(name);
-        if (element == null || !element.isJsonPrimitive()) {
-            return null;
-        }
-        return element.getAsString();
+    /** The class of a failure, never its message: messages can carry tokens or server text. */
+    private static String describe(Throwable error) {
+        return error == null ? "unknown" : error.getClass().getSimpleName();
     }
 }
