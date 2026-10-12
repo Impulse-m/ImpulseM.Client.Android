@@ -3,26 +3,22 @@ package net.impulsem.transport.realtime;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import io.github.centrifugal.centrifuge.internal.protocol.Protocol;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.net.InetAddress;
 import java.net.Socket;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import javax.net.SocketFactory;
 import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.logging.LogRecord;
 import net.impulsem.transport.logging.TraceSink;
+import net.impulsem.transport.realtime.ProtoCentrifugoServer.Session;
 import okhttp3.OkHttpClient;
-import okhttp3.WebSocket;
-import okhttp3.WebSocketListener;
-import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import org.junit.After;
 import org.junit.Before;
@@ -31,28 +27,8 @@ import org.junit.Test;
 
 public class CentrifugoClientResumeTest {
 
-    private static final long WaitMillis = 5000L;
-    private static final long BackoffMillis = 4000L;
+    private static final long WaitMillis = ProtoCentrifugoServer.WaitMillis;
     private static final long ImmediateMillis = 1500L;
-
-
-    /** Answers the connect command so the client reaches the connected state. */
-    private static final class Session extends WebSocketListener {
-
-        final CountDownLatch connectSeen = new CountDownLatch(1);
-
-
-        @Override
-        public void onMessage(
-            WebSocket webSocket,
-            String text
-        ) {
-            if (text.contains("\"connect\"")) {
-                webSocket.send("{\"id\":1,\"connect\":{\"client\":\"c1\",\"expires\":true,\"ttl\":60}}");
-                connectSeen.countDown();
-            }
-        }
-    }
 
 
     private static final class Recorder implements CentrifugoListener {
@@ -103,10 +79,11 @@ public class CentrifugoClientResumeTest {
     }
 
 
+    private final List<Session> sessions = new CopyOnWriteArrayList<Session>();
+    private final CopyOnWriteArrayList<Socket> rawSockets = new CopyOnWriteArrayList<Socket>();
     private MockWebServer server;
     private ScheduledExecutorService executor;
     private OkHttpClient http;
-    private final CopyOnWriteArrayList<Socket> rawSockets = new CopyOnWriteArrayList<Socket>();
     private final AtomicInteger tokenCounter = new AtomicInteger();
     private final Session first = new Session();
     private final Session second = new Session();
@@ -117,67 +94,15 @@ public class CentrifugoClientResumeTest {
 
     @Before
     public void setUp() throws IOException {
-        server = new MockWebServer();
-        server.start();
         executor = Executors.newScheduledThreadPool(2);
+        sessions.add(first);
+        sessions.add(second);
+        sessions.add(third);
+        server = ProtoCentrifugoServer.start(sessions);
         http = new OkHttpClient.Builder()
-            .socketFactory(new SocketFactory() {
-                private Socket track(Socket socket) {
-                    rawSockets.add(socket);
-                    return socket;
-                }
-
-
-                @Override
-                public Socket createSocket() {
-                    return track(new Socket());
-                }
-
-
-                @Override
-                public Socket createSocket(
-                    String host,
-                    int port
-                ) throws IOException {
-                    return track(new Socket(host, port));
-                }
-
-
-                @Override
-                public Socket createSocket(
-                    String host,
-                    int port,
-                    InetAddress localHost,
-                    int localPort
-                ) throws IOException {
-                    return track(new Socket(host, port, localHost, localPort));
-                }
-
-
-                @Override
-                public Socket createSocket(
-                    InetAddress host,
-                    int port
-                ) throws IOException {
-                    return track(new Socket(host, port));
-                }
-
-
-                @Override
-                public Socket createSocket(
-                    InetAddress address,
-                    int port,
-                    InetAddress localAddress,
-                    int localPort
-                ) throws IOException {
-                    return track(new Socket(address, port, localAddress, localPort));
-                }
-            })
+            .socketFactory(CentrifugoClientTest.trackingSocketFactory(rawSockets))
             .build();
         recorder = new Recorder();
-        server.enqueue(new MockResponse().withWebSocketUpgrade(first));
-        server.enqueue(new MockResponse().withWebSocketUpgrade(second));
-        server.enqueue(new MockResponse().withWebSocketUpgrade(third));
         client = new CentrifugoClient(
             http,
             server.url("/connection/websocket?cf_ws_frame_ping_pong=true").toString(),
@@ -188,8 +113,7 @@ public class CentrifugoClientResumeTest {
                 }
             },
             recorder,
-            executor,
-            new Backoff(BackoffMillis, BackoffMillis, 0.0, new Random(3L))
+            executor
         );
     }
 
@@ -214,17 +138,6 @@ public class CentrifugoClientResumeTest {
     }
 
 
-    private Object readField(String name) throws Exception {
-        Field lockField = CentrifugoClient.class.getDeclaredField("lock");
-        lockField.setAccessible(true);
-        Field field = CentrifugoClient.class.getDeclaredField(name);
-        field.setAccessible(true);
-        synchronized (lockField.get(client)) {
-            return field.get(client);
-        }
-    }
-
-
     private void setField(
         String name,
         long value
@@ -239,12 +152,19 @@ public class CentrifugoClientResumeTest {
     }
 
 
-    private void waitForPendingTimer() throws Exception {
-        long deadline = System.currentTimeMillis() + WaitMillis;
-        while (readField("reconnectTask") == null) {
-            assertTrue("no reconnect timer was scheduled", System.currentTimeMillis() < deadline);
-            Thread.sleep(10L);
+    /** True when the session received a connect command within the bound. */
+    private static boolean connectArrives(
+        Session session,
+        long millis
+    ) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + millis;
+        while (System.currentTimeMillis() < deadline) {
+            Protocol.Command command = session.commands.poll(50L, TimeUnit.MILLISECONDS);
+            if (command != null && command.hasConnect()) {
+                return true;
+            }
         }
+        return false;
     }
 
 
@@ -254,14 +174,12 @@ public class CentrifugoClientResumeTest {
         assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
         rawSockets.get(0).close();
         assertTrue(recorder.reconnecting.await(WaitMillis, TimeUnit.MILLISECONDS));
-        // Wait until the backoff timer is really pending, so the cancel path is the one under test.
-        waitForPendingTimer();
         client.reconnectNow();
-        // The pending timer would only fire after BackoffMillis, far beyond this bound.
-        assertTrue("not connected at once", second.connectSeen.await(ImmediateMillis, TimeUnit.MILLISECONDS));
+        // The SDK's own reconnect timer fires within two seconds, so the bound only holds when reconnectNow connects.
+        assertTrue("not connected at once", connectArrives(second, ImmediateMillis));
         assertEquals(2, tokenCounter.get());
         // The cancelled timer must not drive a further attempt once its delay has passed.
-        Thread.sleep(BackoffMillis + 700L);
+        Thread.sleep(4700L);
         assertEquals(2, server.getRequestCount());
         assertEquals(2, tokenCounter.get());
     }
@@ -289,13 +207,12 @@ public class CentrifugoClientResumeTest {
         assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
         rawSockets.get(0).close();
         assertTrue(recorder.reconnecting.await(WaitMillis, TimeUnit.MILLISECONDS));
-        waitForPendingTimer();
         client.reconnectNow();
-        assertTrue(second.connectSeen.await(ImmediateMillis, TimeUnit.MILLISECONDS));
+        assertTrue(connectArrives(second, ImmediateMillis));
         Thread.sleep(300L);
         setField("lastFrameAt", 0L);
         client.reconnectNow();
-        assertTrue(third.connectSeen.await(ImmediateMillis, TimeUnit.MILLISECONDS));
+        assertTrue(connectArrives(third, ImmediateMillis));
 
         assertEquals(java.util.Arrays.<Object>asList("backoff_skipped", "silent_socket"), causes);
     }
@@ -305,12 +222,12 @@ public class CentrifugoClientResumeTest {
     public void reconnectNowReplacesASilentOpenSocket() throws Exception {
         client.connect();
         assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
-        // Pretend the process was frozen: no frame has arrived for far longer than the watchdog window.
+        // Pretend the process was frozen: no sign of life for far longer than the ping window.
         setField("lastFrameAt", 0L);
         client.reconnectNow();
-        // The watchdog window is 25 s plus grace, so only reconnectNow can replace the socket this fast; a plain
-        // reconnect would wait for the backoff.
-        assertTrue("socket not replaced at once", second.connectSeen.await(ImmediateMillis, TimeUnit.MILLISECONDS));
+        // The ping window is 25 s plus the SDK's 10 s maxServerPingDelay, so only reconnectNow can replace the
+        // socket this fast; a plain reconnect would wait for the backoff.
+        assertTrue("socket not replaced at once", connectArrives(second, ImmediateMillis));
         assertEquals(2, tokenCounter.get());
     }
 
