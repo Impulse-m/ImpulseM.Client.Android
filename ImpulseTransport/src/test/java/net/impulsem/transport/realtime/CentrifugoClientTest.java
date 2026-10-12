@@ -25,7 +25,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.SocketFactory;
 import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.logging.LogRecord;
+import net.impulsem.transport.errors.RpcError;
 import net.impulsem.transport.logging.TraceSink;
+import net.impulsem.transport.rpc.SessionLostException;
 import net.impulsem.transport.realtime.ProtoCentrifugoServer.CommandKind;
 import net.impulsem.transport.realtime.ProtoCentrifugoServer.Session;
 import okhttp3.OkHttpClient;
@@ -155,6 +157,7 @@ public class CentrifugoClientTest {
     private final List<Session> sessions = new ArrayList<Session>();
     private final List<Socket> rawSockets = new CopyOnWriteArrayList<Socket>();
     private final AtomicInteger tokenCounter = new AtomicInteger();
+    private volatile boolean sessionRevoked;
     private Recorder recorder;
     private CentrifugoClient client;
 
@@ -175,8 +178,12 @@ public class CentrifugoClientTest {
             server.url("/connection/websocket?cf_ws_frame_ping_pong=true").toString(),
             new CentrifugoClient.TokenProvider() {
                 @Override
-                public String fetchToken() {
-                    return "tok-" + tokenCounter.incrementAndGet();
+                public String fetchToken() throws IOException {
+                    int number = tokenCounter.incrementAndGet();
+                    if (sessionRevoked) {
+                        throw new SessionLostException("session revoked", new RpcError(401, "SESSION_EXPIRED"));
+                    }
+                    return "tok-" + number;
                 }
             },
             recorder,
@@ -382,6 +389,8 @@ public class CentrifugoClientTest {
     @Test
     public void subscribeSendsTagFilterOnChannelLaneOnly() throws Exception {
         client.connect();
+        // Subscribe once connected: the SDK sends the subscribes of a connecting client in map order, not call order.
+        recorder.expect("connected");
         client.subscribe("channel:5", "tagA");
         client.subscribe("user:1", null);
         Session session = sessions.get(0);
@@ -603,6 +612,32 @@ public class CentrifugoClientTest {
         }
         assertTrue(recorder.willReconnect.isEmpty());
         assertEquals(1, server.getRequestCount());
+    }
+
+
+    @Test
+    public void sessionLostReportsOnceAndStaysDisconnectedUntilConnectAgain() throws Exception {
+        client.connect();
+        recorder.expect("connected");
+        sessionRevoked = true;
+
+        abort(0);
+
+        recorder.expect("disconnected:1006:true");
+        Thread.sleep(3000L);
+        List<String> seen = new ArrayList<String>();
+        recorder.events.drainTo(seen);
+        assertEquals(1, java.util.Collections.frequency(seen, "disconnected:0:false"));
+        assertFalse(seen.contains("connected"));
+        // The socket opens before the SDK asks for a token, so the revoked attempt is one upgrade that sends no connect.
+        assertEquals(2, server.getRequestCount());
+        assertTrue(sessions.get(1).commands.isEmpty());
+
+        sessionRevoked = false;
+        client.connect();
+        Protocol.ConnectRequest connect = sessions.get(2).nextCommand().getConnect();
+        assertEquals("tok-3", connect.getToken());
+        recorder.expect("connected");
     }
 
 

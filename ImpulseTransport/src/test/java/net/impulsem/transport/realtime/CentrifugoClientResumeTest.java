@@ -244,6 +244,22 @@ public class CentrifugoClientResumeTest {
 
 
     @Test
+    public void aPublicationRefreshesTheSignOfLifeSoReconnectNowKeepsTheSocket() throws Exception {
+        client.connect();
+        assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
+        client.subscribe("user:1", null);
+        Thread.sleep(300L);
+        setField("lastFrameAt", 0L);
+        first.pushPublication("user:1", 5L, ProtoCentrifugoServer.EnvelopeData);
+        Thread.sleep(300L);
+        client.reconnectNow();
+        Thread.sleep(500L);
+        assertEquals(1, server.getRequestCount());
+        assertEquals(1, tokenCounter.get());
+    }
+
+
+    @Test
     public void reconnectNowAfterDisconnectDoesNothing() throws Exception {
         client.connect();
         assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
