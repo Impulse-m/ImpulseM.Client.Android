@@ -178,19 +178,21 @@ public class RequestPolicyTest {
     }
 
 
-    // ConnectionsManager.cpp 1368-1373: -504 waits two seconds unless IgnoreFloodWait.
+    // ConnectionsManager.cpp 1352-1367: -504 is caught by the code < 0 test like any other negative code, so it backs
+    // off by the failure count and IgnoreFloodWait does not change that; the -504 branch at 1368 never runs.
     @Test
-    public void error504WaitsTwoSecondsUnlessIgnored() {
-        RequestPolicy.Decision decision = RequestPolicy.onError(0, Generic, new RpcError(-504, "TIMEOUT"), 0);
+    public void error504BacksOffLikeOtherNegativeCodes() {
+        RequestPolicy.Decision decision = RequestPolicy.onError(0, Generic, new RpcError(-504, "TIMEOUT"), 3);
         assertEquals(RequestPolicy.Action.RETRY_AFTER, decision.action);
-        assertEquals(2000L, decision.delayMillis);
+        assertEquals(3000L, decision.delayMillis);
         RequestPolicy.Decision ignored = RequestPolicy.onError(
             RequestPolicy.FLAG_DO_NOT_WAIT_FLOOD_WAIT,
             Generic,
             new RpcError(-504, "TIMEOUT"),
-            0
+            3
         );
-        assertEquals(RequestPolicy.Action.DELIVER, ignored.action);
+        assertEquals(RequestPolicy.Action.RETRY_AFTER, ignored.action);
+        assertEquals(3000L, ignored.delayMillis);
     }
 
 
