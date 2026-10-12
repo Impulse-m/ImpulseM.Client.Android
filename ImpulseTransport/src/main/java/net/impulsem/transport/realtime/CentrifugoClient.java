@@ -324,13 +324,21 @@ public final class CentrifugoClient {
 
 
     private void answerToken(TokenCallback callback) {
-        int attempt;
+        boolean refresh;
+        int attempt = 0;
         synchronized (lock) {
-            attempts++;
-            attempt = attempts;
-            reconnectWaiting = false;
+            refresh = connectedUp;
+            if (!refresh) {
+                attempts++;
+                attempt = attempts;
+                reconnectWaiting = false;
+            }
         }
-        trace(LogLevel.INFO, "REALTIME_CONNECTING", "attempt", attempt);
+        if (refresh) {
+            trace(LogLevel.INFO, "REALTIME_TOKEN_REFRESH");
+        } else {
+            trace(LogLevel.INFO, "REALTIME_CONNECTING", "attempt", attempt);
+        }
         String token;
         try {
             token = tokens.fetchToken();
