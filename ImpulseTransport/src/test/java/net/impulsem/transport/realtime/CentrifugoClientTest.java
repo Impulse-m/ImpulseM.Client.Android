@@ -391,7 +391,7 @@ public class CentrifugoClientTest {
 
 
     @Test
-    public void subscribeSendsTagFilterOnChannelLaneOnly() throws Exception {
+    public void subscribeSendsNoTagsFilter() throws Exception {
         client.subscribe("channel:5", "tagA");
         client.subscribe("user:1", null);
         client.connect();
@@ -405,9 +405,7 @@ public class CentrifugoClientTest {
         Protocol.SubscribeRequest userSub = byChannel.get("user:1");
         assertNotNull(channelSub);
         assertNotNull(userSub);
-        assertEquals("actor", channelSub.getTf().getKey());
-        assertEquals("neq", channelSub.getTf().getCmp());
-        assertEquals("tagA", channelSub.getTf().getVal());
+        assertFalse(channelSub.hasTf());
         assertFalse(channelSub.getRecover());
         assertFalse(userSub.hasTf());
         expectAll("subscribed:channel:5:false:false", "subscribed:user:1:false:false");
