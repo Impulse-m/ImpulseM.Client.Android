@@ -64,6 +64,8 @@ public final class CentrifugoClient {
         final String actorTag;
         /** Null while the subscription waits for the unsubscribe of the one it replaces. */
         volatile Subscription subscription;
+        /** Set on a replacement: its predecessor's unsubscribed callback creates the SDK subscription. */
+        boolean awaitingReplacement;
         boolean positioned;
         boolean positionDropped;
         int lastSubscribeErrorCode = NoError;
@@ -269,6 +271,7 @@ public final class CentrifugoClient {
                 if (previous != null && Objects.equals(previous.actorTag, actorTagOrNull)) {
                     return;
                 }
+                next.awaitingReplacement = previous != null;
                 channels.put(channel, next);
             }
             if (previous == null) {
@@ -600,7 +603,8 @@ public final class CentrifugoClient {
             int failedCode = NoError;
             synchronized (lock) {
                 Wanted current = channels.get(wanted.channel);
-                if (current != null && current.subscription == null) {
+                if (current != null && current.awaitingReplacement && current.subscription == null) {
+                    current.awaitingReplacement = false;
                     current.subscription = newSdkSubscription(current);
                     starting = current;
                 } else if (current == wanted) {
