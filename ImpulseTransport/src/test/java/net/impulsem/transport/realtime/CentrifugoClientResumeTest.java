@@ -250,7 +250,7 @@ public class CentrifugoClientResumeTest {
     public void aPublicationRefreshesTheSignOfLifeSoReconnectNowKeepsTheSocket() throws Exception {
         client.connect();
         assertTrue(recorder.connected.await(WaitMillis, TimeUnit.MILLISECONDS));
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         Thread.sleep(300L);
         setField("lastFrameAt", 0L);
         first.pushPublication("user:1", 5L, ProtoCentrifugoServer.EnvelopeData);

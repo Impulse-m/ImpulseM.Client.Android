@@ -1,15 +1,12 @@
 package net.impulsem.transport.live;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -25,7 +22,6 @@ import net.impulsem.transport.realtime.CentrifugoClient;
 import net.impulsem.transport.realtime.CentrifugoListener;
 import net.impulsem.transport.realtime.Publication;
 import net.impulsem.transport.wire.ProtoReader;
-import net.impulsem.transport.wire.ProtoWriter;
 import org.junit.After;
 import org.junit.Assume;
 import org.junit.Before;
@@ -175,7 +171,7 @@ public class LiveRealtimeTest {
         Collector bEvents = new Collector("B");
         CentrifugoClient bClient = newClient(b, bEvents);
         bClient.connect();
-        bClient.subscribe("user:" + b.userId, null);
+        bClient.subscribe("user:" + b.userId);
 
         // User lane: A writes to B, B receives updateNewMessage with the text within 10 s.
         awaitSubscribed(bEvents, "subscribed user:" + b.userId);
@@ -208,18 +204,12 @@ public class LiveRealtimeTest {
                 .put("users", TlBuilder.list(TlBuilder.object("inputUser").put("user_id", b.userId).put("access_hash", b.accessHash)))
         );
 
-        String bTag = actorTag(b, channelId);
-        String aTag = actorTag(a, channelId);
-        System.out.println("LIVE actor tags: A=" + aTag + " B=" + bTag);
-        assertFalse(bTag.isEmpty());
-        assertFalse(aTag.equals(bTag));
-
         Collector aEvents = new Collector("A");
         CentrifugoClient aClient = newClient(a, aEvents);
         aClient.connect();
-        aClient.subscribe("user:" + a.userId, null);
-        aClient.subscribe("channel:" + channelId, aTag);
-        bClient.subscribe("channel:" + channelId, bTag);
+        aClient.subscribe("user:" + a.userId);
+        aClient.subscribe("channel:" + channelId);
+        bClient.subscribe("channel:" + channelId);
         awaitSubscribed(aEvents, "subscribed channel:" + channelId);
         awaitSubscribed(bEvents, "subscribed channel:" + channelId);
 
@@ -240,11 +230,6 @@ public class LiveRealtimeTest {
         assertNotNull("B got no channel-lane publication carrying the post", post);
         System.out.println("LIVE channel lane OK: type=" + post.envelope.type + " pts=" + post.envelope.pts
             + " body=" + (post.envelope.updatesProto != null));
-
-        // tf: A's own post must not come back on A's channel lane (A gets it through its user lane).
-        Publication echo = aEvents.await("channel:" + channelId, this, null, postText, 5000L);
-        System.out.println("LIVE tf filter: A's own post on its channel lane = " + (echo != null));
-        assertNull("tf actor!=A should have excluded A's own post on the channel lane", echo);
     }
 
 
@@ -261,7 +246,7 @@ public class LiveRealtimeTest {
         Collector bEvents = new Collector("B-hold");
         CentrifugoClient bClient = newClient(b, bEvents);
         bClient.connect();
-        bClient.subscribe("user:" + b.userId, null);
+        bClient.subscribe("user:" + b.userId);
         awaitSubscribed(bEvents, "subscribed user:" + b.userId);
 
         long start = System.currentTimeMillis();
@@ -341,41 +326,6 @@ public class LiveRealtimeTest {
             throw new IOException("GetCentrifugoToken returned no token");
         }
         return token;
-    }
-
-
-    private static String actorTag(
-        LiveAccounts.Account account,
-        long channelId
-    ) throws IOException {
-        ProtoWriter request = new ProtoWriter();
-        request.writePackedVarints(1, new long[] {channelId});
-        byte[] response = account.rpc.callImpulse(ImpulseRpcPaths.GetChannelActorTags, request.toByteArray());
-        ProtoReader reader = new ProtoReader(response, 0, response.length);
-        Map<Long, String> tags = new LinkedHashMap<Long, String>();
-        while (reader.next()) {
-            if (reader.field() != 1) {
-                reader.skip();
-                continue;
-            }
-            int[] bounds = reader.readLengthDelimitedBounds();
-            ProtoReader entry = new ProtoReader(response, bounds[0], bounds[1]);
-            long key = 0L;
-            String value = "";
-            while (entry.next()) {
-                if (entry.field() == 1) {
-                    key = entry.readVarint();
-                } else if (entry.field() == 2) {
-                    value = new String(entry.readBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                } else {
-                    entry.skip();
-                }
-            }
-            tags.put(key, value);
-        }
-        String tag = tags.get(channelId);
-        assertNotNull("no actor tag for channel " + channelId + " in " + tags, tag);
-        return tag;
     }
 
 

@@ -3,9 +3,9 @@ package org.telegram.tgnet.impulse;
 import net.impulsem.transport.auth.ImpulseRpcPaths;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.logging.LogLevel;
-import net.impulsem.transport.realtime.ActorTagsProto;
 import net.impulsem.transport.realtime.CentrifugoClient;
 import net.impulsem.transport.realtime.CentrifugoListener;
+import net.impulsem.transport.realtime.CentrifugoTokenProto;
 import net.impulsem.transport.realtime.GapTracker;
 import net.impulsem.transport.realtime.Publication;
 import net.impulsem.transport.realtime.PublicationRouter;
@@ -124,7 +124,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         this.client = new CentrifugoClient(http, ImpulseEndpoints.realtimeUrl(), this, this, executor);
         this.client.setLogLabel("account=" + account);
         this.client.setTraceSink(this::traceLifecycle);
-        this.lanes = new ChannelLaneManager(account, client, connection);
+        this.lanes = new ChannelLaneManager(account, client);
     }
 
 
@@ -163,7 +163,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
                 client.disconnect();
             }
             if (plan.subscribeUserLane != 0L) {
-                client.subscribe(PublicationRouter.UserPrefix + plan.subscribeUserLane, null);
+                client.subscribe(PublicationRouter.UserPrefix + plan.subscribeUserLane);
                 lanes.start();
             }
             if (plan.connect) {
@@ -219,7 +219,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
     public String fetchToken() throws IOException {
         try {
             byte[] response = connection.rpcClient().callImpulse(ImpulseRpcPaths.GetCentrifugoToken, new byte[0]);
-            String token = ActorTagsProto.decodeToken(response);
+            String token = CentrifugoTokenProto.decodeToken(response);
             if (token == null || token.isEmpty()) {
                 throw new IOException("empty centrifugo token");
             }

@@ -1,72 +1,51 @@
 package org.telegram.tgnet.impulse;
 
-import net.impulsem.transport.auth.ImpulseRpcPaths;
-import net.impulsem.transport.realtime.ActorTagsProto;
 import net.impulsem.transport.realtime.CentrifugoClient;
 import net.impulsem.transport.realtime.Debouncer;
 import net.impulsem.transport.realtime.LaneSelector;
 import net.impulsem.transport.realtime.PublicationRouter;
-import net.impulsem.transport.realtime.TagBackoff;
-import net.impulsem.transport.rpc.SessionLostException;
-
-import android.os.SystemClock;
 
 import org.telegram.messenger.AndroidUtilities;
-import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.tgnet.TLRPC;
 
-import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
 
 
 /**
  * Keeps the channel lanes of one account in line with the chat list: the open chat plus the most recently active
- * channel dialogs, at most {@link LaneSelector#MaxLanes} in total. Each lane is subscribed with the account's
- * actor tag, which the backend uses to keep the account's own actions out of the lane.
+ * channel dialogs, at most {@link LaneSelector#MaxLanes} in total.
  */
 final class ChannelLaneManager implements NotificationCenter.NotificationCenterDelegate {
 
     private static final long DebounceMillis = 500L;
-    private static final long RetryMillis = 10L * 1000L;
 
 
     private final int account;
     private final CentrifugoClient client;
-    private final ImpulseConnection connection;
     private final ScheduledThreadPoolExecutor executor;
     private final Debouncer debouncer;
     private final Object lock = new Object();
-    private final Map<Long, String> actorTags = new HashMap<>();
-    private final TagBackoff tagBackoff = new TagBackoff();
 
     private volatile long openedChannelId;
     private boolean observing;
     private boolean active;
-    private ScheduledFuture<?> retryTask;
-    private long retryAt;
 
 
     ChannelLaneManager(
         int account,
-        CentrifugoClient client,
-        ImpulseConnection connection
+        CentrifugoClient client
     ) {
         this.account = account;
         this.client = client;
-        this.connection = connection;
         this.executor = new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
             @Override
             public Thread newThread(Runnable runnable) {
@@ -109,16 +88,14 @@ final class ChannelLaneManager implements NotificationCenter.NotificationCenterD
     }
 
 
-    /** Drops every channel lane and forgets the cached tags, for logout and account changes. */
+    /** Drops every channel lane, for logout and account changes. */
     void stop() {
         synchronized (lock) {
             if (!active) {
                 return;
             }
             active = false;
-            actorTags.clear();
         }
-        tagBackoff.clear();
         debouncer.cancel();
         AndroidUtilities.runOnUIThread(new Runnable() {
             @Override
@@ -232,8 +209,6 @@ final class ChannelLaneManager implements NotificationCenter.NotificationCenterD
         }
         try {
             Set<Long> desired = LaneSelector.select(candidates, opened, LaneSelector.MaxLanes);
-            // A channel that left the desired set starts from the first backoff step if it comes back.
-            tagBackoff.retainOnly(desired);
             Set<Long> current = new HashSet<>();
             for (String channel : client.subscribedChannels()) {
                 long id = PublicationRouter.channelId(channel);
@@ -246,109 +221,16 @@ final class ChannelLaneManager implements NotificationCenter.NotificationCenterD
                     client.unsubscribe(PublicationRouter.ChannelPrefix + id);
                 }
             }
-            long now = SystemClock.elapsedRealtime();
-            List<Long> toFetch = new ArrayList<>();
-            Set<Long> waiting = new HashSet<>();
             for (Long id : desired) {
-                if (current.contains(id) || hasTag(id)) {
-                    continue;
-                }
-                if (tagBackoff.isDue(id, now)) {
-                    toFetch.add(id);
-                } else {
-                    waiting.add(id);
-                }
-            }
-            if (!toFetch.isEmpty()) {
-                fetchTags(toFetch);
-                for (Long id : toFetch) {
-                    if (hasTag(id)) {
-                        tagBackoff.succeeded(id);
-                    } else {
-                        tagBackoff.failed(id, now);
-                        waiting.add(id);
-                    }
-                }
-            }
-            for (Long id : desired) {
-                if (current.contains(id)) {
-                    continue;
-                }
-                String tag;
                 synchronized (lock) {
                     if (!active) {
                         return;
                     }
-                    tag = actorTags.get(id);
                 }
-                if (tag != null) {
-                    client.subscribe(PublicationRouter.ChannelPrefix + id, tag);
-                }
+                client.subscribe(PublicationRouter.ChannelPrefix + id);
             }
-            long wait = tagBackoff.nextDueInMillis(waiting, SystemClock.elapsedRealtime());
-            if (wait >= 0L) {
-                scheduleRetry(wait);
-            }
-        } catch (SessionLostException e) {
-            connection.onRealtimeSessionLost();
-        } catch (IOException e) {
-            log("actor tags failed: " + e);
-            scheduleRetry(RetryMillis);
         } catch (RuntimeException e) {
             FileLog.e(e);
-        }
-    }
-
-
-    private boolean hasTag(long id) {
-        synchronized (lock) {
-            return actorTags.containsKey(id);
-        }
-    }
-
-
-    private void fetchTags(List<Long> ids) throws IOException {
-        for (List<Long> batch : ActorTagsProto.batches(ids, ActorTagsProto.MaxBatch)) {
-            byte[] response = connection.rpcClient().callImpulse(
-                ImpulseRpcPaths.GetChannelActorTags,
-                ActorTagsProto.encodeRequest(batch)
-            );
-            Map<Long, String> tags = ActorTagsProto.decodeResponse(response);
-            synchronized (lock) {
-                actorTags.putAll(tags);
-            }
-        }
-    }
-
-
-    /** Schedules one recompute; an earlier pending retry stays, a later one is replaced. */
-    private void scheduleRetry(long delayMillis) {
-        long delay = Math.max(delayMillis, 1000L);
-        long at = SystemClock.elapsedRealtime() + delay;
-        synchronized (lock) {
-            if (!active) {
-                return;
-            }
-            if (retryTask != null && !retryTask.isDone() && retryAt <= at) {
-                return;
-            }
-            if (retryTask != null) {
-                retryTask.cancel(false);
-            }
-            retryAt = at;
-            retryTask = executor.schedule(new Runnable() {
-                @Override
-                public void run() {
-                    debouncer.trigger();
-                }
-            }, delay, TimeUnit.MILLISECONDS);
-        }
-    }
-
-
-    private static void log(String message) {
-        if (BuildVars.LOGS_ENABLED) {
-            FileLog.d("impulse lanes: " + message);
         }
     }
 }
