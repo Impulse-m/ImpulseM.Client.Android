@@ -111,12 +111,8 @@ public final class RequestPolicy {
         boolean exceptFloodWait = (flags & FLAG_FAIL_ON_SERVER_ERRORS_EXCEPT_FLOOD_WAIT) != 0;
         boolean ignoreFloodWait = (flags & FLAG_DO_NOT_WAIT_FLOOD_WAIT) != 0;
 
-        // 1368-1374. In the C++ this branch sits behind the code < 0 test and can never run; it is checked first here so -504 behaves as written.
-        if (failServerErrors && code == -504) {
-            return ignoreFloodWait ? DeliverAsIs : retryAfter(2000L);
-        }
-
-        // 1352-1367. 503 is gRPC UNAVAILABLE, a microservice mid-redeploy; it is transient like a 500.
+        // 1352-1367. Like the C++, this catches -504 too, so the -504 branch at 1368-1374 is never reached and is not ported.
+        // 503 is gRPC UNAVAILABLE, a microservice mid-redeploy; it is transient like a 500.
         if (failServerErrors && (code == 500 || code == 503 || code < 0)) {
             if (text.contains("MSG_WAIT_FAILED")) {
                 return retryAfter(0L);
