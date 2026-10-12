@@ -9,7 +9,6 @@ import io.github.centrifugal.centrifuge.DisconnectedEvent;
 import io.github.centrifugal.centrifuge.DuplicateSubscriptionException;
 import io.github.centrifugal.centrifuge.ErrorEvent;
 import io.github.centrifugal.centrifuge.EventListener;
-import io.github.centrifugal.centrifuge.FilterNodeBuilder;
 import io.github.centrifugal.centrifuge.Options;
 import io.github.centrifugal.centrifuge.PublicationEvent;
 import io.github.centrifugal.centrifuge.ReplyError;
@@ -27,7 +26,6 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -61,22 +59,14 @@ public final class CentrifugoClient {
     private static final class Wanted {
 
         final String channel;
-        final String actorTag;
-        /** Null while the subscription waits for the unsubscribe of the one it replaces. */
         volatile Subscription subscription;
-        /** Set on a replacement: its predecessor's unsubscribed callback creates the SDK subscription. */
-        boolean awaitingReplacement;
         boolean positioned;
         boolean positionDropped;
         int lastSubscribeErrorCode = NoError;
 
 
-        Wanted(
-            String channel,
-            String actorTag
-        ) {
+        Wanted(String channel) {
             this.channel = channel;
-            this.actorTag = actorTag;
         }
     }
 
@@ -258,32 +248,20 @@ public final class CentrifugoClient {
 
     /**
      * Declares interest in a channel. The subscription is sent now when connected, and again after every reconnect.
-     * Pass the account's own actor tag for {@code channel:} lanes and null for {@code user:}. The same channel with a
-     * different tag leaves the old subscription and starts a new one without a position.
+     * A channel that is already wanted is left as it is.
      */
-    public void subscribe(
-        String channel,
-        String actorTagOrNull
-    ) {
+    public void subscribe(String channel) {
         synchronized (commandLock) {
-            Wanted previous;
-            Wanted next = new Wanted(channel, actorTagOrNull);
+            Wanted next;
             synchronized (lock) {
-                previous = channels.get(channel);
-                if (previous != null && Objects.equals(previous.actorTag, actorTagOrNull)) {
+                if (channels.containsKey(channel)) {
                     return;
                 }
-                next.awaitingReplacement = previous != null;
+                next = new Wanted(channel);
                 channels.put(channel, next);
             }
-            if (previous == null) {
-                next.subscription = newSdkSubscription(next);
-                next.subscription.subscribe();
-            } else if (previous.subscription != null) {
-                // The replacement starts from the old subscription's unsubscribed callback, so its subscribe goes
-                // out after the unsubscribe; see SubscriptionEvents.onUnsubscribed.
-                sdk.removeSubscription(previous.subscription);
-            }
+            next.subscription = newSdkSubscription(next);
+            next.subscription.subscribe();
         }
     }
 
@@ -389,9 +367,6 @@ public final class CentrifugoClient {
             subscription = sdk.newSubscription(wanted.channel, subscriptionOptions, new SubscriptionEvents(wanted));
         } catch (DuplicateSubscriptionException e) {
             throw new IllegalStateException("the SDK still holds a subscription for a channel that was removed", e);
-        }
-        if (wanted.actorTag != null) {
-            subscription.setTagsFilter(FilterNodeBuilder.neq("actor", wanted.actorTag));
         }
         return subscription;
     }
@@ -599,37 +574,23 @@ public final class CentrifugoClient {
 
 
         /**
-         * The SDK queues the unsubscribe frame of this subscription before it calls back, so a replacement that starts
-         * here sends its subscribe after that unsubscribe. The registry and the wanted map change under the lock, so a
-         * concurrent subscribe() sees either this subscription still wanted or the channel already gone.
+         * Only the wanted subscription of its channel acts here. A subscription that was already unsubscribed, or that
+         * was replaced by a newer one for the same channel, finds the map changed under the lock and does nothing, so it
+         * can never remove the newer subscription.
          */
         @Override
         public void onUnsubscribed(
             Subscription sub,
             UnsubscribedEvent event
         ) {
-            Wanted starting = null;
-            boolean terminal = false;
-            int failedCode = NoError;
+            int failedCode;
             synchronized (lock) {
-                Wanted current = channels.get(wanted.channel);
-                if (current != null && current.awaitingReplacement && current.subscription == null) {
-                    current.awaitingReplacement = false;
-                    current.subscription = newSdkSubscription(current);
-                    starting = current;
-                } else if (current == wanted) {
-                    channels.remove(wanted.channel);
-                    sdk.removeSubscription(sub);
-                    terminal = true;
-                    failedCode = wanted.lastSubscribeErrorCode;
+                if (channels.get(wanted.channel) != wanted) {
+                    return;
                 }
-            }
-            if (starting != null) {
-                starting.subscription.subscribe();
-                return;
-            }
-            if (!terminal) {
-                return;
+                channels.remove(wanted.channel);
+                sdk.removeSubscription(sub);
+                failedCode = wanted.lastSubscribeErrorCode;
             }
             if (failedCode != NoError && failedCode == event.getCode()) {
                 trace(

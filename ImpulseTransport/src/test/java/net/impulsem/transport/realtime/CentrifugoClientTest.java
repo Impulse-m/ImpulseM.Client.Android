@@ -289,7 +289,7 @@ public class CentrifugoClientTest {
         client.setTraceSink(traces);
         client.connect();
         recorder.expect("connected");
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
 
         assertNotNull(traces.await("REALTIME_CONNECTING").get("attempt"));
@@ -367,7 +367,7 @@ public class CentrifugoClientTest {
             Protocol.Error.newBuilder().setCode(103).setMessage("permission denied for alice").build()
         );
 
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
 
         Map<String, Object> failed = traces.await("REALTIME_SUBSCRIBE_FAILED");
         assertEquals(103, ((Number) failed.get("errorCode")).intValue());
@@ -392,8 +392,8 @@ public class CentrifugoClientTest {
 
     @Test
     public void subscribeSendsNoTagsFilter() throws Exception {
-        client.subscribe("channel:5", "tagA");
-        client.subscribe("user:1", null);
+        client.subscribe("channel:5");
+        client.subscribe("user:1");
         client.connect();
         Session session = sessions.get(0);
         Map<String, Protocol.SubscribeRequest> byChannel = new HashMap<String, Protocol.SubscribeRequest>();
@@ -417,7 +417,7 @@ public class CentrifugoClientTest {
     @Test
     public void publicationReachesListenerWithParsedEnvelope() throws Exception {
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         sessions.get(0).pushPublication("user:1", 813L, ProtoCentrifugoServer.EnvelopeData);
         Publication publication = recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS);
@@ -467,7 +467,7 @@ public class CentrifugoClientTest {
     @Test
     public void multipleObjectsInOneFrame() throws Exception {
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         Session session = sessions.get(0);
         session.rawFrames.clear();
@@ -490,7 +490,7 @@ public class CentrifugoClientTest {
     @Test
     public void unsubscribePush2501ResubscribesWithRecover() throws Exception {
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         Session session = sessions.get(0);
         session.pushPublication("user:1", 813L, ProtoCentrifugoServer.EnvelopeData);
@@ -509,7 +509,7 @@ public class CentrifugoClientTest {
     @Test
     public void unsubscribePush2502ResubscribesAndReportsNoRecovery() throws Exception {
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         Session session = sessions.get(0);
         session.pushPublication("user:1", 813L, ProtoCentrifugoServer.EnvelopeData);
@@ -527,7 +527,7 @@ public class CentrifugoClientTest {
     @Test
     public void unsubscribePush2000ForgetsTheChannel() throws Exception {
         client.connect();
-        client.subscribe("channel:9", "t");
+        client.subscribe("channel:9");
         recorder.expect("subscribed:channel:9:false:false");
         Session session = sessions.get(0);
         session.commands.clear();
@@ -542,7 +542,7 @@ public class CentrifugoClientTest {
     @Test
     public void close3005ReconnectsWithFreshToken() throws Exception {
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         sessions.get(0).socket.close(3005, "connection expired");
         Protocol.ConnectRequest connect = sessions.get(1).nextCommand().getConnect();
@@ -568,7 +568,7 @@ public class CentrifugoClientTest {
     @Test
     public void garbagePublicationIsDeliveredUndecodableAndDoesNotKillTheSocket() throws Exception {
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         Session session = sessions.get(0);
         session.pushPublication("user:1", 31L, bytesOf("not an object"));
@@ -663,20 +663,21 @@ public class CentrifugoClientTest {
 
 
     @Test
-    public void changedActorTagLeavesAndResubscribesWithNewFilter() throws Exception {
+    public void subscribeTwiceForTheSameChannelSendsOneSubscribe() throws Exception {
         client.connect();
-        client.subscribe("channel:5", "tagA");
+        recorder.expect("connected");
+        client.subscribe("channel:5");
         recorder.expect("subscribed:channel:5:false:false");
-        Session session = sessions.get(0);
-        session.commands.clear();
-        client.subscribe("channel:5", "tagA");
-        client.subscribe("channel:5", "tagB");
-        Protocol.UnsubscribeRequest leave = session.nextCommandOf(CommandKind.UNSUBSCRIBE).getUnsubscribe();
-        assertEquals("channel:5", leave.getChannel());
-        Protocol.SubscribeRequest again = session.nextCommandOf(CommandKind.SUBSCRIBE).getSubscribe();
-        assertEquals("tagB", again.getTf().getVal());
-        assertFalse(again.getRecover());
-        recorder.expect("subscribed:channel:5:false:false");
+        client.subscribe("channel:5");
+        Thread.sleep(500L);
+        int subscribes = 0;
+        Protocol.Command command;
+        while ((command = sessions.get(0).commands.poll()) != null) {
+            if (command.hasSubscribe() && "channel:5".equals(command.getSubscribe().getChannel())) {
+                subscribes++;
+            }
+        }
+        assertEquals(1, subscribes);
         assertTrue(client.subscribedChannels().contains("channel:5"));
     }
 
@@ -710,7 +711,7 @@ public class CentrifugoClientTest {
     @Test
     public void abnormalCloseReconnectsAndResubscribesWithRecover() throws Exception {
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         Session first = sessions.get(0);
         first.pushPublication("user:1", 813L, ProtoCentrifugoServer.EnvelopeData);
@@ -732,7 +733,7 @@ public class CentrifugoClientTest {
         sessions.get(1).subscribeReplyPublications.add(publication(21L, 6L));
         sessions.get(1).subscribeReplyPublications.add(publication(22L, 7L));
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         sessions.get(0).pushPublication("user:1", 20L, ProtoCentrifugoServer.EnvelopeData);
         assertNotNull(recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS));
@@ -752,7 +753,7 @@ public class CentrifugoClientTest {
     public void temporaryErrorIsRetriedWithNewId() throws Exception {
         sessions.get(0).subscribeErrors.add(Protocol.Error.newBuilder().setCode(100).setMessage("internal server error").setTemporary(true).build());
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         Session session = sessions.get(0);
         Protocol.Command first = session.nextCommandOf(CommandKind.SUBSCRIBE);
         Protocol.Command second = session.nextCommandOf(CommandKind.SUBSCRIBE);
@@ -765,7 +766,7 @@ public class CentrifugoClientTest {
     public void fatalSubscribeErrorReportsUnsubscribe() throws Exception {
         sessions.get(0).subscribeErrors.add(Protocol.Error.newBuilder().setCode(103).setMessage("permission denied").build());
         client.connect();
-        client.subscribe("channel:77", "t");
+        client.subscribe("channel:77");
         recorder.expect("unsubscribed:channel:77:103");
         assertFalse(client.subscribedChannels().contains("channel:77"));
     }
@@ -774,7 +775,7 @@ public class CentrifugoClientTest {
     @Test
     public void explicitUnsubscribeSendsCommandAndForgets() throws Exception {
         client.connect();
-        client.subscribe("user:1", null);
+        client.subscribe("user:1");
         recorder.expect("subscribed:user:1:false:false");
         client.unsubscribe("user:1");
         Protocol.UnsubscribeRequest command = sessions.get(0).nextCommandOf(CommandKind.UNSUBSCRIBE).getUnsubscribe();
@@ -787,11 +788,11 @@ public class CentrifugoClientTest {
     public void unsubscribeThenSubscribeLeavesExactlyOneSubscription() throws Exception {
         client.connect();
         recorder.expect("connected");
-        client.subscribe("channel:5", "t0");
+        client.subscribe("channel:5");
         recorder.expect("subscribed:channel:5:false:false");
         for (int i = 1; i <= 4; i++) {
             client.unsubscribe("channel:5");
-            client.subscribe("channel:5", "t" + i);
+            client.subscribe("channel:5");
         }
         Thread.sleep(1000L);
         assertTrue(client.subscribedChannels().contains("channel:5"));
