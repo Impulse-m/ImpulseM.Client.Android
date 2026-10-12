@@ -8,6 +8,7 @@ import static org.junit.Assert.assertTrue;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
+import java.nio.charset.StandardCharsets;
 import org.junit.Test;
 
 
@@ -67,5 +68,31 @@ public class EnvelopeTest {
         assertTrue(Envelope.parse(null).undecodable());
         assertTrue(Envelope.parse(json("{\"type\":1,\"pts\":\"zzz\"}")).undecodable());
         assertFalse(Envelope.parse(json("{\"type\":1,\"pts\":1}")).undecodable());
+    }
+
+
+    @Test
+    public void bytesEntryPointDecodesTheJsonBody() {
+        byte[] data = "{\"type\":1,\"pts\":42,\"ptsCount\":2,\"date\":1700000000,\"data\":\"aGVsbG8=\"}".getBytes(StandardCharsets.UTF_8);
+        Envelope envelope = Envelope.parseBytes(data);
+        assertFalse(envelope.undecodable());
+        assertEquals(42L, envelope.pts);
+        assertArrayEquals("hello".getBytes(), envelope.updatesProto);
+    }
+
+
+    @Test
+    public void bytesThatAreNotAJsonObjectAreUndecodableAndNeverThrow() {
+        byte[][] garbage = new byte[][] {
+            "not json".getBytes(StandardCharsets.UTF_8),
+            "[1,2]".getBytes(StandardCharsets.UTF_8),
+            "{\"pts\":".getBytes(StandardCharsets.UTF_8),
+            new byte[0],
+            new byte[] {(byte) 0xff, (byte) 0xfe, 0},
+            null
+        };
+        for (byte[] bytes : garbage) {
+            assertTrue(Envelope.parseBytes(bytes).undecodable());
+        }
     }
 }

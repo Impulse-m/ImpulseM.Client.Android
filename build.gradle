@@ -82,6 +82,12 @@ subprojects {
             }
         }
         maven {
+            url 'https://impulse-m.github.io/ImpulseM.Centrifugo.Client.Java/'
+            content {
+                includeGroup 'com.github.Impulse-m'
+            }
+        }
+        maven {
             url libXrayRepo.toURI()
             content {
                 includeGroup 'com.github.xtls'

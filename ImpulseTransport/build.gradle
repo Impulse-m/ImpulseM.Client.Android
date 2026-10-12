@@ -10,8 +10,10 @@ repositories {
 dependencies {
     api 'com.squareup.okhttp3:okhttp:4.12.0'
     api 'com.google.code.gson:gson:2.11.0'
+    api 'com.github.Impulse-m:ImpulseM.Centrifugo.Client.Java:1.0.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    testImplementation 'com.google.protobuf:protobuf-javalite:3.25.5'
 }
 
 test {

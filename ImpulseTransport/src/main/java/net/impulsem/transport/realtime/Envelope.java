@@ -2,6 +2,8 @@ package net.impulsem.transport.realtime;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import java.nio.charset.StandardCharsets;
 import okio.ByteString;
 
 
@@ -48,6 +50,24 @@ public final class Envelope {
             return parseStrict(data);
         } catch (RuntimeException e) {
             return new Envelope(0, 0L, 0, 0, null, false, true);
+        }
+    }
+
+
+    /**
+     * Reads the raw publication data, as the Protobuf SDK delivers it: UTF-8 JSON, then {@link #parse(JsonElement)}.
+     * Never throws. Bytes that are not JSON, or not a JSON object, yield an envelope with {@link #undecodable()} set.
+     *
+     * @param data the {@code data} bytes of a publication; null is treated as undecodable.
+     */
+    public static Envelope parseBytes(byte[] data) {
+        if (data == null) {
+            return parse(null);
+        }
+        try {
+            return parse(JsonParser.parseString(new String(data, StandardCharsets.UTF_8)));
+        } catch (RuntimeException e) {
+            return parse(null);
         }
     }
 
