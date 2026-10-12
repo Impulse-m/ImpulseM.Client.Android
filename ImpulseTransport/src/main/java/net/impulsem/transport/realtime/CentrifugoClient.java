@@ -83,6 +83,7 @@ public final class CentrifugoClient {
 
     private static final String ClientName = "impulsem-android";
     private static final String DefaultAppVersion = "1.0";
+    private static final int ReplyTimeoutMillis = 30000;
     private static final int MinReconnectMillis = 1000;
     private static final int MaxReconnectMillis = 30000;
     /** The SDK keeps the server's ping interval private, so the liveness rule assumes the Centrifugo default. */
@@ -132,6 +133,7 @@ public final class CentrifugoClient {
         this.options.setName(ClientName);
         this.options.setVersion(DefaultAppVersion);
         this.options.setOkHttpClient(http);
+        this.options.setTimeout(ReplyTimeoutMillis);
         this.options.setMinReconnectDelay(MinReconnectMillis);
         this.options.setMaxReconnectDelay(MaxReconnectMillis);
         this.options.setTokenGetter(new ConnectionTokenGetter() {
@@ -161,6 +163,22 @@ public final class CentrifugoClient {
     /** Where the structured connection-lifecycle traces go; none by default. */
     public void setTraceSink(TraceSink traceSink) {
         this.traceSink = traceSink == null ? TraceSink.None : traceSink;
+    }
+
+
+    /** Test hook: the SDK's maxServerPingDelay, which bounds the silence tolerated past the server ping interval. */
+    void setMaxServerPingDelayMillis(int millis) {
+        this.options.setMaxServerPingDelay(millis);
+    }
+
+
+    /** Test hook: the SDK's reconnect delay bounds. */
+    void setReconnectDelaysMillis(
+        int minMillis,
+        int maxMillis
+    ) {
+        this.options.setMinReconnectDelay(minMillis);
+        this.options.setMaxReconnectDelay(maxMillis);
     }
 
 
