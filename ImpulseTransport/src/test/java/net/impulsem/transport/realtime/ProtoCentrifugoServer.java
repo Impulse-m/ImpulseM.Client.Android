@@ -70,6 +70,17 @@ final class ProtoCentrifugoServer {
         }
 
 
+        /** Answers the client's close, as Centrifugo does; without it the SDK never sees the close complete. */
+        @Override
+        public void onClosing(
+            WebSocket webSocket,
+            int code,
+            String reason
+        ) {
+            webSocket.close(1000, null);
+        }
+
+
         @Override
         public void onMessage(
             WebSocket webSocket,
