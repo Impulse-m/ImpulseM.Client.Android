@@ -93,6 +93,8 @@ public final class CentrifugoClient {
     private static final int AbnormalCloseCode = 1006;
     /** The SDK reports a dropped transport with this code and the reason "transport closed". */
     private static final int TransportClosedCode = 1;
+    /** The SDK reports a missed server ping with this code; the old client reported that as 1006 too. */
+    private static final int NoPingCode = 2;
     /** The SDK reports its own disconnect() with this code. */
     private static final int DisconnectCalledCode = 0;
     private static final String UnauthorizedReason = "unauthorized";
@@ -427,7 +429,7 @@ public final class CentrifugoClient {
             }
             // The SDK keeps its last token for the next attempt; a reconnect needs a fresh one from the provider.
             sdk.setToken("");
-            int closeCode = mapCloseCode(event.getCode());
+            int closeCode = event.getCode() == NoPingCode ? AbnormalCloseCode : mapCloseCode(event.getCode());
             trace(
                 LogLevel.INFO,
                 "REALTIME_RECONNECT_SCHEDULED",
