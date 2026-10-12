@@ -369,7 +369,7 @@ public class QrActivity extends BaseFragment {
 
         logoImageView = new ImageView(context);
         logoImageView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        logoImageView.setImageResource(R.drawable.ic_impulsem_logo);
+        logoImageView.setImageResource(R.drawable.ic_impulsem_logo_plain);
         rootLayout.addView(logoImageView);
 
         avatarImageView = new BackupImageView(context);
