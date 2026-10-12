@@ -10,7 +10,6 @@ public final class ImpulseRpcPaths {
 
     public static final String RefreshSession = "/impulse.auth.AuthService/RefreshSession";
     public static final String GetCentrifugoToken = "/impulse.sync.SyncService/GetCentrifugoToken";
-    public static final String GetChannelActorTags = "/impulse.sync.SyncService/GetChannelActorTags";
     public static final String InitConnection = "/impulse.auth.AuthService/InitConnection";
 
 
