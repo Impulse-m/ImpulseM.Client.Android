@@ -11,6 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import okhttp3.Response;
@@ -34,6 +37,11 @@ final class ProtoCentrifugoServer {
         .getBytes(StandardCharsets.UTF_8);
 
     private static final long PollMillis = 100L;
+    private static final ScheduledExecutorService Expiry = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "fake-centrifugo-expiry");
+        thread.setDaemon(true);
+        return thread;
+    });
 
 
     /** One server-side connection: records commands and answers them like Centrifugo would. */
@@ -48,6 +56,9 @@ final class ProtoCentrifugoServer {
         volatile long subscribeOffset = 10L;
         volatile boolean replyToConnect = true;
         volatile int pingSeconds = 0;
+        /** When positive, the server closes with 3005 this long after ttl unless a refresh arrived. */
+        volatile int expiredCloseGraceMillis = 0;
+        private volatile ScheduledFuture<?> expiry;
 
 
         @Override
@@ -100,6 +111,7 @@ final class ProtoCentrifugoServer {
                         result.setPing(pingSeconds);
                     }
                     send(webSocket, Protocol.Reply.newBuilder().setId(id).setConnect(result).build());
+                    armExpiry(webSocket);
                 }
             } else if (command.hasSubscribe()) {
                 Protocol.Error error = subscribeErrors.poll();
@@ -113,7 +125,7 @@ final class ProtoCentrifugoServer {
                     .setPositioned(true)
                     .setEpoch("ep1")
                     .setOffset(subscribeOffset)
-                    .setRecovered(recover)
+                    .setRecovered(recover && "ep1".equals(command.getSubscribe().getEpoch()))
                     .setWasRecovering(recover)
                     .addAllPublications(subscribeReplyPublications);
                 send(webSocket, Protocol.Reply.newBuilder().setId(id).setSubscribe(result).build());
@@ -124,12 +136,30 @@ final class ProtoCentrifugoServer {
                     .setTtl(ttl)
                     .build();
                 send(webSocket, Protocol.Reply.newBuilder().setId(id).setRefresh(result).build());
+                armExpiry(webSocket);
             } else if (command.hasUnsubscribe()) {
                 send(webSocket, Protocol.Reply.newBuilder()
                     .setId(id)
                     .setUnsubscribe(Protocol.UnsubscribeResult.getDefaultInstance())
                     .build());
             }
+        }
+
+
+        private synchronized void armExpiry(final WebSocket webSocket) {
+            if (expiredCloseGraceMillis <= 0) {
+                return;
+            }
+            ScheduledFuture<?> previous = expiry;
+            if (previous != null) {
+                previous.cancel(false);
+            }
+            expiry = Expiry.schedule(new Runnable() {
+                @Override
+                public void run() {
+                    webSocket.close(3005, "connection expired");
+                }
+            }, ttl * 1000L + expiredCloseGraceMillis, TimeUnit.MILLISECONDS);
         }
 
 

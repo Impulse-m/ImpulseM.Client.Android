@@ -29,6 +29,7 @@ public class CentrifugoClientResumeTest {
 
     private static final long WaitMillis = ProtoCentrifugoServer.WaitMillis;
     private static final long ImmediateMillis = 1500L;
+    private static final long BackoffMillis = 4000L;
 
 
     private static final class Recorder implements CentrifugoListener {
@@ -115,6 +116,8 @@ public class CentrifugoClientResumeTest {
             recorder,
             executor
         );
+        // A fixed backoff, so that skipping it is measurable.
+        client.setReconnectDelaysMillis((int) BackoffMillis, (int) BackoffMillis);
     }
 
 
@@ -175,11 +178,11 @@ public class CentrifugoClientResumeTest {
         rawSockets.get(0).close();
         assertTrue(recorder.reconnecting.await(WaitMillis, TimeUnit.MILLISECONDS));
         client.reconnectNow();
-        // The SDK's own reconnect timer fires within two seconds, so the bound only holds when reconnectNow connects.
+        // The SDK's own reconnect timer fires after BackoffMillis, so the bound holds only when reconnectNow connects.
         assertTrue("not connected at once", connectArrives(second, ImmediateMillis));
         assertEquals(2, tokenCounter.get());
         // The cancelled timer must not drive a further attempt once its delay has passed.
-        Thread.sleep(4700L);
+        Thread.sleep(BackoffMillis + 700L);
         assertEquals(2, server.getRequestCount());
         assertEquals(2, tokenCounter.get());
     }

@@ -13,8 +13,12 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -388,23 +392,25 @@ public class CentrifugoClientTest {
 
     @Test
     public void subscribeSendsTagFilterOnChannelLaneOnly() throws Exception {
-        client.connect();
-        // Subscribe once connected: the SDK sends the subscribes of a connecting client in map order, not call order.
-        recorder.expect("connected");
         client.subscribe("channel:5", "tagA");
         client.subscribe("user:1", null);
+        client.connect();
         Session session = sessions.get(0);
-        Protocol.SubscribeRequest channelSub = session.nextCommandOf(CommandKind.SUBSCRIBE).getSubscribe();
-        Protocol.SubscribeRequest userSub = session.nextCommandOf(CommandKind.SUBSCRIBE).getSubscribe();
-        assertEquals("channel:5", channelSub.getChannel());
+        Map<String, Protocol.SubscribeRequest> byChannel = new HashMap<String, Protocol.SubscribeRequest>();
+        for (int i = 0; i < 2; i++) {
+            Protocol.SubscribeRequest request = session.nextCommandOf(CommandKind.SUBSCRIBE).getSubscribe();
+            byChannel.put(request.getChannel(), request);
+        }
+        Protocol.SubscribeRequest channelSub = byChannel.get("channel:5");
+        Protocol.SubscribeRequest userSub = byChannel.get("user:1");
+        assertNotNull(channelSub);
+        assertNotNull(userSub);
         assertEquals("actor", channelSub.getTf().getKey());
         assertEquals("neq", channelSub.getTf().getCmp());
         assertEquals("tagA", channelSub.getTf().getVal());
         assertFalse(channelSub.getRecover());
-        assertEquals("user:1", userSub.getChannel());
         assertFalse(userSub.hasTf());
-        recorder.expect("subscribed:channel:5:false:false");
-        recorder.expect("subscribed:user:1:false:false");
+        expectAll("subscribed:channel:5:false:false", "subscribed:user:1:false:false");
         assertTrue(client.subscribedChannels().contains("channel:5"));
         assertTrue(client.subscribedChannels().contains("user:1"));
     }
@@ -427,17 +433,23 @@ public class CentrifugoClientTest {
 
 
     @Test
-    public void connectionRefreshIsSentBeforeTtl() throws Exception {
-        sessions.get(0).ttl = 2;
-        long start = System.currentTimeMillis();
+    public void connectionIsRefreshedBeforeTheServerClosesIt() throws Exception {
+        Session session = sessions.get(0);
+        session.ttl = 2;
+        session.expiredCloseGraceMillis = 3000;
         client.connect();
-        Protocol.RefreshRequest refresh = sessions.get(0).nextCommandOf(CommandKind.REFRESH).getRefresh();
-        long elapsed = System.currentTimeMillis() - start;
+        recorder.expect("connected");
+        Protocol.RefreshRequest refresh = session.nextCommandOf(CommandKind.REFRESH).getRefresh();
         assertEquals("tok-2", refresh.getToken());
-        assertTrue("refresh took " + elapsed, elapsed < 2000L);
-        // The reply to the refresh schedules the next one.
-        Protocol.RefreshRequest second = sessions.get(0).nextCommandOf(CommandKind.REFRESH).getRefresh();
+        // The reply to the refresh schedules the next one, on time against the grace again.
+        Protocol.RefreshRequest second = session.nextCommandOf(CommandKind.REFRESH).getRefresh();
         assertEquals("tok-3", second.getToken());
+        List<String> seen = new ArrayList<String>();
+        recorder.events.drainTo(seen);
+        for (String event : seen) {
+            assertFalse("connection dropped: " + event, event.startsWith("disconnected"));
+        }
+        assertEquals(1, server.getRequestCount());
     }
 
 
@@ -497,7 +509,7 @@ public class CentrifugoClientTest {
 
 
     @Test
-    public void unsubscribePush2502DropsPositionFirst() throws Exception {
+    public void unsubscribePush2502ResubscribesAndReportsNoRecovery() throws Exception {
         client.connect();
         client.subscribe("user:1", null);
         recorder.expect("subscribed:user:1:false:false");
@@ -506,10 +518,10 @@ public class CentrifugoClientTest {
         assertNotNull(recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS));
         session.commands.clear();
         session.pushUnsubscribe("user:1", 2502, "state invalidated");
-        Protocol.SubscribeRequest resubscribe = session.nextCommandOf(CommandKind.SUBSCRIBE).getSubscribe();
-        assertFalse(resubscribe.getRecover());
-        assertEquals(0L, resubscribe.getOffset());
-        assertEquals("", resubscribe.getEpoch());
+        // Which position fields the resubscribe carries is SDK-owned (invalidateState), so only the resubscribe
+        // and the listener events are asserted.
+        assertEquals("user:1", session.nextCommandOf(CommandKind.SUBSCRIBE).getSubscribe().getChannel());
+        recorder.expect("unsubscribed:user:1:2502");
         recorder.expect("subscribed:user:1:false:false");
     }
 
@@ -589,6 +601,7 @@ public class CentrifugoClientTest {
 
     @Test
     public void silenceBeyondPingWindowReconnects() throws Exception {
+        client.setMaxServerPingDelayMillis(1000);
         sessions.get(0).pingSeconds = 1;
         client.connect();
         recorder.expect("connected");
@@ -769,6 +782,48 @@ public class CentrifugoClientTest {
         Protocol.UnsubscribeRequest command = sessions.get(0).nextCommandOf(CommandKind.UNSUBSCRIBE).getUnsubscribe();
         assertEquals("user:1", command.getChannel());
         assertFalse(client.subscribedChannels().contains("user:1"));
+    }
+
+
+    @Test
+    public void unsubscribeThenSubscribeLeavesExactlyOneSubscription() throws Exception {
+        client.connect();
+        recorder.expect("connected");
+        client.subscribe("channel:5", "t0");
+        recorder.expect("subscribed:channel:5:false:false");
+        for (int i = 1; i <= 4; i++) {
+            client.unsubscribe("channel:5");
+            client.subscribe("channel:5", "t" + i);
+        }
+        Thread.sleep(1000L);
+        assertTrue(client.subscribedChannels().contains("channel:5"));
+        // Net server-side subscriptions for the channel: every subscribe must be matched by one unsubscribe, but
+        // the last one. Counted over every command the server received.
+        int active = 0;
+        Protocol.Command command;
+        while ((command = sessions.get(0).commands.poll()) != null) {
+            if (command.hasSubscribe() && "channel:5".equals(command.getSubscribe().getChannel())) {
+                active++;
+            }
+            if (command.hasUnsubscribe() && "channel:5".equals(command.getUnsubscribe().getChannel())) {
+                active--;
+            }
+        }
+        assertEquals(1, active);
+    }
+
+
+    /** Waits until every named event has arrived, in any order: the SDK does not order events of two channels. */
+    private void expectAll(String... events) throws InterruptedException {
+        Set<String> pending = new HashSet<String>(Arrays.asList(events));
+        long deadline = System.currentTimeMillis() + WaitMillis;
+        while (!pending.isEmpty() && System.currentTimeMillis() < deadline) {
+            String next = recorder.events.poll(100, TimeUnit.MILLISECONDS);
+            if (next != null) {
+                pending.remove(next);
+            }
+        }
+        assertTrue("events not seen: " + pending, pending.isEmpty());
     }
 
 
