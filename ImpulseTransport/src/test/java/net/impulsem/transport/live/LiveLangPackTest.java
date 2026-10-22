@@ -31,7 +31,7 @@ public class LiveLangPackTest {
     public void androidCanListDownloadAndUpdateRussianTranslations() throws IOException {
         Assume.assumeTrue(Boolean.getBoolean("impulse.live"));
         OkHttpClient http = new OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build();
-        GrpcWebClient client = new GrpcWebClient(http, HttpUrl.get("https://rpc.impulsem.net"));
+        GrpcWebClient client = new GrpcWebClient(http, HttpUrl.get("https://rpc.impulsem.io"));
         try {
             List<?> languages = (List<?>) call(
                 client, "langpack.getLanguages", TlBuilder.legacyMethod(0x800fd57d)
