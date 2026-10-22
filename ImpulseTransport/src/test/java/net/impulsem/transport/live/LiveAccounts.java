@@ -26,8 +26,8 @@ import okhttp3.OkHttpClient;
 /** Login and call helpers for live tests; the same flow as {@link LiveRpcTest}. */
 final class LiveAccounts {
 
-    static final String Endpoint = "https://rpc.impulsem.net";
-    static final String WsUrl = "wss://rpc.impulsem.net/connection/websocket?cf_ws_frame_ping_pong=true";
+    static final String Endpoint = "https://rpc.impulsem.io";
+    static final String WsUrl = "wss://rpc.impulsem.io/connection/websocket?cf_ws_frame_ping_pong=true";
     private static final int ApiId = 3;
     private static final String ApiHash = "85e6b3be52309e397e6b4b2d688c7ca4";
     private static final long PauseMillis = 300L;

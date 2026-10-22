@@ -39,7 +39,7 @@ import org.junit.Test;
 /** Opt-in live contract test: {@code -Dimpulse.live=true}. Talks to the public ImpulseM stand. */
 public class LiveRpcTest {
 
-    private static final String Endpoint = "https://rpc.impulsem.net";
+    private static final String Endpoint = "https://rpc.impulsem.io";
     private static final int ApiId = 3;
     private static final String ApiHash = "85e6b3be52309e397e6b4b2d688c7ca4";
     private static final long PreAuthPauseMillis = 300L;
