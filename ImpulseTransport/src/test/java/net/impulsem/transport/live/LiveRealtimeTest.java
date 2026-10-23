@@ -87,8 +87,7 @@ public class LiveRealtimeTest {
         @Override
         public void onPublication(Publication publication) {
             note("publication " + publication.channel + " offset=" + publication.offset + " type=" + publication.envelope.type
-                + " pts=" + publication.envelope.pts + " body=" + (publication.envelope.updatesProto != null)
-                + " oversize=" + publication.envelope.oversize);
+                + " pts=" + publication.envelope.pts + " undecodable=" + publication.envelope.undecodable());
             publications.add(publication);
         }
 
