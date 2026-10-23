@@ -284,17 +284,25 @@ public final class RpcClient {
         } catch (TranscodeException e) {
             // The server already executed the call, so a retry would repeat it; deliver once.
             Log.log(Level.WARNING, "cannot decode response of " + encoded.path + ": " + e.getMessage(), e);
-            return new RpcOutcome(null, new RpcError(400, "TRANSCODE_FAILED"), false);
+            return transcodeFailed(encoded, e.getMessage());
         }
         if (captured[0] != null && captured[1] != null) {
             long userId = extractUserId(encoded.methodId, response.body);
             if (userId == 0) {
                 Log.log(Level.WARNING, "authorization from " + encoded.path + " carries no user id");
-                return new RpcOutcome(null, new RpcError(400, "TRANSCODE_FAILED"), false);
+                return transcodeFailed(encoded, "authorization carries no user id");
             }
             tokens.onLoginTokens(captured[0], captured[1], userId);
         }
         return new RpcOutcome(tl, null, false);
+    }
+
+
+    private static RpcOutcome transcodeFailed(
+        EncodedRequest encoded,
+        String reason
+    ) {
+        return new RpcOutcome(null, new RpcError(400, "TRANSCODE_FAILED"), false, encoded.path + ": " + reason);
     }
 
 

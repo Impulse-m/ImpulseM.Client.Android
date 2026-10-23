@@ -885,6 +885,17 @@ public final class ImpulseConnection {
     ) {
         RpcError error = outcome.error;
         RequestEntry entry = pending.entry;
+        if (outcome.transcodeDetail != null) {
+            // A response that breaks the wire contract is a server defect: trace it so it can be reported.
+            RemoteLog.trace(
+                LogLevel.WARN,
+                RemoteLog.ComponentTransport,
+                "RESPONSE_UNDECODABLE",
+                "account", account,
+                "method", pending.method,
+                "detail", outcome.transcodeDetail
+            );
+        }
         RequestPolicy.Decision decision = RequestPolicy.onError(entry.flags, entry.connectionType, error, pending.serverFailures);
         log("token " + entry.token + " " + pending.method + " error " + error.code + " " + error.text + " -> " + decision.action);
         if (outcome.forceLogout || decision.action == RequestPolicy.Action.LOGOUT_AND_DELIVER) {

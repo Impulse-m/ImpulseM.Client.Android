@@ -263,6 +263,7 @@ public class RpcClientTest {
         assertFalse(outcome.forceLogout);
         assertEquals(400, outcome.error.code);
         assertEquals("TRANSCODE_FAILED", outcome.error.text);
+        assertTrue(outcome.transcodeDetail, outcome.transcodeDetail.startsWith("/v1.contacts.Contacts/"));
         assertEquals(1, server.getRequestCount());
     }
 

@@ -36,10 +36,6 @@ public class TranscoderEdgeCaseTest {
     private static final int PasswordRecoveryId = 326715557;
     private static final int PasskeyRegistrationOptionsId = -513057567;
     private static final int DataJsonId = 2104790276;
-    private static final int InputNotifyPeerId = -1195615476;
-    private static final int InputPeerEmptyId = 2134579434;
-    private static final int ContactStatusId = 383348795;
-    private static final int UserStatusEmptyId = 164646985;
     private static final int BotCallbackAnswerId = 911761060;
     private static final int GetContactIdsMethod = 2061264541;
     private static final int DeletePhotosMethod = -2016444625;
@@ -299,24 +295,31 @@ public class TranscoderEdgeCaseTest {
     // ---------------------------------------------------------------- (e) absent unconditional object
 
 
+    // The server sends every unconditional object, so an absent one fails instead of being synthesised.
+
     @Test
-    public void absentObjectOfFlatTypeDecodesFromEmptyBody() {
-        assertArrayEquals(passkeyOptionsTl(), transcoder.protoToTlObject("account.PasskeyRegistrationOptions", new byte[0], null));
+    public void absentObjectOfFlatTypeFails() {
+        assertMissingObject("account.PasskeyRegistrationOptions", new byte[0]);
     }
 
 
     @Test
-    public void absentObjectOfPolymorphicTypeUsesZeroParamConstructor() {
-        TlWriter notify = new TlWriter();
-        notify.writeInt32(InputNotifyPeerId);
-        notify.writeInt32(InputPeerEmptyId);
-        assertArrayEquals(notify.toByteArray(), transcoder.protoToTlObject("InputNotifyPeer", wrap(1, new ProtoWriter()), null));
+    public void absentObjectOfPolymorphicTypeFails() {
+        assertMissingObject("InputNotifyPeer", wrap(1, new ProtoWriter()));
+        assertMissingObject("ContactStatus", new byte[0]);
+    }
 
-        TlWriter status = new TlWriter();
-        status.writeInt32(ContactStatusId);
-        status.writeInt64(0L);
-        status.writeInt32(UserStatusEmptyId);
-        assertArrayEquals(status.toByteArray(), transcoder.protoToTlObject("ContactStatus", new byte[0], null));
+
+    private void assertMissingObject(
+        String type,
+        byte[] proto
+    ) {
+        try {
+            transcoder.protoToTlObject(type, proto, null);
+            fail("expected TranscodeException for " + type);
+        } catch (TranscodeException e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("missing required object field"));
+        }
     }
 
 

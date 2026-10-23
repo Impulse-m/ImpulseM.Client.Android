@@ -606,14 +606,14 @@ public final class Transcoder {
                 writer.writeRaw(fixedBytes(param, body, last, 32));
                 break;
             case OBJECT:
-                if (last != null) {
-                    if (last.wire != WireBytes) {
-                        throw new TranscodeException("field " + param.name + " must be length-delimited");
-                    }
-                    protoToObject(param.typeName, body.data, last.offset, last.length, writer, sink, depth + 1);
-                } else {
-                    writeEmptyObject(param, writer, sink, depth);
+                if (last == null) {
+                    // The server sends every unconditional object; an absent one is a contract violation.
+                    throw new TranscodeException("missing required object field " + param.name + " of type " + param.typeName);
                 }
+                if (last.wire != WireBytes) {
+                    throw new TranscodeException("field " + param.name + " must be length-delimited");
+                }
+                protoToObject(param.typeName, body.data, last.offset, last.length, writer, sink, depth + 1);
                 break;
             case VECTOR:
                 writeVector(writer, param.elem, body, occurrences, sink, depth);
@@ -621,41 +621,6 @@ public final class Transcoder {
             default:
                 throw new TranscodeException("cannot decode param " + param.name + " of kind " + param.kind);
         }
-    }
-
-
-    /**
-     * An absent unconditional object: a flat type decodes from an empty body (all defaults),
-     * a polymorphic type falls back to its zero-param constructor (preferring "...Empty").
-     */
-    private void writeEmptyObject(
-        ParamSpec param,
-        TlWriter writer,
-        CaptureSink sink,
-        int depth
-    ) {
-        TypeSpec typeSpec = schema.type(param.typeName);
-        if (typeSpec != null && !typeSpec.polymorphic) {
-            protoToObject(param.typeName, new byte[0], 0, 0, writer, sink, depth + 1);
-            return;
-        }
-        ConstructorSpec fallback = null;
-        for (ConstructorSpec candidate : schema.constructorsOf(param.typeName)) {
-            if (!candidate.params.isEmpty()) {
-                continue;
-            }
-            if (candidate.predicate.endsWith("Empty")) {
-                fallback = candidate;
-                break;
-            }
-            if (fallback == null) {
-                fallback = candidate;
-            }
-        }
-        if (fallback == null) {
-            throw new TranscodeException("missing required object field " + param.name + " of type " + param.typeName);
-        }
-        writer.writeInt32(fallback.id);
     }
 
 

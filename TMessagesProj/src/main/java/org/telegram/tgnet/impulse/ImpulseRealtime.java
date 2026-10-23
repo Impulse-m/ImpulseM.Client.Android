@@ -347,6 +347,13 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             }
         } catch (Exception e) {
             FileLog.e(e);
+            // A publication that breaks the wire contract is a server defect: trace why, so it can be reported.
+            RemoteLog.trace(
+                LogLevel.WARN,
+                RemoteLog.ComponentRealtime,
+                "PUBLICATION_UNDECODABLE",
+                "detail", String.valueOf(e.getMessage())
+            );
             postDifference("publication_decode_failed", null);
         } finally {
             if (buffer != null) {
