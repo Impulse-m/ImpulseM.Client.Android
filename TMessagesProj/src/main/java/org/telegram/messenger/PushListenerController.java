@@ -2,11 +2,7 @@ package org.telegram.messenger;
 
 import static org.telegram.messenger.LocaleController.getString;
 
-import android.app.NotificationManager;
-import android.content.Context;
-import android.os.Build;
 import android.os.SystemClock;
-import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
 import android.util.Base64;
 import android.util.SparseBooleanArray;
@@ -26,8 +22,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.voip.VoIPGroupNotification;
-import org.telegram.messenger.voip.VoIPPreNotificationService;
-import org.telegram.messenger.voip.VoIPService;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLRPC;
@@ -39,7 +33,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 @Keep
 public class PushListenerController {
@@ -54,8 +47,7 @@ public class PushListenerController {
     public @interface PushType {}
 
     public static final int NOTIFICATION_ID = 1;
-    private static final long CallHoldMillis = 10000L;
-    private static final long CallHoldPollMillis = 200L;
+    private static CountDownLatch countDownLatch = new CountDownLatch(1);
 
     public static void sendRegistrationToServer(@PushType int pushType, String token) {
         Utilities.stageQueue.postRunnable(() -> {
@@ -106,8 +98,6 @@ public class PushListenerController {
 
     public static void processRemoteMessage(@PushType int pushType, String data, long time) {
         String tag = pushType == PUSH_TYPE_FIREBASE ? "FCM" : "HCM";
-        // One latch per push, so a push never sees the released latch of an earlier one.
-        final CountDownLatch countDownLatch = new CountDownLatch(1);
         if (BuildVars.LOGS_ENABLED) {
             FileLog.d(tag + " PRE START PROCESSING");
         }
@@ -155,7 +145,7 @@ public class PushListenerController {
                             "pushType", tag,
                             "stage", "auth_key_id_mismatch"
                         );
-                        onDecryptError(countDownLatch);
+                        onDecryptError();
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(String.format(Locale.US, tag + " DECRYPT ERROR 2 k1=%s k2=%s, key=%s", Utilities.bytesToHex(SharedConfig.pushAuthKeyId), Utilities.bytesToHex(inAuthKeyId), Utilities.bytesToHex(SharedConfig.pushAuthKey)));
                         }
@@ -177,7 +167,7 @@ public class PushListenerController {
                             "pushType", tag,
                             "stage", "msg_key_mismatch"
                         );
-                        onDecryptError(countDownLatch);
+                        onDecryptError();
                         if (BuildVars.LOGS_ENABLED) {
                             FileLog.d(String.format(tag + " DECRYPT ERROR 3, key = %s", Utilities.bytesToHex(SharedConfig.pushAuthKey)));
                         }
@@ -1463,6 +1453,7 @@ public class PushListenerController {
                                         case "LOCKED_MESSAGE":
                                         case "ENCRYPTION_REQUEST":
                                         case "ENCRYPTION_ACCEPT":
+                                        case "PHONE_CALL_REQUEST":
                                         case "MESSAGE_MUTED":
                                         case "PHONE_CALL_MISSED": {
                                             //ignored
@@ -1553,10 +1544,6 @@ public class PushListenerController {
                             }
                         }
                     }
-                    if ("PHONE_CALL_REQUEST".equals(loc_key) && ringIncomingCallFromPush(accountFinal, custom, countDownLatch)) {
-                        // The latch is released once the incoming-call UI is up, or after CallHoldMillis at the latest.
-                        canRelease = false;
-                    }
                     if (canRelease) {
                         countDownLatch.countDown();
                     }
@@ -1595,7 +1582,7 @@ public class PushListenerController {
                         ConnectionsManager.getInstance(currentAccount).resumeNetworkMaybe();
                         countDownLatch.countDown();
                     } else {
-                        onDecryptError(countDownLatch);
+                        onDecryptError();
                     }
                     if (BuildVars.LOGS_ENABLED) {
                         FileLog.e("error in loc_key = " + loc_key + " json length " + (jsonString == null ? -1 : jsonString.length()));
@@ -1604,12 +1591,8 @@ public class PushListenerController {
                 }
             });
         });
-        boolean released = false;
         try {
-            released = countDownLatch.await(15, TimeUnit.SECONDS);
-            if (!released) {
-                FileLog.w(tag + " push was not released in time");
-            }
+            countDownLatch.await();
         } catch (Throwable ignore) {
 
         }
@@ -1621,105 +1604,10 @@ public class PushListenerController {
             RemoteLog.ComponentPush,
             "PUSH_HANDLED",
             "pushType", tag,
-            "released", released,
             "handledMs", handledMs
         );
         RemoteLog.flush();
     }
-
-
-    /**
-     * Decodes the updates carried by a PHONE_CALL_REQUEST push and feeds them to the updates pipeline, so the phone
-     * rings without a network round-trip. Runs on the stage queue.
-     *
-     * @return true when the call was handed over and the push latch is released later by the hold poll; false when
-     * the payload could not be used and the caller falls back to releasing at once.
-     */
-    private static boolean ringIncomingCallFromPush(
-        int account,
-        JSONObject custom,
-        CountDownLatch latch
-    ) {
-        NativeByteBuffer buffer = null;
-        try {
-            String encoded = custom.optString("updates", "");
-            if (TextUtils.isEmpty(encoded)) {
-                FileLog.e("PHONE_CALL_REQUEST push without updates");
-                return false;
-            }
-            byte[] bytes = Base64.decode(encoded, Base64.URL_SAFE);
-            buffer = new NativeByteBuffer(bytes.length);
-            buffer.writeBytes(bytes);
-            buffer.position(0);
-            int constructor = buffer.readInt32(true);
-            TLRPC.Updates updates = TLRPC.Updates.TLdeserialize(buffer, constructor, true);
-            if (updates == null) {
-                FileLog.e("PHONE_CALL_REQUEST push updates could not be decoded");
-                return false;
-            }
-            RemoteLog.trace(
-                RemoteLog.ComponentCalls,
-                "PHONE_CALL_PUSH_UPDATES",
-                "account", account,
-                "updates", updates.getClass()
-            );
-            MessagesController.getInstance(account).processUpdates(updates, false);
-        } catch (Throwable e) {
-            FileLog.e(e);
-            return false;
-        } finally {
-            if (buffer != null) {
-                buffer.reuse();
-            }
-        }
-        holdForIncomingCall(latch, SystemClock.elapsedRealtime() + CallHoldMillis);
-        return true;
-    }
-
-
-    /** Keeps the push alive until the incoming-call UI is up, the call is gone, or the deadline passes. */
-    private static void holdForIncomingCall(
-        CountDownLatch latch,
-        long deadline
-    ) {
-        boolean expired = SystemClock.elapsedRealtime() >= deadline;
-        boolean uiShown = !expired && isIncomingCallUiShown();
-        boolean callGone = VoIPService.callIShouldHavePutIntoIntent == null && VoIPPreNotificationService.pendingCall == null;
-        if (expired || uiShown || callGone) {
-            RemoteLog.trace(
-                RemoteLog.ComponentCalls,
-                "PHONE_CALL_PUSH_RELEASE",
-                "deadlinePassed", expired,
-                "incomingUiShown", uiShown,
-                "callGone", callGone
-            );
-            latch.countDown();
-            return;
-        }
-        Utilities.stageQueue.postRunnable(() -> holdForIncomingCall(latch, deadline), CallHoldPollMillis);
-    }
-
-
-    private static boolean isIncomingCallUiShown() {
-        if (VoIPService.getSharedInstance() != null) {
-            return true;
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return false;
-        }
-        try {
-            NotificationManager manager = (NotificationManager) ApplicationLoader.applicationContext.getSystemService(Context.NOTIFICATION_SERVICE);
-            for (StatusBarNotification active : manager.getActiveNotifications()) {
-                if (active.getId() == VoIPService.ID_INCOMING_CALL_PRENOTIFICATION) {
-                    return true;
-                }
-            }
-        } catch (Throwable e) {
-            FileLog.e(e);
-        }
-        return false;
-    }
-
 
     private static String getReactedText(String loc_key, Object[] args) {
         switch (loc_key) {
@@ -1845,7 +1733,7 @@ public class PushListenerController {
         return null;
     }
 
-    private static void onDecryptError(CountDownLatch latch) {
+    private static void onDecryptError() {
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
             if (UserConfig.getInstance(a).isClientActivated()) {
                 ConnectionsManager.onInternalPushReceived(a);
@@ -1858,7 +1746,7 @@ public class PushListenerController {
                 ConnectionsManager.getInstance(a).resumeNetworkMaybe();
             }
         }
-        latch.countDown();
+        countDownLatch.countDown();
     }
 
     @Keep
