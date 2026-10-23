@@ -19,6 +19,16 @@ import okhttp3.ResponseBody;
 
 public final class GrpcWebClient {
 
+    /** Unix milliseconds of the server clock, sent on every gateway response, success or error. */
+    public static final String SERVER_TIME_HEADER = "impulse-server-time-ms";
+
+
+    /** Receives the server clock of each response, as canon reads it from each server msg_id. */
+    public interface ServerTimeListener {
+        void onServerTime(long serverTimeMillis);
+    }
+
+
     private static final MediaType CONTENT_TYPE = MediaType.get("application/grpc-web+proto");
     private static final Charset UTF8 = Charset.forName("UTF-8");
     private static final int TRAILER_FLAG = 0x80;
@@ -26,6 +36,7 @@ public final class GrpcWebClient {
 
     private final OkHttpClient http;
     private final HttpUrl baseUrl;
+    private volatile ServerTimeListener serverTimeListener;
 
 
     public GrpcWebClient(
@@ -79,11 +90,16 @@ public final class GrpcWebClient {
     }
 
 
+    public void setServerTimeListener(ServerTimeListener listener) {
+        serverTimeListener = listener;
+    }
+
+
     public GrpcWebResponse execute(Call call) throws IOException {
         try (Response response = call.execute()) {
+            reportServerTime(response.header(SERVER_TIME_HEADER));
             if (response.code() == 404) {
-                // gRPC HTTP-to-status rule: HTTP 404 is UNIMPLEMENTED. The stand answers a plain 404
-                // for every method of a service the backend does not register.
+                // gRPC HTTP-to-status rule: HTTP 404 is UNIMPLEMENTED.
                 Map<String, String> notFound = new HashMap<String, String>();
                 putAll(notFound, response.headers());
                 notFound.put("grpc-status", String.valueOf(GRPC_UNIMPLEMENTED));
@@ -122,6 +138,21 @@ public final class GrpcWebClient {
             }
             return new GrpcWebResponse(status, message, metadata, data.toByteArray());
         }
+    }
+
+
+    private void reportServerTime(String value) {
+        ServerTimeListener listener = serverTimeListener;
+        if (listener == null || value == null) {
+            return;
+        }
+        long serverTimeMillis;
+        try {
+            serverTimeMillis = Long.parseLong(value.trim());
+        } catch (NumberFormatException e) {
+            return;
+        }
+        listener.onServerTime(serverTimeMillis);
     }
 
 

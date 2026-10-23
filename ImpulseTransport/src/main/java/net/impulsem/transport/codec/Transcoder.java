@@ -12,7 +12,6 @@ import net.impulsem.transport.wire.TlReader;
 import net.impulsem.transport.wire.TlWriter;
 
 import java.io.UnsupportedEncodingException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -29,7 +28,6 @@ public final class Transcoder {
     private static final int BoolTrue = 0x997275b5;
     private static final int BoolFalse = 0xbc799737;
     private static final int VectorId = 0x1cb5c415;
-    private static final byte[] AndroidLanguagePack = "android".getBytes(StandardCharsets.UTF_8);
 
     private static final int WireVarint = 0;
     private static final int WireFixed64 = 1;
@@ -108,7 +106,7 @@ public final class Transcoder {
                         throw new TranscodeException("unknown method id " + Integer.toHexString(id));
                     }
                     ProtoWriter writer = new ProtoWriter();
-                    encodeParams(source, method.params, writer, 0, method.method.startsWith("langpack."));
+                    encodeParams(source, method.params, writer, 0);
                     requireConsumed(source);
                     requireConsumed(reader);
                     return new EncodedRequest(method.id, method.path, writer.toByteArray(), takeoutId);
@@ -144,14 +142,11 @@ public final class Transcoder {
     ) {
         TlWriter writer = new TlWriter();
         if (result.kind.equals("bool")) {
-            writer.writeInt32(BoolTrue);
-        } else if (result.kind.equals("bool_overlay")) {
             List<Occurrence> values = parseBody(proto, 0, proto.length).fields.get(1);
-            boolean value = true;
-            if (values != null && !values.isEmpty()) {
-                value = values.get(values.size() - 1).value != 0;
+            if (values == null || values.isEmpty()) {
+                throw new TranscodeException("Bool result carries no value");
             }
-            writer.writeInt32(value ? BoolTrue : BoolFalse);
+            writer.writeInt32(values.get(values.size() - 1).value != 0 ? BoolTrue : BoolFalse);
         } else if (result.kind.equals("int")) {
             writer.writeInt32((int) scalarValue(parseBody(proto, 0, proto.length), 1));
         } else if (result.kind.equals("long")) {
@@ -307,7 +302,7 @@ public final class Transcoder {
             throw new TranscodeException("constructor " + constructor.predicate + " is " + constructor.type + ", expected " + type);
         }
         ProtoWriter body = new ProtoWriter();
-        encodeParams(reader, constructor.params, body, depth, false);
+        encodeParams(reader, constructor.params, body, depth);
         TypeSpec typeSpec = schema.type(type);
         if (typeSpec != null && typeSpec.polymorphic) {
             if (constructor.arm == null) {
@@ -325,8 +320,7 @@ public final class Transcoder {
         TlReader reader,
         List<ParamSpec> params,
         ProtoWriter writer,
-        int depth,
-        boolean defaultAndroidLanguagePack
+        int depth
     ) {
         Map<String, Integer> registers = new HashMap<String, Integer>();
         for (ParamSpec param : params) {
@@ -343,14 +337,7 @@ public final class Transcoder {
                     continue;
                 }
             }
-            if (defaultAndroidLanguagePack && param.kind == ParamSpec.Kind.STRING && param.name.equals("lang_pack")) {
-                // MTProto supplied the client pack implicitly. gRPC-Web requires it on every request,
-                // including old Android requests upgraded to layer 229 with an empty pack.
-                byte[] value = reader.readBytes();
-                writer.writeBytesField(param.field, value.length == 0 ? AndroidLanguagePack : value);
-            } else {
-                encodeValue(reader, param, writer, depth);
-            }
+            encodeValue(reader, param, writer, depth);
         }
     }
 
@@ -619,14 +606,14 @@ public final class Transcoder {
                 writer.writeRaw(fixedBytes(param, body, last, 32));
                 break;
             case OBJECT:
-                if (last != null) {
-                    if (last.wire != WireBytes) {
-                        throw new TranscodeException("field " + param.name + " must be length-delimited");
-                    }
-                    protoToObject(param.typeName, body.data, last.offset, last.length, writer, sink, depth + 1);
-                } else {
-                    writeEmptyObject(param, writer, sink, depth);
+                if (last == null) {
+                    // The server sends every unconditional object; an absent one is a contract violation.
+                    throw new TranscodeException("missing required object field " + param.name + " of type " + param.typeName);
                 }
+                if (last.wire != WireBytes) {
+                    throw new TranscodeException("field " + param.name + " must be length-delimited");
+                }
+                protoToObject(param.typeName, body.data, last.offset, last.length, writer, sink, depth + 1);
                 break;
             case VECTOR:
                 writeVector(writer, param.elem, body, occurrences, sink, depth);
@@ -634,41 +621,6 @@ public final class Transcoder {
             default:
                 throw new TranscodeException("cannot decode param " + param.name + " of kind " + param.kind);
         }
-    }
-
-
-    /**
-     * An absent unconditional object: a flat type decodes from an empty body (all defaults),
-     * a polymorphic type falls back to its zero-param constructor (preferring "...Empty").
-     */
-    private void writeEmptyObject(
-        ParamSpec param,
-        TlWriter writer,
-        CaptureSink sink,
-        int depth
-    ) {
-        TypeSpec typeSpec = schema.type(param.typeName);
-        if (typeSpec != null && !typeSpec.polymorphic) {
-            protoToObject(param.typeName, new byte[0], 0, 0, writer, sink, depth + 1);
-            return;
-        }
-        ConstructorSpec fallback = null;
-        for (ConstructorSpec candidate : schema.constructorsOf(param.typeName)) {
-            if (!candidate.params.isEmpty()) {
-                continue;
-            }
-            if (candidate.predicate.endsWith("Empty")) {
-                fallback = candidate;
-                break;
-            }
-            if (fallback == null) {
-                fallback = candidate;
-            }
-        }
-        if (fallback == null) {
-            throw new TranscodeException("missing required object field " + param.name + " of type " + param.typeName);
-        }
-        writer.writeInt32(fallback.id);
     }
 
 

@@ -18,15 +18,6 @@ public class PublicationRouterTest {
 
 
     @Test
-    public void oversizeMeansDifference() {
-        PublicationRouter.Action action = PublicationRouter.route(
-            publication("user:5", "{\"type\":1,\"pts\":7,\"ptsCount\":1,\"date\":5,\"oversize\":true}")
-        );
-        assertEquals(PublicationRouter.Kind.GET_DIFFERENCE, action.kind);
-    }
-
-
-    @Test
     public void undecodableMeansDifference() {
         PublicationRouter.Action action = PublicationRouter.route(publication("channel:9", "[1,2]"));
         assertEquals(PublicationRouter.Kind.GET_DIFFERENCE, action.kind);
@@ -44,32 +35,13 @@ public class PublicationRouterTest {
 
 
     @Test
-    public void channelWithoutBodyIsTooLongSignal() {
-        PublicationRouter.Action action = PublicationRouter.route(
-            publication("channel:1234567890123", "{\"type\":215,\"pts\":99,\"ptsCount\":0,\"date\":77}")
-        );
-        assertEquals(PublicationRouter.Kind.CHANNEL_TOO_LONG, action.kind);
-        assertEquals(1234567890123L, action.channelId);
-        assertEquals(99, action.pts);
-        assertEquals(77, action.date);
-    }
-
-
-    @Test
-    public void userLaneWithoutBodyFallsBackToDifference() {
-        PublicationRouter.Action action = PublicationRouter.route(
-            publication("user:5", "{\"type\":215,\"pts\":99,\"ptsCount\":0,\"date\":77}")
-        );
-        assertEquals(PublicationRouter.Kind.GET_DIFFERENCE, action.kind);
-    }
-
-
-    @Test
-    public void channelWithMalformedNameFallsBackToDifference() {
-        PublicationRouter.Action action = PublicationRouter.route(
-            publication("channel:abc", "{\"type\":215,\"pts\":99,\"ptsCount\":0,\"date\":77}")
-        );
-        assertEquals(PublicationRouter.Kind.GET_DIFFERENCE, action.kind);
+    public void bodylessFrameMeansDifferenceOnEveryLane() {
+        for (String channel : new String[] {"channel:1234567890123", "user:5"}) {
+            PublicationRouter.Action action = PublicationRouter.route(
+                publication(channel, "{\"type\":215,\"pts\":99,\"ptsCount\":0,\"date\":77}")
+            );
+            assertEquals(channel, PublicationRouter.Kind.GET_DIFFERENCE, action.kind);
+        }
     }
 
 

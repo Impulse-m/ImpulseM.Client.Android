@@ -55,7 +55,7 @@ public final class TlView {
         Object value;
         if ("list".equals(result.kind)) {
             value = readVector(reader, result.elem);
-        } else if ("bool".equals(result.kind) || "bool_overlay".equals(result.kind)) {
+        } else if ("bool".equals(result.kind)) {
             value = readBool(reader);
         } else {
             value = readObject(reader);

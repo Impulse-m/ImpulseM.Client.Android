@@ -136,6 +136,14 @@ public class RpcClientTest {
     }
 
 
+    /** BoolResponse{value = true}. */
+    private static byte[] boolValue() {
+        ProtoWriter writer = new ProtoWriter();
+        writer.writeVarintField(1, 1);
+        return writer.toByteArray();
+    }
+
+
     private static byte[] utf8(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
     }
@@ -179,7 +187,7 @@ public class RpcClientTest {
     public void refreshAndRetryOnAuthKeyUnregistered() throws Exception {
         server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
         server.enqueue(ok(refreshResponse("new", "r2", 5L)));
-        server.enqueue(ok(new byte[0]));
+        server.enqueue(ok(boolValue()));
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
@@ -255,6 +263,7 @@ public class RpcClientTest {
         assertFalse(outcome.forceLogout);
         assertEquals(400, outcome.error.code);
         assertEquals("TRANSCODE_FAILED", outcome.error.text);
+        assertTrue(outcome.transcodeDetail, outcome.transcodeDetail.startsWith("/v1.contacts.Contacts/"));
         assertEquals(1, server.getRequestCount());
     }
 
@@ -288,7 +297,7 @@ public class RpcClientTest {
     @Test
     public void passwordNeededSetsPendingTokenForNextCall() throws Exception {
         server.enqueue(error(16, "SESSION_PASSWORD_NEEDED", "pending-token", "pend-jwt"));
-        server.enqueue(ok(new byte[0]));
+        server.enqueue(ok(boolValue()));
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
@@ -323,6 +332,36 @@ public class RpcClientTest {
 
 
     @Test
+    public void signInResponseWithoutUserFailsAndStoresNoTokens() throws Exception {
+        store.tokens = null;
+        build();
+        tokens.setPendingToken("pend");
+        server.enqueue(ok(authorization("acc", "ref", 0L)));
+
+        RpcOutcome outcome = client.callBlocking(signIn());
+
+        assertNull(outcome.tlResult);
+        assertEquals("TRANSCODE_FAILED", outcome.error.text);
+        assertNull(store.tokens);
+    }
+
+
+    @Test
+    public void refreshWithoutUserIdFailsAndKeepsTheSession() throws Exception {
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        server.enqueue(ok(refreshResponse("new", "r2", 0L)));
+
+        try {
+            client.callBlocking(resetAuthorizations());
+            fail("expected IOException");
+        } catch (IOException expected) {
+            assertEquals("old", store.tokens.accessToken);
+            assertEquals(5L, store.tokens.userId);
+        }
+    }
+
+
+    @Test
     public void unmappedMethodReturnsMethodInvalidWithoutNetwork() throws Exception {
         TlWriter writer = new TlWriter();
         writer.writeInt32(0x12345678);
@@ -337,15 +376,15 @@ public class RpcClientTest {
 
 
     @Test
-    public void http404IsFinalMethodInvalid() throws Exception {
+    public void http404IsFinalUnimplemented() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(404).setBody("not found"));
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
         assertNull(outcome.tlResult);
         assertFalse(outcome.forceLogout);
-        assertEquals(400, outcome.error.code);
-        assertEquals("METHOD_INVALID", outcome.error.text);
+        assertEquals(501, outcome.error.code);
+        assertEquals("UNIMPLEMENTED", outcome.error.text);
         assertEquals(1, server.getRequestCount());
     }
 
@@ -353,7 +392,7 @@ public class RpcClientTest {
     @Test
     public void qrTicketIsCapturedAndEchoed() throws Exception {
         server.enqueue(error(16, "SESSION_REVOKED", "x-impulse-qr-exporter-ticket", "tk1"));
-        server.enqueue(ok(new byte[0]));
+        server.enqueue(ok(boolValue()));
         client.callBlocking(resetAuthorizations());
         assertEquals("tk1", tokens.qrExporterTicket());
         assertNull(server.takeRequest().getHeader("x-impulse-qr-exporter-ticket"));
@@ -368,7 +407,7 @@ public class RpcClientTest {
         writer.writeInt32(InvokeWithTakeoutId);
         writer.writeInt64(555L);
         writer.writeRaw(resetAuthorizations());
-        server.enqueue(ok(new byte[0]));
+        server.enqueue(ok(boolValue()));
         RpcOutcome outcome = client.callBlocking(writer.toByteArray());
         assertNull(outcome.error);
         assertEquals("555", server.takeRequest().getHeader("x-takeout-id"));
@@ -467,7 +506,7 @@ public class RpcClientTest {
                 }
                 if ("Bearer new".equals(auth)) {
                     newCalls.incrementAndGet();
-                    return ok(utf8("t"));
+                    return ok(TokenPath.equals(request.getPath()) ? utf8("t") : boolValue());
                 }
                 return new MockResponse().setResponseCode(500);
             }
@@ -535,7 +574,7 @@ public class RpcClientTest {
 
     @Test
     public void cancelDuringFirstAttemptAborts() throws Exception {
-        server.enqueue(ok(new byte[0]).setHeadersDelay(3, TimeUnit.SECONDS));
+        server.enqueue(ok(boolValue()).setHeadersDelay(3, TimeUnit.SECONDS));
         ExecutorService pool = Executors.newFixedThreadPool(1);
         Call call = client.prepare(resetAuthorizations());
         Future<RpcOutcome> running = executeInBackground(pool, call);
@@ -580,7 +619,7 @@ public class RpcClientTest {
     public void cancelReachesTheRetryAttempt() throws Exception {
         server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
         server.enqueue(ok(refreshResponse("new", "r2", 5L)));
-        server.enqueue(ok(new byte[0]).setHeadersDelay(3, TimeUnit.SECONDS));
+        server.enqueue(ok(boolValue()).setHeadersDelay(3, TimeUnit.SECONDS));
         ExecutorService pool = Executors.newFixedThreadPool(1);
         Call call = client.prepare(resetAuthorizations());
         Future<RpcOutcome> running = executeInBackground(pool, call);
@@ -627,7 +666,7 @@ public class RpcClientTest {
     public void refreshKeepsActivePendingToken() throws Exception {
         server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
         server.enqueue(ok(refreshResponse("new", "r2", 5L)));
-        server.enqueue(ok(new byte[0]));
+        server.enqueue(ok(boolValue()));
         tokens.setPendingToken("pend");
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());

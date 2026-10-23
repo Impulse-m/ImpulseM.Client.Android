@@ -13,7 +13,9 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.telegram.messenger.ImpulseFeatures
+import org.telegram.messenger.remotelog.RemoteLog
 import org.telegram.tgnet.impulse.proxy.ProxyController
+import java.io.IOException
 import java.net.InetSocketAddress
 
 
@@ -23,9 +25,20 @@ import java.net.InetSocketAddress
  * Signalling (HTTP and WebSocket) is delegated to the shared proxied client. The SDK never derives a new client
  * from this one (v2.29.0 only calls newCall and newWebSocket on it), so those two overrides cover all of its traffic.
  * ICE servers announced in the join and reconnect responses are rewritten to loopback forwarders, so media
- * is relayed over TURN through the Xray SOCKS inbound and never leaves the device directly.
+ * is relayed over TURN through the Xray SOCKS inbound and never leaves the device directly. When none of them
+ * is reachable through the tunnel, the signalling fails with [NoTunnelledRelayException] instead.
  */
 class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
+    /** No ICE server of the last join or reconnect response could be relayed through the tunnel. */
+    class NoTunnelledRelayException : IOException("no ICE server is reachable through the tunnel")
+
+
+    /** True when the last join or reconnect response left no ICE server reachable through the tunnel. */
+    @Volatile
+    var relayUnavailable: Boolean = false
+        private set
+
+
     private class Entry(
         val forwarder: TurnForwarder,
         val socks: InetSocketAddress,
@@ -79,10 +92,6 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
             if (urls.isNotEmpty()) {
                 result.add(server.toBuilder().clearUrls().addAllUrls(urls).build())
             }
-        }
-        if (result.isEmpty()) {
-            // An empty list makes the SDK fall back to public STUN servers. Keep a dead end instead of that.
-            result.add(LivekitRtc.ICEServer.newBuilder().addUrls(DeadEnd).build())
         }
         return result
     }
@@ -143,7 +152,14 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
             webSocket: WebSocket,
             bytes: ByteString
         ) {
-            target.onMessage(webSocket, rewriteSignal(bytes))
+            val rewritten: ByteString? = rewriteSignal(bytes)
+            if (rewritten == null) {
+                // Without a tunnelled relay the SDK would fall back to direct media; end the signalling instead.
+                // The cancel reaches onFailure below, which reports NoTunnelledRelayException.
+                webSocket.cancel()
+                return
+            }
+            target.onMessage(webSocket, rewritten)
         }
 
 
@@ -170,12 +186,13 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
             t: Throwable,
             response: Response?
         ) {
-            target.onFailure(webSocket, t, response)
+            target.onFailure(webSocket, if (relayUnavailable) NoTunnelledRelayException() else t, response)
         }
     }
 
 
-    private fun rewriteSignal(bytes: ByteString): ByteString {
+    /** The signal with its ICE servers rewritten, or null when none of them is reachable through the tunnel. */
+    private fun rewriteSignal(bytes: ByteString): ByteString? {
         val response: LivekitRtc.SignalResponse
         try {
             response = LivekitRtc.SignalResponse.parseFrom(bytes.toByteArray())
@@ -184,7 +201,7 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
         }
         if (response.hasJoin()) {
             val join: LivekitRtc.JoinResponse = response.join
-            val servers: List<LivekitRtc.ICEServer> = rewrite(join.iceServersList)
+            val servers: List<LivekitRtc.ICEServer> = rewriteAnnounced("join", join.iceServersList) ?: return null
             return response.toBuilder()
                 .setJoin(join.toBuilder().clearIceServers().addAllIceServers(servers))
                 .build()
@@ -193,7 +210,7 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
         }
         if (response.hasReconnect()) {
             val reconnect: LivekitRtc.ReconnectResponse = response.reconnect
-            val servers: List<LivekitRtc.ICEServer> = rewrite(reconnect.iceServersList)
+            val servers: List<LivekitRtc.ICEServer> = rewriteAnnounced("reconnect", reconnect.iceServersList) ?: return null
             return response.toBuilder()
                 .setReconnect(reconnect.toBuilder().clearIceServers().addAllIceServers(servers))
                 .build()
@@ -204,10 +221,30 @@ class LiveKitProxyClient(private val delegate: OkHttpClient) : OkHttpClient() {
     }
 
 
+    /**
+     * Rewrites the ICE servers of one signal and traces how many were announced against how many the tunnel can
+     * reach: zero announced is the vendor's list, announced but none reachable is the tunnel. Null when none is
+     * reachable.
+     */
+    private fun rewriteAnnounced(
+        signal: String,
+        announced: List<LivekitRtc.ICEServer>
+    ): List<LivekitRtc.ICEServer>? {
+        val servers: List<LivekitRtc.ICEServer> = rewrite(announced)
+        relayUnavailable = servers.isEmpty()
+        RemoteLog.trace(
+            RemoteLog.ComponentCalls,
+            "LIVEKIT_ICE_SERVERS",
+            "signal", signal,
+            "announced", announced.size,
+            "announcedUrls", announced.sumOf { it.urlsCount },
+            "reachable", servers.size
+        )
+        return if (servers.isEmpty()) null else servers
+    }
+
+
     companion object {
-        private const val DeadEnd: String = "turn:127.0.0.1:9?transport=tcp"
-
-
         /** True when a new call must be relayed through the VLESS tunnel (fails closed when the core is down). */
         @JvmStatic
         fun shouldTunnel(): Boolean {

@@ -20,7 +20,7 @@ HISTORY_DIR: Path = REPO_ROOT / "TMessagesProj_AppTests" / "tlscheme"
 
 LAYER: int = 229
 EXCLUDED_CONSTRUCTORS: List[str] = ["boolFalse", "boolTrue", "true", "vector"]
-CAPTURE_NAMES: List[str] = ["session_token", "refresh_token", "livekit_url", "livekit_token"]
+CAPTURE_NAMES: List[str] = ["session_token", "refresh_token"]
 PRIMITIVES: List[str] = ["int", "long", "double", "string", "bytes", "int128", "int256"]
 PRIMITIVE_LIST_ELEMS: Dict[str, str] = {
     "int": "IntResponse",
@@ -122,17 +122,32 @@ def map_params(
     return parsed, capture
 
 
+def response_message(
+    messages: Dict[str, Any],
+    package: str,
+    rpcReturn: str,
+) -> Optional[Dict[str, Any]]:
+    """Resolves an rpc return type as protoc does: in the service's package first, then in v1."""
+    if rpcReturn.startswith("v1."):
+        return messages["v1"].get(rpcReturn[3:])
+    return messages[package].get(rpcReturn) or messages["v1"].get(rpcReturn)
+
+
+def is_bool_message(message: Optional[Dict[str, Any]]) -> bool:
+    """A TL Bool result travels as a message that holds only `optional bool value = 1`."""
+    return message is not None and not message["oneof"] and message["fields"] == {"value": (1, "bool", "optional")}
+
+
 def result_of(
     tlResult: str,
     rpcReturn: str,
+    rpcMessage: Optional[Dict[str, Any]],
     where: str,
 ) -> Dict[str, Any]:
-    if rpcReturn == "BoolResponse":
-        if tlResult != "Bool":
-            raise ValueError("%s: BoolResponse for TL result %s" % (where, tlResult))
+    if tlResult == "Bool":
+        if not is_bool_message(rpcMessage):
+            raise ValueError("%s: Bool result needs a message with only `optional bool value = 1`, got %s" % (where, rpcReturn))
         return {"kind": "bool"}
-    if rpcReturn == "GetContactSignUpNotificationResponse":
-        return {"kind": "bool_overlay"}
     if rpcReturn == "IntResponse" or rpcReturn == "LongResponse":
         kind: str = "int" if rpcReturn == "IntResponse" else "long"
         if tlResult != kind:
@@ -461,7 +476,7 @@ def build(schema: Dict[str, Any], protosDir: Path = PROTOS_DIR) -> Tuple[Dict[st
             "method": name,
             "path": "/%s.%s/%s" % (package, service, rpcName),
             "params": params,
-            "result": result_of(m["type"], declaredRes, where),
+            "result": result_of(m["type"], declaredRes, response_message(messages, package, declaredRes), where),
         })
 
     mapping: Dict[str, Any] = {

@@ -134,6 +134,12 @@ object LiveKitCaptures {
     }
 
 
+    /** True when the tunnelled room's last join or reconnect left no ICE server reachable through the tunnel. */
+    internal fun relayUnavailable(room: Room): Boolean {
+        return proxyClients[room]?.relayUnavailable == true
+    }
+
+
     /** Stops the TURN forwarders of a room that is being released. */
     internal fun closeForwarders(room: Room) {
         proxyClients.remove(room)?.closeForwarders()

@@ -20654,19 +20654,8 @@ public class MessagesController extends BaseController implements NotificationCe
 //                                svc.answerToRequestForConference((TL_phone.phoneCallRequested) call);
 //                                continue;
 //                            }
-                            // A replay of the call that is already ringing or starting is not "busy".
                             TL_phone.PhoneCall startingCall = VoIPService.callIShouldHavePutIntoIntent;
                             TL_phone.PhoneCall activeCall = svc != null ? svc.getPrivateCall() : null;
-                            if ((startingCall != null && startingCall.id == call.id) || (activeCall != null && activeCall.id == call.id)) {
-                                RemoteLog.trace(
-                                    RemoteLog.ComponentCalls,
-                                    "PHONE_CALL_IGNORED",
-                                    "account", currentAccount,
-                                    "callId", call.id,
-                                    "cause", "duplicate_request"
-                                );
-                                continue;
-                            }
                             if (svc != null || VoIPService.callIShouldHavePutIntoIntent != null || !callStateIsIdle) {
                                 if (svc != null && svc.getAccount() != currentAccount && svc.getUser() != null && svc.getUser().id == getUserConfig().getClientUserId()) {
                                     RemoteLog.trace(
@@ -20690,7 +20679,8 @@ public class MessagesController extends BaseController implements NotificationCe
                                     "serviceCallId", activeCall != null ? activeCall.id : null,
                                     "serviceCallState", activeCall != null ? activeCall.getClass() : null,
                                     "startingCallId", startingCall != null ? startingCall.id : null,
-                                    "gsmCallIdle", callStateIsIdle
+                                    "gsmCallIdle", callStateIsIdle,
+                                    "sameCallDeliveredAgain", (startingCall != null && startingCall.id == call.id) || (activeCall != null && activeCall.id == call.id)
                                 );
                                 final TL_phone.discardCall req = new TL_phone.discardCall();
                                 req.peer = new TLRPC.TL_inputPhoneCall();

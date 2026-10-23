@@ -26,7 +26,7 @@ import java.util.Map;
  *
  * Known limitations: a 229-only unconditional object param gets an arbitrary zero-param constructor of
  * its type (the "...Empty" one when there is one), which may not be a meaningful value. Legacy langpack
- * requests gain an empty lang_pack; Transcoder supplies the Android pack when encoding the RPC. The
+ * requests gain an empty lang_pack, which the server reads as the pack the connection declared. The
  * build-time guard (Tools/impulse/scan_client_constructors.py) stops other old ids from being used
  * unnoticed.
  * Instances are stateless and thread-safe.

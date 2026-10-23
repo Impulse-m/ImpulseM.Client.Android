@@ -145,15 +145,7 @@ public class TranscoderGoldenTest {
 
 
     @Test
-    public void boolResponseEmptyIsTrue() {
-        TlWriter expected = new TlWriter();
-        expected.writeInt32(BoolTrue);
-        assertArrayEquals(expected.toByteArray(), transcoder.decodeResult(ResetAuthorizationsId, new byte[0], null));
-    }
-
-
-    @Test
-    public void boolOverlay() {
+    public void boolResultCarriesBothConstructors() {
         TlWriter yes = new TlWriter();
         yes.writeInt32(BoolTrue);
         TlWriter no = new TlWriter();
@@ -162,9 +154,23 @@ public class TranscoderGoldenTest {
         falseValue.writeVarintField(1, 0);
         ProtoWriter trueValue = new ProtoWriter();
         trueValue.writeVarintField(1, 1);
-        assertArrayEquals(yes.toByteArray(), transcoder.decodeResult(GetContactSignUpNotificationId, new byte[0], null));
-        assertArrayEquals(no.toByteArray(), transcoder.decodeResult(GetContactSignUpNotificationId, falseValue.toByteArray(), null));
-        assertArrayEquals(yes.toByteArray(), transcoder.decodeResult(GetContactSignUpNotificationId, trueValue.toByteArray(), null));
+        for (int methodId : new int[] {ResetAuthorizationsId, GetContactSignUpNotificationId}) {
+            assertArrayEquals(no.toByteArray(), transcoder.decodeResult(methodId, falseValue.toByteArray(), null));
+            assertArrayEquals(yes.toByteArray(), transcoder.decodeResult(methodId, trueValue.toByteArray(), null));
+        }
+    }
+
+
+    @Test
+    public void boolResultWithoutValueFails() {
+        for (int methodId : new int[] {ResetAuthorizationsId, GetContactSignUpNotificationId}) {
+            try {
+                transcoder.decodeResult(methodId, new byte[0], null);
+                fail("an absent Bool value must not decode");
+            } catch (TranscodeException expected) {
+                // The server sets the value on every reply; an absent one is a contract violation.
+            }
+        }
     }
 
 

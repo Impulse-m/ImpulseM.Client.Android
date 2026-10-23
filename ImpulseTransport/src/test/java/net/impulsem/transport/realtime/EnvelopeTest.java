@@ -28,37 +28,41 @@ public class EnvelopeTest {
         assertEquals(2, envelope.ptsCount);
         assertEquals(1700000000, envelope.date);
         assertArrayEquals("hello".getBytes(), envelope.updatesProto);
-        assertFalse(envelope.oversize);
-        assertFalse(envelope.isChannelTooLongSignal());
+        assertFalse(envelope.undecodable());
     }
 
 
     @Test
-    public void oversizeSentinelHasNoBody() {
-        Envelope envelope = Envelope.parse(json("{\"type\":1,\"pts\":7,\"ptsCount\":1,\"date\":5,\"oversize\":true}"));
-        assertNull(envelope.updatesProto);
-        assertTrue(envelope.oversize);
-        assertFalse(envelope.isChannelTooLongSignal());
-    }
-
-
-    @Test
-    public void bodylessChannelFrameIsTooLongSignal() {
-        Envelope envelope = Envelope.parse(json("{\"type\":215,\"pts\":900,\"date\":5}"));
-        assertNull(envelope.updatesProto);
-        assertFalse(envelope.oversize);
-        assertTrue(envelope.isChannelTooLongSignal());
-        assertEquals(215, envelope.type);
-        assertEquals(900L, envelope.pts);
+    public void ptsLessFrameReadsPtsAsZero() {
+        Envelope envelope = Envelope.parse(json("{\"type\":7,\"date\":5,\"data\":\"aGVsbG8=\"}"));
+        assertFalse(envelope.undecodable());
+        assertEquals(0L, envelope.pts);
         assertEquals(0, envelope.ptsCount);
     }
 
 
     @Test
+    public void framesBreakingTheContractAreUndecodable() {
+        String[] frames = new String[] {
+            "{\"type\":215,\"pts\":900,\"date\":5}",
+            "{\"type\":1,\"pts\":7,\"ptsCount\":1,\"date\":5,\"oversize\":true}",
+            "{\"type\":1,\"date\":5,\"data\":\"\"}",
+            "{\"pts\":1,\"date\":5,\"data\":\"aGVsbG8=\"}",
+            "{\"type\":1,\"pts\":1,\"data\":\"aGVsbG8=\"}",
+            "{\"type\":1,\"date\":0,\"data\":\"aGVsbG8=\"}"
+        };
+        for (String frame : frames) {
+            Envelope envelope = Envelope.parse(json(frame));
+            assertTrue(frame, envelope.undecodable());
+            assertNull(frame, envelope.updatesProto);
+        }
+    }
+
+
+    @Test
     public void invalidBase64IsUndecodable() {
-        Envelope envelope = Envelope.parse(json("{\"type\":1,\"pts\":1,\"data\":\"!!!not base64!!!\"}"));
+        Envelope envelope = Envelope.parse(json("{\"type\":1,\"pts\":1,\"date\":5,\"data\":\"!!!not base64!!!\"}"));
         assertTrue(envelope.undecodable());
-        assertFalse(envelope.isChannelTooLongSignal());
     }
 
 
@@ -66,8 +70,8 @@ public class EnvelopeTest {
     public void nonObjectAndNonNumericAreUndecodable() {
         assertTrue(Envelope.parse(json("\"text\"")).undecodable());
         assertTrue(Envelope.parse(null).undecodable());
-        assertTrue(Envelope.parse(json("{\"type\":1,\"pts\":\"zzz\"}")).undecodable());
-        assertFalse(Envelope.parse(json("{\"type\":1,\"pts\":1}")).undecodable());
+        assertTrue(Envelope.parse(json("{\"type\":1,\"pts\":\"zzz\",\"date\":5,\"data\":\"aGVsbG8=\"}")).undecodable());
+        assertFalse(Envelope.parse(json("{\"type\":1,\"pts\":1,\"date\":5,\"data\":\"aGVsbG8=\"}")).undecodable());
     }
 
 

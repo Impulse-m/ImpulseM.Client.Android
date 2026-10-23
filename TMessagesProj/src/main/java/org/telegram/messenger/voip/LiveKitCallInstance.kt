@@ -51,6 +51,10 @@ class LiveKitCallInstance private constructor(
     private val audioCallback: AudioLevelsCallback
 ) : NativeInstance() {
     companion object {
+        /** The error of a tunnelled call whose join or reconnect left no ICE server reachable through the tunnel. */
+        const val NoTunnelledRelay: String = "No media relay through the proxy tunnel"
+
+
         @JvmStatic
         fun createPrivate(
             callId: Long,
@@ -456,7 +460,7 @@ class LiveKitCallInstance private constructor(
                 throw exception
             } catch (exception: Exception) {
                 // SDK exception messages may include the authenticated WebSocket URL.
-                fail("LiveKit connection failed")
+                fail(connectionFailure("LiveKit connection failed"))
             }
         }
     }
@@ -522,10 +526,10 @@ class LiveKitCallInstance private constructor(
             is RoomEvent.Disconnected -> {
                 if (event.reason != DisconnectReason.CLIENT_INITIATED) {
                     connected = false
-                    fail("LiveKit disconnected")
+                    fail(connectionFailure("LiveKit disconnected"))
                 }
             }
-            is RoomEvent.FailedToConnect -> fail("LiveKit connection failed")
+            is RoomEvent.FailedToConnect -> fail(connectionFailure("LiveKit connection failed"))
             is RoomEvent.TrackSubscribed, is RoomEvent.TrackUnsubscribed,
             is RoomEvent.TrackMuted, is RoomEvent.TrackUnmuted,
             is RoomEvent.ParticipantDisconnected -> refreshRemoteMedia()
@@ -676,6 +680,12 @@ class LiveKitCallInstance private constructor(
                 stats.bytesReceivedMobile + if (wifi) 0 else received
             )
         }
+    }
+
+
+    /** The failure to report: the tunnel's own error when it left media no relay, the given one otherwise. */
+    private fun connectionFailure(fallback: String): String {
+        return if (LiveKitCaptures.relayUnavailable(room)) NoTunnelledRelay else fallback
     }
 
 

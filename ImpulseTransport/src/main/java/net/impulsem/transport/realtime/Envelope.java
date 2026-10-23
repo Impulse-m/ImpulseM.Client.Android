@@ -7,16 +7,19 @@ import java.nio.charset.StandardCharsets;
 import okio.ByteString;
 
 
-/** The update envelope carried in the {@code data} of a publication. */
+/**
+ * The update envelope carried in the {@code data} of a publication. Every frame carries a non-empty body and a
+ * positive {@code type} and {@code date}; {@code pts} and {@code ptsCount} are present only on numbered frames,
+ * and their absence reads as 0.
+ */
 public final class Envelope {
 
     public final int type;
     public final long pts;
     public final int ptsCount;
     public final int date;
-    /** The decoded {@code v1.Updates} proto; null when the envelope carries no body. */
+    /** The decoded {@code v1.Updates} proto; null only when the envelope is undecodable. */
     public final byte[] updatesProto;
-    public final boolean oversize;
     private final boolean undecodable;
 
 
@@ -26,7 +29,6 @@ public final class Envelope {
         int ptsCount,
         int date,
         byte[] updatesProto,
-        boolean oversize,
         boolean undecodable
     ) {
         this.type = type;
@@ -34,14 +36,14 @@ public final class Envelope {
         this.ptsCount = ptsCount;
         this.date = date;
         this.updatesProto = updatesProto;
-        this.oversize = oversize;
         this.undecodable = undecodable;
     }
 
 
     /**
-     * Never throws. Anything that cannot be read (not an object, non-numeric fields, invalid base64) yields an
-     * envelope with {@link #undecodable()} set, so the application can still react, for example with getDifference.
+     * Never throws. Anything that breaks the envelope contract (not an object, non-numeric fields, a missing or
+     * invalid body, a missing type or date) yields an envelope with {@link #undecodable()} set, so the
+     * application can still react, for example with getDifference.
      *
      * @param data the {@code data} object of a publication.
      */
@@ -49,7 +51,7 @@ public final class Envelope {
         try {
             return parseStrict(data);
         } catch (RuntimeException e) {
-            return new Envelope(0, 0L, 0, 0, null, false, true);
+            return new Envelope(0, 0L, 0, 0, null, true);
         }
     }
 
@@ -77,23 +79,20 @@ public final class Envelope {
             throw new IllegalArgumentException("envelope is not a JSON object");
         }
         JsonObject object = data.getAsJsonObject();
-        byte[] body = null;
         JsonElement bodyElement = object.get("data");
-        if (bodyElement != null && bodyElement.isJsonPrimitive() && bodyElement.getAsJsonPrimitive().isString()) {
-            ByteString decoded = ByteString.decodeBase64(bodyElement.getAsString());
-            if (decoded == null) {
-                throw new IllegalArgumentException("envelope data is not valid base64");
-            }
-            body = decoded.toByteArray();
+        if (bodyElement == null || !bodyElement.isJsonPrimitive() || !bodyElement.getAsJsonPrimitive().isString()) {
+            throw new IllegalArgumentException("envelope has no data");
         }
-        JsonElement oversize = object.get("oversize");
+        ByteString decoded = ByteString.decodeBase64(bodyElement.getAsString());
+        if (decoded == null || decoded.size() == 0) {
+            throw new IllegalArgumentException("envelope data is empty or not valid base64");
+        }
         return new Envelope(
-            intOf(object, "type"),
+            requiredPositive(object, "type"),
             longOf(object, "pts"),
             intOf(object, "ptsCount"),
-            intOf(object, "date"),
-            body,
-            oversize != null && oversize.isJsonPrimitive() && oversize.getAsBoolean(),
+            requiredPositive(object, "date"),
+            decoded.toByteArray(),
             false
         );
     }
@@ -105,9 +104,15 @@ public final class Envelope {
     }
 
 
-    /** A body-less, non-oversize frame: the channel moved on and the client must resume from {@link #pts}. */
-    public boolean isChannelTooLongSignal() {
-        return !undecodable && updatesProto == null && !oversize;
+    private static int requiredPositive(
+        JsonObject object,
+        String name
+    ) {
+        int value = intOf(object, name);
+        if (value <= 0) {
+            throw new IllegalArgumentException("envelope " + name + " is missing or not positive");
+        }
+        return value;
     }
 
 

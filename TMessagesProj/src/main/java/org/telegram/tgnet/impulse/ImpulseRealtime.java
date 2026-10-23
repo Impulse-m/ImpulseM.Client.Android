@@ -24,7 +24,6 @@ import org.telegram.tgnet.NativeByteBuffer;
 import org.telegram.tgnet.TLClassStore;
 import org.telegram.tgnet.TLDataSourceType;
 import org.telegram.tgnet.TLRPC;
-import org.telegram.tgnet.tl.TL_update;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -278,9 +277,6 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             case GET_DIFFERENCE:
                 postDifference("publication_requests_difference", publication.channel);
                 break;
-            case CHANNEL_TOO_LONG:
-                postChannelTooLong(action.channelId, action.pts, action.date);
-                break;
             case DECODE:
                 decodeAndProcess(action.proto);
                 break;
@@ -351,34 +347,19 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             }
         } catch (Exception e) {
             FileLog.e(e);
+            // A publication that breaks the wire contract is a server defect: trace why, so it can be reported.
+            RemoteLog.trace(
+                LogLevel.WARN,
+                RemoteLog.ComponentRealtime,
+                "PUBLICATION_UNDECODABLE",
+                "detail", String.valueOf(e.getMessage())
+            );
             postDifference("publication_decode_failed", null);
         } finally {
             if (buffer != null) {
                 buffer.reuse();
             }
         }
-    }
-
-
-    private void postChannelTooLong(
-        long channelId,
-        int pts,
-        int date
-    ) {
-        TL_update.TL_updateChannelTooLong update = new TL_update.TL_updateChannelTooLong();
-        update.flags = pts > 0 ? 1 : 0;
-        update.channel_id = channelId;
-        update.pts = pts > 0 ? pts : 0;
-        final TLRPC.TL_updates updates = new TLRPC.TL_updates();
-        updates.updates.add(update);
-        updates.date = date;
-        updates.seq = 0;
-        Utilities.stageQueue.postRunnable(new Runnable() {
-            @Override
-            public void run() {
-                MessagesController.getInstance(account).processUpdates(updates, false);
-            }
-        });
     }
 
 
