@@ -16,9 +16,11 @@ public class LangPackTransportTest {
     private final Transcoder transcoder = new Transcoder(TlProtoSchema.load());
 
 
+    // An empty lang_pack goes out as is: the server reads it as the pack the connection declared.
+
     @Test
-    public void legacyLanguageListRequestsTheAndroidPack() {
-        assertRequest(TlBuilder.legacyMethod(0x800fd57d), "GetLanguages", "android");
+    public void legacyLanguageListSendsAnEmptyPack() {
+        assertRequest(TlBuilder.legacyMethod(0x800fd57d), "GetLanguages", "");
     }
 
 
@@ -27,7 +29,7 @@ public class LangPackTransportTest {
         assertRequest(
             TlBuilder.legacyMethod(0x9ab5c58e).put("lang_code", "ru"),
             "GetLangPack",
-            "android"
+            ""
         );
     }
 
@@ -39,17 +41,17 @@ public class LangPackTransportTest {
                 .put("lang_code", "ru")
                 .put("keys", Arrays.asList("Cancel", "OK")),
             "GetStrings",
-            "android"
+            ""
         );
     }
 
 
     @Test
-    public void allCurrentLanguageMethodsDefaultToAndroid() {
+    public void currentLanguageMethodsSendAnEmptyPackUnchanged() {
         for (String method : Arrays.asList(
             "GetLanguages", "GetLangPack", "GetStrings", "GetDifference", "GetLanguage"
         )) {
-            assertRequest(currentRequest(method, ""), method, "android");
+            assertRequest(currentRequest(method, ""), method, "");
         }
     }
 
