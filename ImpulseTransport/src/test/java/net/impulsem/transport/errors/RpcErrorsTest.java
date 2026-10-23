@@ -58,19 +58,19 @@ public class RpcErrorsTest {
 
 
     @Test
-    public void unimplementedWithoutErrorCodeIsMethodInvalid() {
+    public void unimplementedWithoutErrorCodeStaysUnimplemented() {
         RpcError error = RpcErrors.fromResponse(response(12, null));
-        assertEquals(400, error.code);
-        assertEquals("METHOD_INVALID", error.text);
+        assertEquals(501, error.code);
+        assertEquals("UNIMPLEMENTED", error.text);
         RpcError withMessage = RpcErrors.fromResponse(response(12, "no such method"));
-        assertEquals(400, withMessage.code);
-        assertEquals("METHOD_INVALID", withMessage.text);
+        assertEquals(501, withMessage.code);
+        assertEquals("no such method", withMessage.text);
     }
 
 
     @Test
-    public void unimplementedWithMethodInvalidErrorCodeIs400() {
-        RpcError error = RpcErrors.fromResponse(response(12, null, "error-code", "METHOD_INVALID"));
+    public void methodInvalidArrivesAsInvalidArgument() {
+        RpcError error = RpcErrors.fromResponse(response(3, null, "error-code", "METHOD_INVALID"));
         assertEquals(400, error.code);
         assertEquals("METHOD_INVALID", error.text);
     }

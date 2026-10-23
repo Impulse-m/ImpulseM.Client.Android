@@ -287,7 +287,12 @@ public final class RpcClient {
             return new RpcOutcome(null, new RpcError(400, "TRANSCODE_FAILED"), false);
         }
         if (captured[0] != null && captured[1] != null) {
-            tokens.onLoginTokens(captured[0], captured[1], extractUserId(encoded.methodId, response.body));
+            long userId = extractUserId(encoded.methodId, response.body);
+            if (userId == 0) {
+                Log.log(Level.WARNING, "authorization from " + encoded.path + " carries no user id");
+                return new RpcOutcome(null, new RpcError(400, "TRANSCODE_FAILED"), false);
+            }
+            tokens.onLoginTokens(captured[0], captured[1], userId);
         }
         return new RpcOutcome(tl, null, false);
     }

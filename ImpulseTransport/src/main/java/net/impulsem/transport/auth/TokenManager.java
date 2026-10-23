@@ -280,10 +280,12 @@ public final class TokenManager {
         ) {
             throw new IOException("RefreshSession response has no tokens");
         }
-        long userId = authorization.userId != 0 ? authorization.userId : current.userId;
+        if (authorization.userId == 0) {
+            throw new IOException("RefreshSession response has no user id");
+        }
         // False means the session was cleared while the request was on the wire; the new tokens are dropped.
         return onRefreshedTokens(
-            new SessionTokens(authorization.sessionToken, authorization.refreshToken, userId),
+            new SessionTokens(authorization.sessionToken, authorization.refreshToken, authorization.userId),
             startedClearGeneration
         );
     }

@@ -331,6 +331,36 @@ public class RpcClientTest {
 
 
     @Test
+    public void signInResponseWithoutUserFailsAndStoresNoTokens() throws Exception {
+        store.tokens = null;
+        build();
+        tokens.setPendingToken("pend");
+        server.enqueue(ok(authorization("acc", "ref", 0L)));
+
+        RpcOutcome outcome = client.callBlocking(signIn());
+
+        assertNull(outcome.tlResult);
+        assertEquals("TRANSCODE_FAILED", outcome.error.text);
+        assertNull(store.tokens);
+    }
+
+
+    @Test
+    public void refreshWithoutUserIdFailsAndKeepsTheSession() throws Exception {
+        server.enqueue(error(16, "AUTH_KEY_UNREGISTERED"));
+        server.enqueue(ok(refreshResponse("new", "r2", 0L)));
+
+        try {
+            client.callBlocking(resetAuthorizations());
+            fail("expected IOException");
+        } catch (IOException expected) {
+            assertEquals("old", store.tokens.accessToken);
+            assertEquals(5L, store.tokens.userId);
+        }
+    }
+
+
+    @Test
     public void unmappedMethodReturnsMethodInvalidWithoutNetwork() throws Exception {
         TlWriter writer = new TlWriter();
         writer.writeInt32(0x12345678);
@@ -345,15 +375,15 @@ public class RpcClientTest {
 
 
     @Test
-    public void http404IsFinalMethodInvalid() throws Exception {
+    public void http404IsFinalUnimplemented() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(404).setBody("not found"));
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
         assertNull(outcome.tlResult);
         assertFalse(outcome.forceLogout);
-        assertEquals(400, outcome.error.code);
-        assertEquals("METHOD_INVALID", outcome.error.text);
+        assertEquals(501, outcome.error.code);
+        assertEquals("UNIMPLEMENTED", outcome.error.text);
         assertEquals(1, server.getRequestCount());
     }
 
