@@ -214,6 +214,7 @@ public final class ImpulseConnection {
         this.owner = owner;
         this.store = new AndroidSessionStore(account);
         this.grpc = new GrpcWebClient(sharedHttpClient(), ImpulseEndpoints.rpcBaseUrl());
+        this.grpc.setServerTimeListener(serverTimeMillis -> timeOffsetMillis = serverTimeMillis - System.currentTimeMillis());
         this.tokens = new TokenManager(store, grpc, Clock.SYSTEM);
         this.executor = new ThreadPoolExecutor(
             MaxWorkerThreads,
@@ -438,7 +439,7 @@ public final class ImpulseConnection {
     }
 
 
-    /** Fetches help.getConfig again, which also refreshes the server time offset. */
+    /** Fetches help.getConfig again. */
     public void updateDcSettings() {
         fetchConfig();
     }
@@ -504,7 +505,6 @@ public final class ImpulseConnection {
                 if (wasOffline) {
                     setState(connectingState());
                     retryNow();
-                    fetchConfig();
                 }
             }
         });
@@ -1150,7 +1150,7 @@ public final class ImpulseConnection {
     }
 
 
-    /** help.getConfig with WithoutLogin semantics; sets the server time and hands the config to the app. */
+    /** help.getConfig with WithoutLogin semantics, as the C++ updateDcSettings; hands the config to the app. */
     private void fetchConfig() {
         synchronized (lock) {
             if (!started) {
@@ -1173,11 +1173,10 @@ public final class ImpulseConnection {
                 }
                 if (response instanceof TLRPC.TL_config) {
                     TLRPC.TL_config config = (TLRPC.TL_config) response;
-                    timeOffsetMillis = config.date * 1000L - System.currentTimeMillis();
                     synchronized (lock) {
                         thisDatacenter = config.this_dc;
                     }
-                    log("config date=" + config.date + " this_dc=" + config.this_dc + " offset=" + timeOffsetMillis);
+                    log("config this_dc=" + config.this_dc + " offset=" + timeOffsetMillis);
                     MessagesController.getInstance(account).updateConfig(config);
                 } else {
                     log("config failed " + (error == null ? "" : error.code + " " + error.text));

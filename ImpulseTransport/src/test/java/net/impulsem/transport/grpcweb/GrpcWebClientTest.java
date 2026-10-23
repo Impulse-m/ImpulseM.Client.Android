@@ -161,6 +161,40 @@ public class GrpcWebClientTest {
     }
 
 
+    @Test
+    public void serverTimeHeaderReachesTheListenerOnSuccessAndError() throws Exception {
+        final long[] seen = new long[] {0L, 0L};
+        client.setServerTimeListener(new GrpcWebClient.ServerTimeListener() {
+            @Override
+            public void onServerTime(long serverTimeMillis) {
+                seen[seen[0] == 0L ? 0 : 1] = serverTimeMillis;
+            }
+        });
+        enqueue(200, concat(frame(0, new byte[0]), trailer("grpc-status: 0\r\n")), "impulse-server-time-ms", "1700000000123");
+        run(new byte[0]);
+        enqueue(200, trailer("grpc-status: 3\r\nerror-code: METHOD_INVALID\r\n"), "impulse-server-time-ms", "1700000000456");
+        run(new byte[0]);
+        assertEquals(1700000000123L, seen[0]);
+        assertEquals(1700000000456L, seen[1]);
+    }
+
+
+    @Test
+    public void malformedServerTimeHeaderIsIgnored() throws Exception {
+        final long[] seen = new long[] {-1L};
+        client.setServerTimeListener(new GrpcWebClient.ServerTimeListener() {
+            @Override
+            public void onServerTime(long serverTimeMillis) {
+                seen[0] = serverTimeMillis;
+            }
+        });
+        enqueue(200, trailer("grpc-status: 0\r\n"), "impulse-server-time-ms", "soon");
+        GrpcWebResponse response = run(new byte[0]);
+        assertEquals(0, response.grpcStatus);
+        assertEquals(-1L, seen[0]);
+    }
+
+
     // gRPC HTTP-to-status rule: HTTP 404 is UNIMPLEMENTED (12).
     @Test
     public void http404IsUnimplemented() throws Exception {
