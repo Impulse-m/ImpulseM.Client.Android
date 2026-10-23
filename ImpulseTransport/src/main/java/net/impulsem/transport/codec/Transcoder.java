@@ -144,14 +144,11 @@ public final class Transcoder {
     ) {
         TlWriter writer = new TlWriter();
         if (result.kind.equals("bool")) {
-            writer.writeInt32(BoolTrue);
-        } else if (result.kind.equals("bool_overlay")) {
             List<Occurrence> values = parseBody(proto, 0, proto.length).fields.get(1);
-            boolean value = true;
-            if (values != null && !values.isEmpty()) {
-                value = values.get(values.size() - 1).value != 0;
+            if (values == null || values.isEmpty()) {
+                throw new TranscodeException("Bool result carries no value");
             }
-            writer.writeInt32(value ? BoolTrue : BoolFalse);
+            writer.writeInt32(values.get(values.size() - 1).value != 0 ? BoolTrue : BoolFalse);
         } else if (result.kind.equals("int")) {
             writer.writeInt32((int) scalarValue(parseBody(proto, 0, proto.length), 1));
         } else if (result.kind.equals("long")) {

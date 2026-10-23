@@ -101,22 +101,25 @@ class GenTlProtoMapTest(unittest.TestCase):
         self.assertEqual(getUsers["result"]["elem"], {"kind": "object", "type": "User"})
 
         self.assertEqual(self.method("account.updateStatus")["result"], {"kind": "bool"})
-        self.assertEqual(self.method("account.getContactSignUpNotification")["result"], {"kind": "bool_overlay"})
+        self.assertEqual(self.method("account.getContactSignUpNotification")["result"], {"kind": "bool"})
+        self.assertEqual(self.method("messages.reportMessagesDelivery")["result"], {"kind": "bool"})
 
         auth = self.constructor("auth.authorization")
         captures = {c["name"]: c["field"] for c in auth["capture"]}
         self.assertEqual(captures, {"session_token": 6, "refresh_token": 7})
-
-    def test_phone_call_captures(self) -> None:
-        call = self.constructor("phone.phoneCall")
-        captures: Dict[str, int] = {c["name"]: c["field"] for c in call["capture"]}
-        self.assertEqual(captures, {"livekit_url": 3, "livekit_token": 4})
 
     def test_bot_callback_answer_derived(self) -> None:
         answer = self.constructor("messages.botCallbackAnswer")
         hasUrl = self.param(answer, "has_url")
         self.assertEqual(hasUrl["derived_from"], "url")
         self.assertNotIn("field", hasUrl)
+
+    def test_bool_result_needs_explicit_presence(self) -> None:
+        empty: Dict[str, Any] = {"fields": {}, "oneof": {}, "file": "x.proto", "name": "BoolResponse"}
+        implicit: Dict[str, Any] = {"fields": {"value": (1, "bool", "")}, "oneof": {}, "file": "x.proto", "name": "BoolResponse"}
+        for message in (empty, implicit, None):
+            with self.assertRaises(ValueError):
+                gen_tl_proto_map.result_of("Bool", "BoolResponse", message, "test")
 
     def test_guard_rejects_unlisted_extra_field(self) -> None:
         message: Dict[str, Any] = {

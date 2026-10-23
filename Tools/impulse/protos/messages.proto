@@ -7,6 +7,12 @@ option csharp_namespace = "ImpulseM.Protos.Messages";
 
 import "v1/types.proto";
 
+// ImpulseM extension (#654): Preserves boolFalse for ids the caller cannot see until the shared BoolResponse can represent both Telegram Bool constructors.
+message ReportMessagesDeliveryResponse {
+  // ImpulseM extension (#654): Preserves boolFalse for ids the caller cannot see until the shared BoolResponse can represent both Telegram Bool constructors.
+  optional bool value = 1;
+}
+
 service Messages {
   rpc GetMessages(GetMessagesRequest) returns (v1.MessagesMessages);
   rpc GetDialogs(GetDialogsRequest) returns (v1.MessagesDialogs);
@@ -232,7 +238,7 @@ service Messages {
   rpc SavePreparedInlineMessage(SavePreparedInlineMessageRequest) returns (v1.MessagesBotPreparedInlineMessage);
   rpc GetPreparedInlineMessage(GetPreparedInlineMessageRequest) returns (v1.MessagesPreparedInlineMessage);
   rpc SearchStickers(SearchStickersRequest) returns (v1.MessagesFoundStickers);
-  rpc ReportMessagesDelivery(ReportMessagesDeliveryRequest) returns (BoolResponse);
+  rpc ReportMessagesDelivery(ReportMessagesDeliveryRequest) returns (ReportMessagesDeliveryResponse);
   rpc GetSavedDialogsByID(GetSavedDialogsByIDRequest) returns (v1.MessagesSavedDialogs);
   rpc ReadSavedHistory(ReadSavedHistoryRequest) returns (BoolResponse);
   rpc ToggleTodoCompleted(ToggleTodoCompletedRequest) returns (v1.Updates);

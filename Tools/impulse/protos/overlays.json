@@ -79,6 +79,21 @@
     },
     {
       "kind": "message",
+      "file": "messages.proto",
+      "name": "ReportMessagesDeliveryResponse",
+      "fields": [
+        {
+          "name": "value",
+          "type": "bool",
+          "optional": true
+        }
+      ],
+      "canon": "messages.reportMessagesDelivery#5a6d7395 flags:# push:flags.0?true peer:InputPeer id:Vector<int> = Bool (api.tl LAYER 229:2710)",
+      "reason": "Preserves boolFalse for ids the caller cannot see until the shared BoolResponse can represent both Telegram Bool constructors.",
+      "issue": "654"
+    },
+    {
+      "kind": "message",
       "file": "upload.proto",
       "name": "AbandonUploadRequest",
       "fields": [

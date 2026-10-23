@@ -12529,7 +12529,9 @@ message WebViewResult {
   string url = 4;
 }
 
-message BoolResponse {}
+message BoolResponse {
+  optional bool value = 1;
+}
 
 message LongResponse { int64 value = 1; }
 
