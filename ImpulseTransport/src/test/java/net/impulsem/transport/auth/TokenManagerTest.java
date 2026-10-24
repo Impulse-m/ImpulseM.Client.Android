@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -95,7 +96,12 @@ public class TokenManagerTest {
 
 
     private TokenManager newManager() {
-        return new TokenManager(store, new GrpcWebClient(new OkHttpClient(), server.url("/")), clock);
+        return newManager(new Random());
+    }
+
+
+    private TokenManager newManager(Random random) {
+        return new TokenManager(store, new GrpcWebClient(new OkHttpClient(), server.url("/")), clock, random);
     }
 
 
@@ -243,9 +249,57 @@ public class TokenManagerTest {
 
 
     @Test
-    public void needsProactiveRefreshWhenExpiryWithin60Seconds() {
+    public void proactiveRefreshDrawsPointInFiveToTwoMinuteWindow() {
+        long startMillis = clock.now;
+        long expSeconds = startMillis / 1000 + 600;
+        for (int draw = 0; draw < 200; draw++) {
+            clock.now = startMillis;
+            store.tokens = new SessionTokens(jwt(expSeconds), "r", 1L);
+            manager = newManager();
+            assertFalse("draw " + draw + ": refresh before exp-300 s", manager.needsProactiveRefresh());
+            clock.now = (expSeconds - 301) * 1000L;
+            assertFalse("draw " + draw + ": refresh 301 s before exp", manager.needsProactiveRefresh());
+            clock.now = (expSeconds - 119) * 1000L;
+            assertTrue("draw " + draw + ": no refresh 119 s before exp", manager.needsProactiveRefresh());
+        }
+    }
+
+
+    @Test
+    public void tokenStoredWithTwoHundredSecondsLeftRefreshesBeforeExpiryMinus120() {
+        long startMillis = clock.now;
+        long expSeconds = startMillis / 1000 + 200;
+        for (int draw = 0; draw < 200; draw++) {
+            clock.now = startMillis;
+            store.tokens = new SessionTokens(jwt(expSeconds), "r", 1L);
+            manager = newManager();
+            clock.now = (expSeconds - 120) * 1000L;
+            assertTrue("draw " + draw + ": no refresh by exp-120 s", manager.needsProactiveRefresh());
+        }
+    }
+
+
+    @Test
+    public void proactiveRefreshTurnsTrueAtTheDrawnPoint() {
+        long startMillis = clock.now;
+        long expSeconds = startMillis / 1000 + 600;
+        for (long seed = 0; seed < 50; seed++) {
+            clock.now = startMillis;
+            long point = new RefreshSchedule(new Random(seed)).drawRefreshPointMillis(expSeconds, startMillis);
+            store.tokens = new SessionTokens(jwt(expSeconds), "r", 1L);
+            manager = newManager(new Random(seed));
+            clock.now = point - 1000L;
+            assertFalse("seed " + seed + ": refresh one second before the point", manager.needsProactiveRefresh());
+            clock.now = point;
+            assertTrue("seed " + seed + ": no refresh at the point", manager.needsProactiveRefresh());
+        }
+    }
+
+
+    @Test
+    public void tokenStoredWithOneHundredSecondsLeftRefreshesAtOnce() {
         long nowSeconds = clock.now / 1000;
-        store.tokens = new SessionTokens(jwt(nowSeconds + 30), "r", 1L);
+        store.tokens = new SessionTokens(jwt(nowSeconds + 100), "r", 1L);
         manager = newManager();
         assertTrue(manager.needsProactiveRefresh());
     }

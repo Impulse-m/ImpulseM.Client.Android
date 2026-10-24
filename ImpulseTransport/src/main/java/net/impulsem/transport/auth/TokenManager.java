@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.Collections;
+import java.util.Random;
 import net.impulsem.transport.errors.RpcError;
 import net.impulsem.transport.errors.RpcErrors;
 import net.impulsem.transport.grpcweb.GrpcWebClient;
@@ -20,7 +21,7 @@ import net.impulsem.transport.grpcweb.GrpcWebResponse;
 public final class TokenManager {
 
     private static final long PendingLifetimeMillis = 5 * 60 * 1000L;
-    private static final long ProactiveMarginSeconds = 60L;
+    private static final long NoRefreshPointMillis = Long.MAX_VALUE;
 
     private static final class Pending {
 
@@ -38,9 +39,27 @@ public final class TokenManager {
     }
 
 
+    /** A stored token pair with the refresh point drawn when it was stored. The point is never persisted. */
+    private static final class Held {
+
+        final SessionTokens tokens;
+        final long refreshPointMillis;
+
+
+        Held(
+            SessionTokens tokens,
+            long refreshPointMillis
+        ) {
+            this.tokens = tokens;
+            this.refreshPointMillis = refreshPointMillis;
+        }
+    }
+
+
     private final SessionStore store;
     private final GrpcWebClient client;
     private final Clock clock;
+    private final RefreshSchedule schedule;
 
     private final Object refreshLock = new Object();
     private boolean refreshing;
@@ -50,7 +69,7 @@ public final class TokenManager {
 
     private long clearGeneration;
 
-    private volatile SessionTokens tokens;
+    private volatile Held held;
     private volatile Pending pending;
     private volatile String qrTicket;
     private volatile Runnable sessionListener;
@@ -61,10 +80,21 @@ public final class TokenManager {
         GrpcWebClient client,
         Clock clock
     ) {
+        this(store, client, clock, new Random());
+    }
+
+
+    public TokenManager(
+        SessionStore store,
+        GrpcWebClient client,
+        Clock clock,
+        Random random
+    ) {
         this.store = store;
         this.client = client;
         this.clock = clock;
-        this.tokens = store.load();
+        this.schedule = new RefreshSchedule(random);
+        this.held = hold(store.load());
     }
 
 
@@ -74,8 +104,8 @@ public final class TokenManager {
         if (active != null) {
             return active;
         }
-        SessionTokens current = tokens;
-        return current == null ? null : current.accessToken;
+        Held current = held;
+        return current == null ? null : current.tokens.accessToken;
     }
 
 
@@ -86,7 +116,7 @@ public final class TokenManager {
     ) {
         SessionTokens value = new SessionTokens(access, refresh, userId);
         synchronized (this) {
-            tokens = value;
+            held = hold(value);
             pending = null;
             store.save(value);
         }
@@ -106,11 +136,24 @@ public final class TokenManager {
             if (clearGeneration != expectedClearGeneration) {
                 return false;
             }
-            tokens = value;
+            held = hold(value);
             store.save(value);
         }
         notifySessionChanged();
         return true;
+    }
+
+
+    /** Pairs a stored token with the refresh point drawn now; an unreadable access token gets no point. */
+    private Held hold(SessionTokens value) {
+        if (value == null) {
+            return null;
+        }
+        long exp = value.accessToken == null ? -1 : expirySeconds(value.accessToken);
+        long point = exp < 0
+            ? NoRefreshPointMillis
+            : schedule.drawRefreshPointMillis(exp, clock.nowMillis());
+        return new Held(value, point);
     }
 
 
@@ -162,7 +205,7 @@ public final class TokenManager {
 
 
     public boolean hasSession() {
-        return tokens != null;
+        return held != null;
     }
 
 
@@ -170,27 +213,25 @@ public final class TokenManager {
         synchronized (this) {
             clearGeneration++;
             store.clear();
-            tokens = null;
+            held = null;
             pending = null;
             qrTicket = null;
         }
     }
 
 
-    /** True when the access token expires within 60 seconds. Opaque or missing tokens never need it. */
+    /**
+     * True once the refresh point drawn for the stored access token has passed. Opaque or missing tokens never need it.
+     */
     public boolean needsProactiveRefresh() {
-        SessionTokens current = tokens;
-        if (current == null || current.accessToken == null || current.refreshToken == null) {
+        Held current = held;
+        if (current == null || current.tokens.accessToken == null || current.tokens.refreshToken == null) {
             return false;
         }
         if (activePendingToken() != null) {
             return false;
         }
-        long exp = expirySeconds(current.accessToken);
-        if (exp < 0) {
-            return false;
-        }
-        return exp - ProactiveMarginSeconds <= clock.nowMillis() / 1000;
+        return clock.nowMillis() >= current.refreshPointMillis;
     }
 
 
@@ -252,7 +293,7 @@ public final class TokenManager {
         SessionTokens current;
         synchronized (this) {
             startedClearGeneration = clearGeneration;
-            current = tokens;
+            current = held == null ? null : held.tokens;
         }
         if (current == null || current.refreshToken == null) {
             return false;
