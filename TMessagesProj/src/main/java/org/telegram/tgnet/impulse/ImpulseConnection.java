@@ -122,6 +122,7 @@ public final class ImpulseConnection {
 
     private final ThreadPoolExecutor executor;
     private final ScheduledExecutorService scheduler;
+    private final ConnectionDeclarer.Delayer timerDelayer;
 
     private final Map<Integer, Pending> pendings = new HashMap<>();
     private final List<Pending> loginWaiting = new ArrayList<>();
@@ -228,6 +229,16 @@ public final class ImpulseConnection {
         ScheduledThreadPoolExecutor timers = new ScheduledThreadPoolExecutor(1, namedThreads("impulse-timer-" + account));
         timers.setRemoveOnCancelPolicy(true);
         this.scheduler = timers;
+        this.timerDelayer = new ConnectionDeclarer.Delayer() {
+            @Override
+            public void schedule(
+                Runnable task,
+                long delayMillis
+            ) {
+                scheduler.schedule(task, delayMillis, TimeUnit.MILLISECONDS);
+            }
+        };
+        this.tokens.setDeferredRefreshScheduling(this.executor, this.timerDelayer);
         this.realtime = ImpulseRealtime.create(account, this);
     }
 
@@ -620,15 +631,7 @@ public final class ImpulseConnection {
                 rpc,
                 tokens,
                 executor,
-                new ConnectionDeclarer.Delayer() {
-                    @Override
-                    public void schedule(
-                        Runnable task,
-                        long delayMillis
-                    ) {
-                        scheduler.schedule(task, delayMillis, TimeUnit.MILLISECONDS);
-                    }
-                },
+                timerDelayer,
                 new ConnectionDeclarer.Listener() {
                     @Override
                     public void onResult(

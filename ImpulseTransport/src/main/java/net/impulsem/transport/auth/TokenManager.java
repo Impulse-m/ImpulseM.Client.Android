@@ -6,12 +6,16 @@ import com.google.gson.JsonParser;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
 import java.util.Collections;
+import java.util.concurrent.Executor;
 import java.util.Random;
 import net.impulsem.transport.errors.RpcError;
 import net.impulsem.transport.errors.RpcErrors;
 import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.grpcweb.GrpcWebResponse;
+import net.impulsem.transport.policy.RequestPolicy;
+import net.impulsem.transport.rpc.ConnectionDeclarer;
 
 
 /**
@@ -22,6 +26,8 @@ public final class TokenManager {
 
     private static final long PendingLifetimeMillis = 5 * 60 * 1000L;
     private static final long NoRefreshPointMillis = Long.MAX_VALUE;
+    private static final int NoFlags = 0;
+    private static final int RateLimitedCode = 420;
 
     private static final class Pending {
 
@@ -66,6 +72,8 @@ public final class TokenManager {
     private long refreshGeneration;
     private boolean lastRefreshResult;
     private IOException lastRefreshFailure;
+    private boolean deferredPending;
+    private long deferredGeneration;
 
     private long clearGeneration;
 
@@ -73,6 +81,8 @@ public final class TokenManager {
     private volatile Pending pending;
     private volatile String qrTicket;
     private volatile Runnable sessionListener;
+    private volatile Executor refreshExecutor;
+    private volatile ConnectionDeclarer.Delayer refreshDelayer;
 
 
     public TokenManager(
@@ -118,6 +128,7 @@ public final class TokenManager {
         synchronized (this) {
             held = hold(value);
             pending = null;
+            cancelDeferredRefresh();
             store.save(value);
         }
         notifySessionChanged();
@@ -190,6 +201,19 @@ public final class TokenManager {
     }
 
 
+    /**
+     * Enables retrying a refresh refused with FLOOD_WAIT_X: the retry runs on the executor after X seconds, and only
+     * while it would land before the access token reaches exp - 120 s. Unset, a refused refresh fails at once.
+     */
+    public void setDeferredRefreshScheduling(
+        Executor executor,
+        ConnectionDeclarer.Delayer delayer
+    ) {
+        refreshExecutor = executor;
+        refreshDelayer = delayer;
+    }
+
+
     /** Called after login or refresh stored a new token pair, never on clear. */
     public void setSessionListener(Runnable listener) {
         sessionListener = listener;
@@ -216,6 +240,7 @@ public final class TokenManager {
             held = null;
             pending = null;
             qrTicket = null;
+            cancelDeferredRefresh();
         }
     }
 
@@ -246,6 +271,9 @@ public final class TokenManager {
     public boolean refreshBlocking() throws IOException {
         long joinedGeneration;
         synchronized (refreshLock) {
+            if (deferredPending) {
+                return true;
+            }
             if (refreshing) {
                 joinedGeneration = refreshGeneration;
                 while (refreshing && refreshGeneration == joinedGeneration) {
@@ -311,6 +339,9 @@ public final class TokenManager {
                 clear();
                 return false;
             }
+            if (error.code == RateLimitedCode && deferRefresh(error, current.accessToken, startedClearGeneration)) {
+                return true;
+            }
             throw new IOException("RefreshSession failed: " + error);
         }
         ImpulseRpcPaths.Authorization authorization = ImpulseRpcPaths.decodeAuthorization(response.body);
@@ -329,6 +360,89 @@ public final class TokenManager {
             new SessionTokens(authorization.sessionToken, authorization.refreshToken, authorization.userId),
             startedClearGeneration
         );
+    }
+
+
+    /**
+     * Schedules a retry of a refused refresh after the advertised wait, if it lands before exp - 120 s. The current
+     * access token stays valid until then, so callers keep using it and send no request while the retry is pending.
+     */
+    private boolean deferRefresh(
+        RpcError error,
+        String accessToken,
+        long startedClearGeneration
+    ) {
+        Executor executor = refreshExecutor;
+        ConnectionDeclarer.Delayer delayer = refreshDelayer;
+        if (executor == null || delayer == null) {
+            return false;
+        }
+        RequestPolicy.Decision decision = RequestPolicy.onError(
+            NoFlags,
+            RequestPolicy.CONNECTION_TYPE_GENERIC,
+            error,
+            1
+        );
+        if (decision.action != RequestPolicy.Action.RETRY_AFTER) {
+            return false;
+        }
+        long expSeconds = accessToken == null ? -1 : expirySeconds(accessToken);
+        if (expSeconds < 0) {
+            return false;
+        }
+        long landingMillis = clock.nowMillis() + decision.delayMillis;
+        if (landingMillis >= (expSeconds - RefreshSchedule.WindowEndBeforeExpirySeconds) * 1000L) {
+            return false;
+        }
+        final long generation;
+        synchronized (this) {
+            if (clearGeneration != startedClearGeneration) {
+                return false;
+            }
+            synchronized (refreshLock) {
+                deferredGeneration++;
+                deferredPending = true;
+                generation = deferredGeneration;
+            }
+        }
+        delayer.schedule(
+            new Runnable() {
+                @Override
+                public void run() {
+                    executor.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            runDeferredRefresh(generation);
+                        }
+                    });
+                }
+            },
+            decision.delayMillis
+        );
+        return true;
+    }
+
+
+    private void runDeferredRefresh(long generation) {
+        synchronized (refreshLock) {
+            if (deferredGeneration != generation) {
+                return;
+            }
+            deferredPending = false;
+        }
+        try {
+            refreshBlocking();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+
+    private void cancelDeferredRefresh() {
+        synchronized (refreshLock) {
+            deferredPending = false;
+            deferredGeneration++;
+        }
     }
 
 
