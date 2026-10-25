@@ -151,6 +151,22 @@ public class TokenManagerRetryTest {
 
 
     @Test
+    public void failedDeferredRetryDoesNotThrowFromItsTask() throws Exception {
+        String original = store.tokens.accessToken;
+        server.enqueue(error(8, "FLOOD_WAIT_5"));
+        assertTrue(manager.refreshBlocking());
+
+        server.enqueue(error(13, "INTERNAL"));
+        clock.now += 5000L;
+        delayer.runNext();
+
+        assertEquals(2, server.getRequestCount());
+        assertEquals(original, store.tokens.accessToken);
+        assertTrue(manager.hasSession());
+    }
+
+
+    @Test
     public void concurrentCallersDuringPendingRetrySendOneRequest() throws Exception {
         server.enqueue(error(8, "FLOOD_WAIT_5"));
         assertTrue(manager.refreshBlocking());

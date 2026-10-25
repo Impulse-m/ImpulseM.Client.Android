@@ -6,7 +6,6 @@ import com.google.gson.JsonParser;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.io.UncheckedIOException;
 import java.util.Collections;
 import java.util.concurrent.Executor;
 import java.util.Random;
@@ -433,7 +432,8 @@ public final class TokenManager {
         try {
             refreshBlocking();
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            // A background task must not throw: on Android that kills the app. The next request past the refresh
+            // point refreshes again in the foreground and reports its own failure.
         }
     }
 
