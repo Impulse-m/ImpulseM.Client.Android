@@ -169,7 +169,7 @@ public class RpcClientTest {
     }
 
 
-    /** impulse.auth.Authorization, the RefreshSession response. */
+    /** impulse.auth.RefreshSessionResponse, the RefreshSession answer. */
     private static byte[] refreshResponse(
         String access,
         String refresh,
@@ -177,8 +177,8 @@ public class RpcClientTest {
     ) {
         ProtoWriter writer = new ProtoWriter();
         writer.writeVarintField(1, userId);
-        writer.writeBytesField(5, utf8(access));
-        writer.writeBytesField(6, utf8(refresh));
+        writer.writeBytesField(2, utf8(access));
+        writer.writeBytesField(3, utf8(refresh));
         return writer.toByteArray();
     }
 

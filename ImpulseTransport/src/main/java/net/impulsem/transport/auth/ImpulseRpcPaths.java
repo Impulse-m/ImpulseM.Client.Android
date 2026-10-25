@@ -13,7 +13,7 @@ public final class ImpulseRpcPaths {
     public static final String InitConnection = "/impulse.auth.AuthService/InitConnection";
 
 
-    /** The decoded impulse.auth.Authorization message; absent strings are null. */
+    /** The decoded impulse.auth.RefreshSessionResponse message; absent strings are null. */
     public static final class Authorization {
 
         public long userId;
@@ -68,8 +68,11 @@ public final class ImpulseRpcPaths {
     }
 
 
-    /** impulse.auth.Authorization { user_id = 1; session_token = 5; refresh_token = 6; }, other fields skipped. */
-    public static Authorization decodeAuthorization(byte[] proto) {
+    /**
+     * impulse.auth.RefreshSessionResponse { user_id = 1; session_token = 2; refresh_token = 3; grace = 4; }, the
+     * answer of RefreshSession since the backend's 2026-10-16 change; other fields skipped.
+     */
+    public static Authorization decodeRefreshSession(byte[] proto) {
         Authorization result = new Authorization();
         ProtoReader reader = new ProtoReader(proto, 0, proto.length);
         while (reader.next()) {
@@ -77,9 +80,9 @@ public final class ImpulseRpcPaths {
             int wire = reader.wireType();
             if (field == 1 && wire == 0) {
                 result.userId = reader.readVarint();
-            } else if (field == 5 && wire == 2) {
+            } else if (field == 2 && wire == 2) {
                 result.sessionToken = string(reader.readBytes());
-            } else if (field == 6 && wire == 2) {
+            } else if (field == 3 && wire == 2) {
                 result.refreshToken = string(reader.readBytes());
             }
         }

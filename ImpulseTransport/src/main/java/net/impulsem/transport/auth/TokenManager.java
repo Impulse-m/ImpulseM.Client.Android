@@ -343,7 +343,7 @@ public final class TokenManager {
             }
             throw new IOException("RefreshSession failed: " + error);
         }
-        ImpulseRpcPaths.Authorization authorization = ImpulseRpcPaths.decodeAuthorization(response.body);
+        ImpulseRpcPaths.Authorization authorization = ImpulseRpcPaths.decodeRefreshSession(response.body);
         if (authorization.sessionToken == null
             || authorization.sessionToken.isEmpty()
             || authorization.refreshToken == null
