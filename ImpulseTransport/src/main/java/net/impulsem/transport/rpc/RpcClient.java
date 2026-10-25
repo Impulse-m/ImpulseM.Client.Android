@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import net.impulsem.transport.auth.Credentials;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.CaptureSink;
 import net.impulsem.transport.codec.EncodedRequest;
@@ -28,8 +29,11 @@ public final class RpcClient {
 
     static final long CallTimeoutMillis = 30_000L;
     static final long MediaCallTimeoutMillis = 10_000L;
+    static final long DeclareWaitMillis = 10_000L;
 
     private static final Logger Log = Logger.getLogger(RpcClient.class.getName());
+
+    private static final String ConnectionNotInitedText = "CONNECTION_NOT_INITED";
 
     private static final Set<String> MediaMethods = Collections.unmodifiableSet(
         new HashSet<String>(Arrays.asList(
@@ -47,19 +51,36 @@ public final class RpcClient {
     private static final String PredicateUserEmpty = "userEmpty";
 
 
-    /** One attempt's outcome, with its error already classified (a token refusal counts as REFRESH_AND_RETRY). */
+    /** The connection's initConnection state, as ConnectionDeclarer keeps it. */
+    public interface DeclarationGate {
+
+        /** Waits until the current credential is declared, at most timeoutMillis; true when it is. */
+        boolean awaitDeclared(long timeoutMillis) throws IOException;
+
+        /** The server lost the declaration (CONNECTION_NOT_INITED): declare again. */
+        void invalidate();
+    }
+
+
+    /**
+     * One attempt's outcome, with its error already classified (a token refusal counts as REFRESH_AND_RETRY).
+     * tokenRefused tells a refused token apart from other REFRESH_AND_RETRY errors such as AUTH_KEY_UNREGISTERED.
+     */
     private static final class Attempt {
 
         final RpcOutcome outcome;
         final AuthErrorClass errorClass;
+        final boolean tokenRefused;
 
 
         Attempt(
             RpcOutcome outcome,
-            AuthErrorClass errorClass
+            AuthErrorClass errorClass,
+            boolean tokenRefused
         ) {
             this.outcome = outcome;
             this.errorClass = errorClass;
+            this.tokenRefused = tokenRefused;
         }
     }
 
@@ -68,7 +89,9 @@ public final class RpcClient {
     private final RpcCarrier updateSocket;
     private final RpcCarrier mediaFleet;
     private final TokenManager tokens;
+    private final Credentials credentials;
     private final TlProtoSchema schema;
+    private volatile DeclarationGate declarationGate;
 
 
     /** The media fleet may be null until it exists; file calls then fail as a carrier fault. */
@@ -76,13 +99,21 @@ public final class RpcClient {
         Transcoder transcoder,
         RpcCarrier updateSocket,
         RpcCarrier mediaFleet,
-        TokenManager tokens
+        TokenManager tokens,
+        Credentials credentials
     ) {
         this.transcoder = transcoder;
         this.updateSocket = updateSocket;
         this.mediaFleet = mediaFleet;
         this.tokens = tokens;
+        this.credentials = credentials;
         this.schema = transcoder.schema();
+    }
+
+
+    /** Sets the gate that holds calls until the connection is declared; null removes it. */
+    public void setDeclarationGate(DeclarationGate gate) {
+        declarationGate = gate;
     }
 
 
@@ -114,23 +145,51 @@ public final class RpcClient {
             // Takeout has no carrier on the fleets; the feature is hidden in the app.
             return new RpcOutcome(null, new RpcError(400, "TAKEOUT_INVALID"), false);
         }
-        if (tokens.needsProactiveRefresh() && !tokens.refreshBlocking()) {
+        boolean signedIn = credentials.signedIn();
+        // The server answers only the methods that suit the socket's credential, so a refusal here costs no round trip.
+        if (!MethodClasses.allowed(signedIn, encoded.method)) {
+            String socketKind = signedIn ? "session" : "identity";
+            Log.log(Level.WARNING, "refused " + encoded.method + " on the " + socketKind + " socket");
+            return new RpcOutcome(null, new RpcError(400, "METHOD_INVALID"), false);
+        }
+        if (signedIn && tokens.needsProactiveRefresh() && !tokens.refreshBlocking()) {
             return new RpcOutcome(null, new RpcError(401, "SESSION_EXPIRED"), true);
         }
         checkCanceled(call);
-        String bearerBefore = tokens.bearer();
-        Attempt first = attemptOnce(call);
+        DeclarationGate gate = declarationGate;
+        if (gate != null) {
+            // The result is ignored: when the declaration really is missing the server says CONNECTION_NOT_INITED.
+            gate.awaitDeclared(DeclareWaitMillis);
+            checkCanceled(call);
+        }
+        String credentialBefore = credentials.current();
+        boolean[] redeclared = new boolean[1];
+        Attempt first = attemptDeclaring(call, gate, redeclared);
         if (first.errorClass == AuthErrorClass.FORCE_LOGOUT) {
             return new RpcOutcome(null, first.outcome.error, true);
         }
         if (first.errorClass != AuthErrorClass.REFRESH_AND_RETRY) {
             return first.outcome;
         }
-        if (!sessionRefreshed(bearerBefore)) {
+        if (!signedIn) {
+            // G10: a refused identity is discarded; the socket reconnects with a new one and the SDK queues the retry.
+            credentials.refused(credentialBefore);
+            checkCanceled(call);
+            Attempt retry = attemptDeclaring(call, gate, redeclared);
+            if (retry.errorClass == AuthErrorClass.REFRESH_AND_RETRY || retry.errorClass == AuthErrorClass.FORCE_LOGOUT) {
+                // There is no session to log out, so the refusal is not a forced logout.
+                return new RpcOutcome(null, retry.outcome.error, false);
+            }
+            return retry.outcome;
+        }
+        if (first.tokenRefused) {
+            credentials.refused(credentialBefore);
+        }
+        if (!sessionRefreshed(credentialBefore)) {
             return new RpcOutcome(null, first.outcome.error, true);
         }
         checkCanceled(call);
-        Attempt second = attemptOnce(call);
+        Attempt second = attemptDeclaring(call, gate, redeclared);
         // Still unregistered right after a refresh: the session is dead, refreshing again only burns the rotating token.
         if (second.errorClass == AuthErrorClass.FORCE_LOGOUT || second.errorClass == AuthErrorClass.REFRESH_AND_RETRY) {
             return new RpcOutcome(null, second.outcome.error, true);
@@ -208,6 +267,30 @@ public final class RpcClient {
     }
 
 
+    /**
+     * One attempt that, when the server says the connection was never initialised, declares it again and attempts
+     * once more. redeclared is shared by all attempts of one execute, so the declaration is repeated at most once.
+     */
+    private Attempt attemptDeclaring(
+        PreparedCall call,
+        DeclarationGate gate,
+        boolean[] redeclared
+    ) throws IOException {
+        Attempt attempt = attemptOnce(call);
+        if (gate == null || redeclared[0] || attempt.outcome.error == null) {
+            return attempt;
+        }
+        if (!ConnectionNotInitedText.equals(attempt.outcome.error.text)) {
+            return attempt;
+        }
+        redeclared[0] = true;
+        gate.invalidate();
+        gate.awaitDeclared(DeclareWaitMillis);
+        checkCanceled(call);
+        return attemptOnce(call);
+    }
+
+
     private Attempt attemptOnce(PreparedCall call) throws IOException {
         EncodedRequest encoded = call.encoded;
         String method = encoded.method;
@@ -238,7 +321,7 @@ public final class RpcClient {
             }
             return failedAttempt(method, settled.failure);
         }
-        return new Attempt(decodeReply(encoded, settled.reply), AuthErrorClass.NONE);
+        return new Attempt(decodeReply(encoded, settled.reply), AuthErrorClass.NONE, false);
     }
 
 
@@ -252,12 +335,12 @@ public final class RpcClient {
     ) throws IOException {
         RpcError error = CarrierErrors.toRpcError(failure);
         if (CarrierErrors.isTokenRefusal(failure)) {
-            return new Attempt(new RpcOutcome(null, error, false), AuthErrorClass.REFRESH_AND_RETRY);
+            return new Attempt(new RpcOutcome(null, error, false), AuthErrorClass.REFRESH_AND_RETRY, true);
         }
         if (error == null) {
             throw new IOException("carrier fault on " + method + ": " + failure.cause, failure.cause);
         }
-        return new Attempt(new RpcOutcome(null, error, false), RpcErrors.classify(error));
+        return new Attempt(new RpcOutcome(null, error, false), RpcErrors.classify(error), false);
     }
 
 

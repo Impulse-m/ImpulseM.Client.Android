@@ -23,9 +23,12 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import net.impulsem.transport.auth.Clock;
+import net.impulsem.transport.auth.Credentials;
+import net.impulsem.transport.auth.IdentityManager;
 import net.impulsem.transport.auth.ImpulseRpcPaths;
 import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
+import net.impulsem.transport.auth.TestIdentity;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.live.TlBuilder;
@@ -50,6 +53,7 @@ public class RpcClientTest {
     private static final long CallTimeoutMillis = 30_000L;
     private static final long MediaCallTimeoutMillis = 10_000L;
     private static final long SettleDelayMillis = 800L;
+    private static final long IdentityExpSeconds = 1_700_003_600L;
 
     private static final class MemoryStore implements SessionStore {
 
@@ -75,8 +79,35 @@ public class RpcClientTest {
     }
 
 
+    /** Records each wait and each invalidation; a wait notes how many carrier calls had gone out before it. */
+    private static final class RecordingGate implements RpcClient.DeclarationGate {
+
+        final List<String> events = Collections.synchronizedList(new ArrayList<String>());
+        private final FakeCarrier carrier;
+
+
+        RecordingGate(FakeCarrier carrier) {
+            this.carrier = carrier;
+        }
+
+
+        @Override
+        public boolean awaitDeclared(long timeoutMillis) {
+            events.add("await@" + carrier.callCount());
+            return true;
+        }
+
+
+        @Override
+        public void invalidate() {
+            events.add("invalidate");
+        }
+    }
+
+
     private MemoryStore store;
     private TokenManager tokens;
+    private IdentityManager identity;
     private FakeCarrier update;
     private FakeCarrier media;
     private FakeCarrier pool;
@@ -108,17 +139,22 @@ public class RpcClientTest {
 
 
     private void build(RpcCarrier mediaFleet) {
-        tokens = new TokenManager(
-            store,
-            new Clock() {
-                @Override
-                public long nowMillis() {
-                    return 1_700_000_000_000L;
-                }
+        Clock clock = new Clock() {
+            @Override
+            public long nowMillis() {
+                return 1_700_000_000_000L;
             }
-        );
+        };
+        tokens = new TokenManager(store, clock);
         tokens.setRefreshCarriers(update, pool);
-        client = new RpcClient(new Transcoder(TlProtoSchema.load()), update, mediaFleet, tokens);
+        identity = TestIdentity.manager(pool, clock);
+        client = new RpcClient(
+            new Transcoder(TlProtoSchema.load()),
+            update,
+            mediaFleet,
+            tokens,
+            new Credentials(tokens, identity)
+        );
     }
 
 
@@ -126,6 +162,15 @@ public class RpcClientTest {
         TlWriter writer = new TlWriter();
         writer.writeInt32(ResetAuthorizationsId);
         return writer.toByteArray();
+    }
+
+
+    /** auth.cancelCode, a login method the identity socket may send; its answer is a Bool like resetAuthorizations. */
+    private static byte[] cancelCode() {
+        return TlBuilder.method("auth.cancelCode")
+            .put("phone_number", "+99966")
+            .put("phone_code_hash", "hash")
+            .toBytes();
     }
 
 
@@ -423,39 +468,39 @@ public class RpcClientTest {
     }
 
 
+    /** The socket refused the access token: the refresh goes through the pool fleet, not the socket. */
     @Test
-    public void tokenRefusal109RefreshesAndRetries() throws Exception {
+    public void signedInTokenRefusalMarksTheTokenAndRefreshesThroughThePool() throws Exception {
         update.fail(sdkError(109));
-        update.reply(refreshResponse("new", "r2", 5L));
+        pool.reply(refreshResponse("new", "r2", 5L));
         update.reply(boolValue());
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
         assertNull(outcome.error);
         assertArrayEquals(bool(), outcome.tlResult);
-        assertEquals(3, update.callCount());
-        assertEquals(
-            Arrays.asList("auth.resetAuthorizations", ImpulseRpcPaths.RefreshSessionMethod, "auth.resetAuthorizations"),
-            methodsSent(update, 3)
-        );
+        assertEquals(2, update.callCount());
+        assertEquals(Arrays.asList("auth.resetAuthorizations", "auth.resetAuthorizations"), methodsSent(update, 2));
+        assertEquals(1, pool.callCount());
+        assertEquals(ImpulseRpcPaths.RefreshSessionMethod, pool.takeSent().method);
+        assertEquals("new", tokens.bearer());
     }
 
 
     @Test
     public void tokenRefusal103TwiceForcesLogout() throws Exception {
         update.fail(sdkError(103));
-        update.reply(refreshResponse("new", "r2", 5L));
+        pool.reply(refreshResponse("new", "r2", 5L));
         update.fail(sdkError(103));
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
         assertTrue(outcome.forceLogout);
         assertNull(outcome.tlResult);
-        assertEquals(3, update.callCount());
-        assertEquals(
-            Arrays.asList("auth.resetAuthorizations", ImpulseRpcPaths.RefreshSessionMethod, "auth.resetAuthorizations"),
-            methodsSent(update, 3)
-        );
+        assertEquals(2, update.callCount());
+        assertEquals(Arrays.asList("auth.resetAuthorizations", "auth.resetAuthorizations"), methodsSent(update, 2));
+        assertEquals(1, pool.callCount());
+        assertEquals(ImpulseRpcPaths.RefreshSessionMethod, pool.takeSent().method);
     }
 
 
@@ -783,5 +828,131 @@ public class RpcClientTest {
             assertEquals(1, pool.callCount());
             assertEquals(0, update.callCount());
         }
+    }
+
+
+    // ---------------------------------------------------------------- method guard, declaration gate, identity
+
+    @Test
+    public void identitySocketRefusesAUserMethodLocally() throws Exception {
+        store.tokens = null;
+        build();
+        TlWriter writer = new TlWriter();
+        writer.writeInt32(GetContactIdsId);
+        writer.writeInt64(0L);
+
+        RpcOutcome outcome = client.callBlocking(writer.toByteArray());
+
+        assertNull(outcome.tlResult);
+        assertEquals(400, outcome.error.code);
+        assertEquals("METHOD_INVALID", outcome.error.text);
+        assertFalse(outcome.forceLogout);
+        assertEquals(0, update.callCount());
+    }
+
+
+    @Test
+    public void sessionSocketRefusesALoginOnlyMethodLocally() throws Exception {
+        RpcOutcome outcome = client.callBlocking(signIn());
+
+        assertNull(outcome.tlResult);
+        assertEquals("METHOD_INVALID", outcome.error.text);
+        assertEquals(0, update.callCount());
+    }
+
+
+    @Test
+    public void callsWaitForTheDeclarationGate() throws Exception {
+        RecordingGate gate = new RecordingGate(update);
+        client.setDeclarationGate(gate);
+        update.reply(boolValue());
+
+        RpcOutcome outcome = client.callBlocking(resetAuthorizations());
+
+        assertNull(outcome.error);
+        assertEquals(Collections.singletonList("await@0"), gate.events);
+        assertEquals(1, update.callCount());
+    }
+
+
+    @Test
+    public void connectionNotInitedRedeclaresAndRetriesOnce() throws Exception {
+        RecordingGate gate = new RecordingGate(update);
+        client.setDeclarationGate(gate);
+        update.fail(appError(400, "CONNECTION_NOT_INITED"));
+        update.reply(boolValue());
+
+        RpcOutcome outcome = client.callBlocking(resetAuthorizations());
+
+        assertNull(outcome.error);
+        assertArrayEquals(bool(), outcome.tlResult);
+        assertEquals(Arrays.asList("await@0", "invalidate", "await@1"), gate.events);
+        assertEquals(2, update.callCount());
+    }
+
+
+    @Test
+    public void secondConnectionNotInitedIsReturnedAsTheError() throws Exception {
+        RecordingGate gate = new RecordingGate(update);
+        client.setDeclarationGate(gate);
+        update.fail(appError(400, "CONNECTION_NOT_INITED"));
+        update.fail(appError(400, "CONNECTION_NOT_INITED"));
+
+        RpcOutcome outcome = client.callBlocking(resetAuthorizations());
+
+        assertNull(outcome.tlResult);
+        assertEquals("CONNECTION_NOT_INITED", outcome.error.text);
+        assertFalse(outcome.forceLogout);
+        assertEquals(Arrays.asList("await@0", "invalidate", "await@1"), gate.events);
+        assertEquals(2, update.callCount());
+    }
+
+
+    @Test
+    public void signedOutRefusalReidentifiesAndRetries() throws Exception {
+        store.tokens = null;
+        build();
+        final List<String> events = new ArrayList<String>();
+        identity.setListener(new IdentityManager.Listener() {
+            @Override
+            public void onIdentityChanged() {
+                events.add("changed");
+            }
+
+
+            @Override
+            public void onIdentityRenewed(String identityToken) {
+                events.add("renewed");
+            }
+        });
+        pool.reply(TestIdentity.identityReply(TestIdentity.jwt("7", IdentityExpSeconds)));
+        identity.obtainBlocking();
+        update.fail(sdkError(103));
+        update.reply(boolValue());
+
+        RpcOutcome outcome = client.callBlocking(cancelCode());
+
+        assertNull(outcome.error);
+        assertArrayEquals(bool(), outcome.tlResult);
+        assertEquals(Collections.singletonList("changed"), events);
+        assertEquals(2, update.callCount());
+    }
+
+
+    @Test
+    public void signedOutSecondRefusalIsReturnedWithoutForceLogout() throws Exception {
+        store.tokens = null;
+        build();
+        pool.reply(TestIdentity.identityReply(TestIdentity.jwt("7", IdentityExpSeconds)));
+        identity.obtainBlocking();
+        update.fail(sdkError(103));
+        update.fail(sdkError(103));
+
+        RpcOutcome outcome = client.callBlocking(cancelCode());
+
+        assertNull(outcome.tlResult);
+        assertEquals("AUTH_TOKEN_INVALID", outcome.error.text);
+        assertFalse(outcome.forceLogout);
+        assertEquals(2, update.callCount());
     }
 }

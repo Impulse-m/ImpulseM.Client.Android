@@ -20,9 +20,11 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import net.impulsem.transport.auth.Clock;
 import net.impulsem.transport.auth.ConnectionDeclaration;
+import net.impulsem.transport.auth.Credentials;
 import net.impulsem.transport.auth.ImpulseRpcPaths;
 import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
+import net.impulsem.transport.auth.TestIdentity;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.schema.TlProtoSchema;
@@ -192,17 +194,21 @@ public class ConnectionDeclarerTest {
 
     /** Builds the declarer on the given update-socket carrier; refreshes would go over it and the pool fleet. */
     private void buildOn(RpcCarrier updateSocket) {
-        tokens = new TokenManager(
-            store,
-            new Clock() {
-                @Override
-                public long nowMillis() {
-                    return 1_700_000_000_000L;
-                }
+        Clock clock = new Clock() {
+            @Override
+            public long nowMillis() {
+                return 1_700_000_000_000L;
             }
-        );
+        };
+        tokens = new TokenManager(store, clock);
         tokens.setRefreshCarriers(updateSocket, pool);
-        rpc = new RpcClient(new Transcoder(TlProtoSchema.load()), updateSocket, null, tokens);
+        rpc = new RpcClient(
+            new Transcoder(TlProtoSchema.load()),
+            updateSocket,
+            null,
+            tokens,
+            new Credentials(tokens, TestIdentity.manager(pool, clock))
+        );
         declarer = new ConnectionDeclarer(
             rpc,
             tokens,

@@ -21,8 +21,10 @@ import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.MemoryCacheImageOutputStream;
 import net.impulsem.transport.auth.Clock;
+import net.impulsem.transport.auth.Credentials;
 import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
+import net.impulsem.transport.auth.TestIdentity;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.rpc.RpcClient;
@@ -257,7 +259,13 @@ public class LiveRpcTest {
     ) {
         Account account = new Account(phone, code);
         account.tokens = new TokenManager(account.store, Clock.SYSTEM);
-        account.rpc = new RpcClient(transcoder, null, null, account.tokens);
+        account.rpc = new RpcClient(
+            transcoder,
+            null,
+            null,
+            account.tokens,
+            new Credentials(account.tokens, TestIdentity.manager(null, Clock.SYSTEM))
+        );
         return account;
     }
 

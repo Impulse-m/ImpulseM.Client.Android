@@ -11,8 +11,10 @@ import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 import net.impulsem.transport.auth.Clock;
+import net.impulsem.transport.auth.Credentials;
 import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
+import net.impulsem.transport.auth.TestIdentity;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.rpc.RpcClient;
@@ -104,7 +106,13 @@ final class LiveAccounts {
         }
         Account account = new Account("99966" + x + String.format("%04d", random.nextInt(10000)), code.toString());
         account.tokens = new TokenManager(account.store, Clock.SYSTEM);
-        account.rpc = new RpcClient(transcoder, null, null, account.tokens);
+        account.rpc = new RpcClient(
+            transcoder,
+            null,
+            null,
+            account.tokens,
+            new Credentials(account.tokens, TestIdentity.manager(null, Clock.SYSTEM))
+        );
         login(account, lastName);
         List<?> users = (List<?>) result(
             account,
@@ -126,7 +134,13 @@ final class LiveAccounts {
         Account account = new Account(phone, code);
         account.store.save(saved);
         account.tokens = new TokenManager(account.store, Clock.SYSTEM);
-        account.rpc = new RpcClient(transcoder, null, null, account.tokens);
+        account.rpc = new RpcClient(
+            transcoder,
+            null,
+            null,
+            account.tokens,
+            new Credentials(account.tokens, TestIdentity.manager(null, Clock.SYSTEM))
+        );
         account.userId = saved.userId;
         return account;
     }
