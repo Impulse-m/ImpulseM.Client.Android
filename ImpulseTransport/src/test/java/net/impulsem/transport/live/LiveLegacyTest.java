@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import net.impulsem.transport.live.LiveAccounts.Account;
+import org.junit.After;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -33,6 +34,14 @@ public class LiveLegacyTest {
     public void setUp() {
         Assume.assumeTrue(Boolean.getBoolean("impulse.live"));
         live = new LiveAccounts();
+    }
+
+
+    @After
+    public void tearDown() {
+        if (live != null) {
+            live.close();
+        }
     }
 
 
