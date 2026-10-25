@@ -1,13 +1,10 @@
 package net.impulsem.transport.rpc;
 
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.impulsem.transport.auth.TokenManager;
@@ -31,8 +28,6 @@ public final class RpcClient {
 
     static final long CallTimeoutMillis = 30_000L;
     static final long MediaCallTimeoutMillis = 10_000L;
-
-    private static final long SettleGraceMillis = 5_000L;
 
     private static final Logger Log = Logger.getLogger(RpcClient.class.getName());
 
@@ -65,39 +60,6 @@ public final class RpcClient {
         ) {
             this.outcome = outcome;
             this.errorClass = errorClass;
-        }
-    }
-
-
-    /** Settles one carrier call: exactly one of a reply or a failure is recorded before the latch opens. */
-    private static final class Settlement implements CarrierCallback {
-
-        private final CountDownLatch latch = new CountDownLatch(1);
-        private byte[] reply;
-        private CarrierFailure failure;
-
-
-        @Override
-        public void onReply(byte[] data) {
-            reply = data;
-            latch.countDown();
-        }
-
-
-        @Override
-        public void onFailure(CarrierFailure failure) {
-            this.failure = failure;
-            latch.countDown();
-        }
-
-
-        boolean await(long millis) throws IOException {
-            try {
-                return latch.await(millis, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new InterruptedIOException("interrupted while waiting for the carrier");
-            }
         }
     }
 
@@ -205,7 +167,7 @@ public final class RpcClient {
         boolean retried = false;
         while (true) {
             String bearerBefore = tokens.bearer();
-            Settlement settled = send(updateSocket, method, protoRequest, CallTimeoutMillis, null);
+            BlockingCall.Outcome settled = BlockingCall.send(updateSocket, method, protoRequest, CallTimeoutMillis, null);
             if (settled.failure == null) {
                 return settled.reply;
             }
@@ -258,7 +220,18 @@ public final class RpcClient {
                 throw new IOException("no media fleet for " + method);
             }
         }
-        Settlement settled = send(carrier, method, encoded.proto, timeoutMillis, call);
+        BlockingCall.Outcome settled = BlockingCall.send(
+            carrier,
+            method,
+            encoded.proto,
+            timeoutMillis,
+            new BlockingCall.SentSink() {
+                @Override
+                public void onSent(CarrierCall carrierCall) {
+                    call.attach(carrierCall);
+                }
+            }
+        );
         if (settled.failure != null) {
             if (call.isCanceled()) {
                 throw new IOException("Canceled");
@@ -266,30 +239,6 @@ public final class RpcClient {
             return failedAttempt(method, settled.failure);
         }
         return new Attempt(decodeReply(encoded, settled.reply), AuthErrorClass.NONE);
-    }
-
-
-    /**
-     * Sends one rpc and waits for the carrier to settle it. The carrier call becomes the target of
-     * {@code owner}'s cancel(); a call that never settles in time is cancelled and reported as an IOException.
-     */
-    private static Settlement send(
-        RpcCarrier carrier,
-        String method,
-        byte[] proto,
-        long timeoutMillis,
-        PreparedCall owner
-    ) throws IOException {
-        Settlement settlement = new Settlement();
-        CarrierCall carrierCall = carrier.call(method, proto, timeoutMillis, settlement);
-        if (owner != null) {
-            owner.attach(carrierCall);
-        }
-        if (!settlement.await(timeoutMillis + SettleGraceMillis)) {
-            carrierCall.cancel();
-            throw new IOException("no answer to " + method);
-        }
-        return settlement;
     }
 
 

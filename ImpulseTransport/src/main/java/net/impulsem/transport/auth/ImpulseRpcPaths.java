@@ -17,6 +17,36 @@ public final class ImpulseRpcPaths {
     public static final String ConnectionIdentityMethod = "connectionIdentity";
 
 
+    /**
+     * ConnectionIdentityRequest { string identity_token = 1; int32 api_id = 2; }. An empty token is not written and
+     * api_id is written as a varint only when non-zero, as proto3 does.
+     */
+    public static byte[] encodeConnectionIdentity(
+        String identityToken,
+        int apiId
+    ) {
+        ProtoWriter writer = new ProtoWriter();
+        writeString(writer, 1, identityToken);
+        if (apiId != 0) {
+            writer.writeVarintField(2, apiId);
+        }
+        return writer.toByteArray();
+    }
+
+
+    /** ConnectionIdentityResponse { string identity_token = 1; }: the token, or null when absent or empty. */
+    public static String decodeConnectionIdentity(byte[] proto) {
+        String token = null;
+        ProtoReader reader = new ProtoReader(proto, 0, proto.length);
+        while (reader.next()) {
+            if (reader.field() == 1 && reader.wireType() == 2) {
+                token = string(reader.readBytes());
+            }
+        }
+        return token == null || token.isEmpty() ? null : token;
+    }
+
+
     /** The decoded impulse.auth.RefreshSessionResponse message; absent strings are null. */
     public static final class Authorization {
 

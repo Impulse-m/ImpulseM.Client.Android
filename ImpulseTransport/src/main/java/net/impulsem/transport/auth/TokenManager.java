@@ -1,9 +1,5 @@
 package net.impulsem.transport.auth;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.Collections;
@@ -455,60 +451,7 @@ public final class TokenManager {
 
     /** The exp claim in unix seconds, or -1 when the token is not a readable JWT. */
     private static long expirySeconds(String jwt) {
-        try {
-            int first = jwt.indexOf('.');
-            int second = first < 0 ? -1 : jwt.indexOf('.', first + 1);
-            if (first < 0 || second < 0) {
-                return -1;
-            }
-            byte[] payload = decodeBase64Url(jwt.substring(first + 1, second));
-            JsonElement root = JsonParser.parseString(new String(payload, "UTF-8"));
-            if (!root.isJsonObject()) {
-                return -1;
-            }
-            JsonObject object = root.getAsJsonObject();
-            JsonElement exp = object.get("exp");
-            if (exp == null || !exp.isJsonPrimitive()) {
-                return -1;
-            }
-            long value = exp.getAsLong();
-            return value > 0 ? value : -1;
-        } catch (Exception e) {
-            return -1;
-        }
-    }
-
-
-    /** Hand-rolled so the module does not need java.util.Base64 (absent below Android API 26). */
-    private static byte[] decodeBase64Url(String text) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        int buffer = 0;
-        int bits = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            int value;
-            if (c >= 'A' && c <= 'Z') {
-                value = c - 'A';
-            } else if (c >= 'a' && c <= 'z') {
-                value = c - 'a' + 26;
-            } else if (c >= '0' && c <= '9') {
-                value = c - '0' + 52;
-            } else if (c == '-' || c == '+') {
-                value = 62;
-            } else if (c == '_' || c == '/') {
-                value = 63;
-            } else if (c == '=') {
-                break;
-            } else {
-                throw new IllegalArgumentException("bad base64url character");
-            }
-            buffer = (buffer << 6) | value;
-            bits += 6;
-            if (bits >= 8) {
-                bits -= 8;
-                out.write((buffer >> bits) & 0xFF);
-            }
-        }
-        return out.toByteArray();
+        JwtClaims claims = JwtClaims.parse(jwt);
+        return claims == null ? -1 : claims.exp;
     }
 }

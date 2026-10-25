@@ -14,16 +14,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Records the rpcs it is asked to send and answers them from a script, on its own thread as the SDK does. A call the
  * script does not answer is held until it is cancelled.
  */
-final class FakeCarrier implements RpcCarrier {
+public final class FakeCarrier implements RpcCarrier {
 
     private static final long WaitSeconds = 5L;
 
     /** One rpc the carrier was asked to send. */
-    static final class Sent {
+    public static final class Sent {
 
-        final String method;
-        final byte[] data;
-        final long timeoutMillis;
+        public final String method;
+        public final byte[] data;
+        public final long timeoutMillis;
 
 
         Sent(
@@ -61,17 +61,17 @@ final class FakeCarrier implements RpcCarrier {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
 
-    void reply(byte[] data) {
+    public void reply(byte[] data) {
         scripts.add(new Script(data, null));
     }
 
 
-    void fail(Throwable failure) {
+    public void fail(Throwable failure) {
         scripts.add(new Script(null, failure));
     }
 
 
-    void hold() {
+    public void hold() {
         scripts.add(new Script(null, null));
     }
 
@@ -94,12 +94,12 @@ final class FakeCarrier implements RpcCarrier {
     }
 
 
-    int callCount() {
+    public int callCount() {
         return callCount.get();
     }
 
 
-    Sent takeSent() throws InterruptedException {
+    public Sent takeSent() throws InterruptedException {
         Sent next = sent.poll(WaitSeconds, TimeUnit.SECONDS);
         if (next == null) {
             throw new AssertionError("no rpc was sent");
@@ -108,7 +108,7 @@ final class FakeCarrier implements RpcCarrier {
     }
 
 
-    void shutdown() {
+    public void shutdown() {
         executor.shutdownNow();
     }
 
