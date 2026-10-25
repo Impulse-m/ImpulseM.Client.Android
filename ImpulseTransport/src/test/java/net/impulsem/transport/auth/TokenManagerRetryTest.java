@@ -48,6 +48,12 @@ public class TokenManagerRetryTest {
         }
 
 
+        synchronized void clear() {
+            tasks.clear();
+            delays.clear();
+        }
+
+
         synchronized long lastDelayMillis() {
             return delays.get(delays.size() - 1);
         }
@@ -103,6 +109,8 @@ public class TokenManagerRetryTest {
             },
             delayer
         );
+        // The stored pair also schedules its J6 point on this delayer; these tests count only their retry tasks.
+        delayer.clear();
     }
 
 

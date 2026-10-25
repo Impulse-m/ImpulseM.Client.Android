@@ -26,6 +26,8 @@ public final class TokenManager {
     private static final int NoFlags = 0;
     private static final int RateLimitedCode = 420;
     private static final long RefreshTimeoutMillis = 30_000L;
+    private static final long PointRetryStartMillis = 1_000L;
+    private static final long PointRetryCapMillis = 60_000L;
 
     private static final Logger Log = Logger.getLogger(TokenManager.class.getName());
 
@@ -118,7 +120,9 @@ public final class TokenManager {
     ) {
         SessionTokens value = new SessionTokens(access, refresh, userId);
         synchronized (this) {
-            held = hold(value);
+            Held stored = hold(value);
+            held = stored;
+            scheduleRefreshPoint(stored);
             refusedAccessToken = null;
             cancelDeferredRefresh();
             store.save(value);
@@ -138,7 +142,9 @@ public final class TokenManager {
             if (clearGeneration != expectedClearGeneration) {
                 return false;
             }
-            held = hold(value);
+            Held stored = hold(value);
+            held = stored;
+            scheduleRefreshPoint(stored);
             refusedAccessToken = null;
             store.save(value);
         }
@@ -183,6 +189,7 @@ public final class TokenManager {
     /**
      * Enables retrying a refresh refused with FLOOD_WAIT_X: the retry runs on the executor after X seconds, and only
      * while it would land before the access token reaches exp - 120 s. Unset, a refused refresh fails at once.
+     * Also schedules the J6 refresh point of the stored pair, if one is stored, so an idle app refreshes on its own.
      */
     public void setDeferredRefreshScheduling(
         Executor executor,
@@ -190,6 +197,7 @@ public final class TokenManager {
     ) {
         refreshExecutor = executor;
         refreshDelayer = delayer;
+        scheduleRefreshPoint(held);
     }
 
 
@@ -464,6 +472,101 @@ public final class TokenManager {
             // A background task must not throw: on Android that kills the app. The next request past the refresh
             // point refreshes again in the foreground and reports its own failure.
         }
+    }
+
+
+    /**
+     * Schedules the refresh point drawn for a stored pair, so the socket is refreshed before the server closes it at
+     * expiry. Nothing is scheduled before the executor and delayer are set, or for an opaque token.
+     */
+    private void scheduleRefreshPoint(Held point) {
+        if (point == null || point.refreshPointMillis == NoRefreshPointMillis) {
+            return;
+        }
+        long delayMillis = Math.max(0L, point.refreshPointMillis - clock.nowMillis());
+        scheduleRefreshTask(point, delayMillis, PointRetryStartMillis);
+    }
+
+
+    /**
+     * Schedules pointReached(point, retryMillis) on the executor after delayMillis. retryMillis is the wait the run
+     * uses if its refresh fails; it is carried in the task, so each stored pair starts its backoff again.
+     */
+    private void scheduleRefreshTask(
+        final Held point,
+        long delayMillis,
+        final long retryMillis
+    ) {
+        Executor executor = refreshExecutor;
+        ConnectionDeclarer.Delayer delayer = refreshDelayer;
+        if (executor == null || delayer == null) {
+            return;
+        }
+        delayer.schedule(
+            new Runnable() {
+                @Override
+                public void run() {
+                    executor.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            pointReached(point, retryMillis);
+                        }
+                    });
+                }
+            },
+            delayMillis
+        );
+    }
+
+
+    /**
+     * Runs on the executor when a drawn refresh point comes due. A pair that was replaced or cleared since it was
+     * scheduled no longer matches the held one, so the task does nothing. A refresh that is refused or ends the
+     * session is not retried. A transport failure is retried with backoff; a background task must not throw.
+     */
+    private void pointReached(
+        Held point,
+        long retryMillis
+    ) {
+        if (held != point) {
+            return;
+        }
+        boolean failed = false;
+        try {
+            refreshBlocking();
+        } catch (IOException e) {
+            failed = true;
+        } catch (RuntimeException e) {
+            failed = true;
+        }
+        if (failed) {
+            retryPointRefresh(point, retryMillis);
+        }
+    }
+
+
+    /**
+     * Re-arms a failed point refresh like Web K's tokenRenewal: the retry waits retryMillis, and the next failure waits
+     * twice as long, up to a cap. A retry is only scheduled while it would land before exp - 120 s; past that the
+     * pool path in connectionTokenBlocking refreshes the expired token instead.
+     */
+    private void retryPointRefresh(
+        Held point,
+        long retryMillis
+    ) {
+        if (point.tokens.accessToken == null) {
+            return;
+        }
+        long expSeconds = expirySeconds(point.tokens.accessToken);
+        if (expSeconds < 0) {
+            return;
+        }
+        long landingMillis = clock.nowMillis() + retryMillis;
+        if (landingMillis >= (expSeconds - RefreshSchedule.WindowEndBeforeExpirySeconds) * 1000L) {
+            return;
+        }
+        long nextRetryMillis = Math.min(retryMillis * 2L, PointRetryCapMillis);
+        scheduleRefreshTask(point, retryMillis, nextRetryMillis);
     }
 
 
