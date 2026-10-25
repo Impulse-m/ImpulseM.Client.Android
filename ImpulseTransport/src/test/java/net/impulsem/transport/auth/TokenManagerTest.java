@@ -105,6 +105,7 @@ public class TokenManagerTest {
     }
 
 
+    /** impulse.auth.RefreshSessionResponse { user_id = 1; session_token = 2; refresh_token = 3; grace = 4; } */
     static byte[] authorizationProto(
         long userId,
         String access,
@@ -112,8 +113,9 @@ public class TokenManagerTest {
     ) {
         ProtoWriter writer = new ProtoWriter();
         writer.writeVarintField(1, userId);
-        writer.writeBytesField(5, access.getBytes(StandardCharsets.UTF_8));
-        writer.writeBytesField(6, refresh.getBytes(StandardCharsets.UTF_8));
+        writer.writeBytesField(2, access.getBytes(StandardCharsets.UTF_8));
+        writer.writeBytesField(3, refresh.getBytes(StandardCharsets.UTF_8));
+        writer.writeVarintField(4, 30);
         return writer.toByteArray();
     }
 
