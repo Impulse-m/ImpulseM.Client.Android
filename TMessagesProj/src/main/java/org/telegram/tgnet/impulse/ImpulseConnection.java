@@ -11,6 +11,7 @@ import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.errors.RpcError;
+import net.impulsem.transport.fleet.MediaFleet;
 import net.impulsem.transport.fleet.RpcPoolCarrier;
 import net.impulsem.transport.policy.RequestPolicy;
 import net.impulsem.transport.rpc.ConnectionDeclarer;
@@ -78,6 +79,7 @@ public final class ImpulseConnection {
     private static final int MaxWorkerThreads = 48;
     private static final String LangPack = "android";
     private static final String LogOutMethod = "auth.logOut";
+    private static final String MediaPath = "/connection/websocket?cf_protocol=protobuf&cf_ws_frame_ping_pong=true";
 
     private static final ImpulseConnection[] Instances = new ImpulseConnection[UserConfig.MAX_ACCOUNT_COUNT];
     private static OkHttpClient httpClient;
@@ -120,6 +122,7 @@ public final class ImpulseConnection {
     private final AndroidSessionStore store;
     private final TokenManager tokens;
     private final RpcPoolCarrier poolFleet;
+    private final MediaFleet mediaFleet;
     private final IdentityManager identity;
     private final Credentials credentials;
     private RpcClient rpc;
@@ -245,6 +248,7 @@ public final class ImpulseConnection {
         // A WebSocket has no read deadline of its own: the server's pings keep it alive, as for the update socket.
         OkHttpClient poolHttp = sharedHttpClient().newBuilder().readTimeout(0L, TimeUnit.MILLISECONDS).build();
         this.poolFleet = RpcPoolCarrier.poolFleet(poolHttp, ImpulseEndpoints.poolUrl());
+        this.mediaFleet = new MediaFleet(poolHttp, tokens, executor);
         this.identity = new IdentityManager(
             store.identityStore(),
             poolFleet,
@@ -277,10 +281,13 @@ public final class ImpulseConnection {
         this.tokens.addSessionListener(new Runnable() {
             @Override
             public void run() {
-                // A sign-in ends the identity; a refresh of a live session goes to the socket without a reconnect.
+                // A sign-in ends the identity and starts a new media pool, so no connection keeps another session's
+                // token. A refresh of a live session goes to the socket without a reconnect, and the media pool keeps
+                // its connections (they fetch the new token when they reconnect): transfers in flight are not dropped.
                 // The sync runs in both cases: the planner rekeys the socket only when its credential kind changed.
                 if (identity.current() != null) {
                     identity.discard();
+                    mediaFleet.sessionChanged();
                 } else {
                     realtime.refreshConnectionToken(tokens.bearer());
                 }
@@ -473,6 +480,7 @@ public final class ImpulseConnection {
         }
         if (resetKeys || hadUser) {
             tokens.clear();
+            mediaFleet.sessionChanged();
         }
         realtime.syncSoon();
         log("cleanup reset=" + resetKeys + " hadUser=" + hadUser + " failed=" + victims.size());
@@ -665,7 +673,7 @@ public final class ImpulseConnection {
     private synchronized RpcClient rpc() {
         if (rpc == null) {
             transcoder = new Transcoder(TlProtoSchema.load());
-            rpc = new RpcClient(transcoder, realtime.carrier(), null, tokens, credentials);
+            rpc = new RpcClient(transcoder, realtime.carrier(), mediaFleet, tokens, credentials);
             declarer = new ConnectionDeclarer(
                 rpc,
                 tokens,
@@ -951,6 +959,7 @@ public final class ImpulseConnection {
             return;
         }
         tokens.clear();
+        mediaFleet.sessionChanged();
         realtime.syncSoon();
     }
 
@@ -981,6 +990,7 @@ public final class ImpulseConnection {
             }
             if (loggedIn) {
                 tokens.clear();
+                mediaFleet.sessionChanged();
                 finishError(pending, error.code, error.text);
                 postLogout();
             } else {
@@ -1269,6 +1279,17 @@ public final class ImpulseConnection {
                     synchronized (lock) {
                         thisDatacenter = config.this_dc;
                     }
+                    String mediaEndpoint = mediaEndpoint(config);
+                    mediaFleet.setEndpoint(mediaEndpoint);
+                    if (mediaEndpoint == null) {
+                        RemoteLog.trace(
+                            LogLevel.WARN,
+                            RemoteLog.ComponentTransport,
+                            "MEDIA_OPTION_MISSING",
+                            "account", account,
+                            "thisDc", config.this_dc
+                        );
+                    }
                     log("config this_dc=" + config.this_dc);
                     MessagesController.getInstance(account).updateConfig(config);
                 } else {
@@ -1286,6 +1307,18 @@ public final class ImpulseConnection {
             },
             ConnectionsManager.RequestFlagEnableUnauthorized | ConnectionsManager.RequestFlagWithoutLogin
         );
+    }
+
+
+    /** The media_only dc option of this_dc as the media fleet's WebSocket URL, or null when the config has none. */
+    private static String mediaEndpoint(TLRPC.TL_config config) {
+        for (TLRPC.TL_dcOption option : config.dc_options) {
+            if (option.media_only && option.id == config.this_dc) {
+                String host = option.ipv6 ? "[" + option.ip_address + "]" : option.ip_address;
+                return "wss://" + host + ":" + option.port + MediaPath;
+            }
+        }
+        return null;
     }
 
 
