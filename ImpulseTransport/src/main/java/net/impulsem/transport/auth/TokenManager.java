@@ -7,10 +7,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.Collections;
+import java.util.concurrent.Executor;
+import java.util.Random;
 import net.impulsem.transport.errors.RpcError;
 import net.impulsem.transport.errors.RpcErrors;
 import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.grpcweb.GrpcWebResponse;
+import net.impulsem.transport.policy.RequestPolicy;
+import net.impulsem.transport.rpc.ConnectionDeclarer;
 
 
 /**
@@ -20,7 +24,9 @@ import net.impulsem.transport.grpcweb.GrpcWebResponse;
 public final class TokenManager {
 
     private static final long PendingLifetimeMillis = 5 * 60 * 1000L;
-    private static final long ProactiveMarginSeconds = 60L;
+    private static final long NoRefreshPointMillis = Long.MAX_VALUE;
+    private static final int NoFlags = 0;
+    private static final int RateLimitedCode = 420;
 
     private static final class Pending {
 
@@ -38,22 +44,44 @@ public final class TokenManager {
     }
 
 
+    /** A stored token pair with the refresh point drawn when it was stored. The point is never persisted. */
+    private static final class Held {
+
+        final SessionTokens tokens;
+        final long refreshPointMillis;
+
+
+        Held(
+            SessionTokens tokens,
+            long refreshPointMillis
+        ) {
+            this.tokens = tokens;
+            this.refreshPointMillis = refreshPointMillis;
+        }
+    }
+
+
     private final SessionStore store;
     private final GrpcWebClient client;
     private final Clock clock;
+    private final RefreshSchedule schedule;
 
     private final Object refreshLock = new Object();
     private boolean refreshing;
     private long refreshGeneration;
     private boolean lastRefreshResult;
     private IOException lastRefreshFailure;
+    private boolean deferredPending;
+    private long deferredGeneration;
 
     private long clearGeneration;
 
-    private volatile SessionTokens tokens;
+    private volatile Held held;
     private volatile Pending pending;
     private volatile String qrTicket;
     private volatile Runnable sessionListener;
+    private volatile Executor refreshExecutor;
+    private volatile ConnectionDeclarer.Delayer refreshDelayer;
 
 
     public TokenManager(
@@ -61,10 +89,21 @@ public final class TokenManager {
         GrpcWebClient client,
         Clock clock
     ) {
+        this(store, client, clock, new Random());
+    }
+
+
+    public TokenManager(
+        SessionStore store,
+        GrpcWebClient client,
+        Clock clock,
+        Random random
+    ) {
         this.store = store;
         this.client = client;
         this.clock = clock;
-        this.tokens = store.load();
+        this.schedule = new RefreshSchedule(random);
+        this.held = hold(store.load());
     }
 
 
@@ -74,8 +113,8 @@ public final class TokenManager {
         if (active != null) {
             return active;
         }
-        SessionTokens current = tokens;
-        return current == null ? null : current.accessToken;
+        Held current = held;
+        return current == null ? null : current.tokens.accessToken;
     }
 
 
@@ -86,8 +125,9 @@ public final class TokenManager {
     ) {
         SessionTokens value = new SessionTokens(access, refresh, userId);
         synchronized (this) {
-            tokens = value;
+            held = hold(value);
             pending = null;
+            cancelDeferredRefresh();
             store.save(value);
         }
         notifySessionChanged();
@@ -106,11 +146,24 @@ public final class TokenManager {
             if (clearGeneration != expectedClearGeneration) {
                 return false;
             }
-            tokens = value;
+            held = hold(value);
             store.save(value);
         }
         notifySessionChanged();
         return true;
+    }
+
+
+    /** Pairs a stored token with the refresh point drawn now; an unreadable access token gets no point. */
+    private Held hold(SessionTokens value) {
+        if (value == null) {
+            return null;
+        }
+        long exp = value.accessToken == null ? -1 : expirySeconds(value.accessToken);
+        long point = exp < 0
+            ? NoRefreshPointMillis
+            : schedule.drawRefreshPointMillis(exp, clock.nowMillis());
+        return new Held(value, point);
     }
 
 
@@ -147,6 +200,19 @@ public final class TokenManager {
     }
 
 
+    /**
+     * Enables retrying a refresh refused with FLOOD_WAIT_X: the retry runs on the executor after X seconds, and only
+     * while it would land before the access token reaches exp - 120 s. Unset, a refused refresh fails at once.
+     */
+    public void setDeferredRefreshScheduling(
+        Executor executor,
+        ConnectionDeclarer.Delayer delayer
+    ) {
+        refreshExecutor = executor;
+        refreshDelayer = delayer;
+    }
+
+
     /** Called after login or refresh stored a new token pair, never on clear. */
     public void setSessionListener(Runnable listener) {
         sessionListener = listener;
@@ -162,7 +228,7 @@ public final class TokenManager {
 
 
     public boolean hasSession() {
-        return tokens != null;
+        return held != null;
     }
 
 
@@ -170,27 +236,26 @@ public final class TokenManager {
         synchronized (this) {
             clearGeneration++;
             store.clear();
-            tokens = null;
+            held = null;
             pending = null;
             qrTicket = null;
+            cancelDeferredRefresh();
         }
     }
 
 
-    /** True when the access token expires within 60 seconds. Opaque or missing tokens never need it. */
+    /**
+     * True once the refresh point drawn for the stored access token has passed. Opaque or missing tokens never need it.
+     */
     public boolean needsProactiveRefresh() {
-        SessionTokens current = tokens;
-        if (current == null || current.accessToken == null || current.refreshToken == null) {
+        Held current = held;
+        if (current == null || current.tokens.accessToken == null || current.tokens.refreshToken == null) {
             return false;
         }
         if (activePendingToken() != null) {
             return false;
         }
-        long exp = expirySeconds(current.accessToken);
-        if (exp < 0) {
-            return false;
-        }
-        return exp - ProactiveMarginSeconds <= clock.nowMillis() / 1000;
+        return clock.nowMillis() >= current.refreshPointMillis;
     }
 
 
@@ -205,6 +270,9 @@ public final class TokenManager {
     public boolean refreshBlocking() throws IOException {
         long joinedGeneration;
         synchronized (refreshLock) {
+            if (deferredPending) {
+                return true;
+            }
             if (refreshing) {
                 joinedGeneration = refreshGeneration;
                 while (refreshing && refreshGeneration == joinedGeneration) {
@@ -252,7 +320,7 @@ public final class TokenManager {
         SessionTokens current;
         synchronized (this) {
             startedClearGeneration = clearGeneration;
-            current = tokens;
+            current = held == null ? null : held.tokens;
         }
         if (current == null || current.refreshToken == null) {
             return false;
@@ -269,6 +337,9 @@ public final class TokenManager {
             if (isUnrecoverable(error)) {
                 clear();
                 return false;
+            }
+            if (error.code == RateLimitedCode && deferRefresh(error, current.accessToken, startedClearGeneration)) {
+                return true;
             }
             throw new IOException("RefreshSession failed: " + error);
         }
@@ -288,6 +359,90 @@ public final class TokenManager {
             new SessionTokens(authorization.sessionToken, authorization.refreshToken, authorization.userId),
             startedClearGeneration
         );
+    }
+
+
+    /**
+     * Schedules a retry of a refused refresh after the advertised wait, if it lands before exp - 120 s. The current
+     * access token stays valid until then, so callers keep using it and send no request while the retry is pending.
+     */
+    private boolean deferRefresh(
+        RpcError error,
+        String accessToken,
+        long startedClearGeneration
+    ) {
+        Executor executor = refreshExecutor;
+        ConnectionDeclarer.Delayer delayer = refreshDelayer;
+        if (executor == null || delayer == null) {
+            return false;
+        }
+        RequestPolicy.Decision decision = RequestPolicy.onError(
+            NoFlags,
+            RequestPolicy.CONNECTION_TYPE_GENERIC,
+            error,
+            1
+        );
+        if (decision.action != RequestPolicy.Action.RETRY_AFTER) {
+            return false;
+        }
+        long expSeconds = accessToken == null ? -1 : expirySeconds(accessToken);
+        if (expSeconds < 0) {
+            return false;
+        }
+        long landingMillis = clock.nowMillis() + decision.delayMillis;
+        if (landingMillis >= (expSeconds - RefreshSchedule.WindowEndBeforeExpirySeconds) * 1000L) {
+            return false;
+        }
+        final long generation;
+        synchronized (this) {
+            if (clearGeneration != startedClearGeneration) {
+                return false;
+            }
+            synchronized (refreshLock) {
+                deferredGeneration++;
+                deferredPending = true;
+                generation = deferredGeneration;
+            }
+        }
+        delayer.schedule(
+            new Runnable() {
+                @Override
+                public void run() {
+                    executor.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            runDeferredRefresh(generation);
+                        }
+                    });
+                }
+            },
+            decision.delayMillis
+        );
+        return true;
+    }
+
+
+    private void runDeferredRefresh(long generation) {
+        synchronized (refreshLock) {
+            if (deferredGeneration != generation) {
+                return;
+            }
+            deferredPending = false;
+        }
+        try {
+            refreshBlocking();
+        } catch (IOException e) {
+            // A background task must not throw: on Android that kills the app. The next request past the refresh
+            // point refreshes again in the foreground and reports its own failure.
+        }
+    }
+
+
+    private void cancelDeferredRefresh() {
+        synchronized (refreshLock) {
+            deferredPending = false;
+            deferredGeneration++;
+        }
     }
 
 
