@@ -1,5 +1,6 @@
 package net.impulsem.transport.realtime;
 
+import io.github.centrifugal.centrifuge.AuthResult;
 import io.github.centrifugal.centrifuge.Client;
 import io.github.centrifugal.centrifuge.ConnectedEvent;
 import io.github.centrifugal.centrifuge.ConnectingEvent;
@@ -267,6 +268,28 @@ public final class CentrifugoClient implements RpcCarrier {
         if (notify) {
             fireDisconnected(1000, "client disconnect", false);
         }
+    }
+
+
+    /**
+     * Hands a renewed token of the same identity to the live connection (SDK refresh) instead of reconnecting. A failure
+     * is logged; the connection keeps its token, and the SDK fetches one from the provider at its next refresh or connect.
+     */
+    public void refreshConnectionToken(String token) {
+        if (token == null || token.isEmpty()) {
+            return;
+        }
+        sdk.refresh(token, new ResultCallback<AuthResult>() {
+            @Override
+            public void onDone(
+                Throwable error,
+                AuthResult result
+            ) {
+                if (error != null) {
+                    Log.log(Level.WARNING, "connection token refresh failed: " + describe(error));
+                }
+            }
+        });
     }
 
 

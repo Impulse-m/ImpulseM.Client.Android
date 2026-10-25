@@ -36,8 +36,17 @@ public final class SyncPlanner {
     }
 
 
+    /** The credential the socket presents: the identity token when signed out, the session's access token otherwise. */
+    private enum SocketKind {
+        IDENTITY,
+        SESSION
+    }
+
+
     private long laneUserId;
     private boolean wasOnline = true;
+    /** The kind the socket last connected with; null until the first online plan. */
+    private SocketKind connectedKind;
 
 
     public synchronized Plan plan(
@@ -51,13 +60,16 @@ public final class SyncPlanner {
         long previous = laneUserId;
         laneUserId = loggedIn ? userId : 0L;
         long drop = previous != 0L && previous != laneUserId ? previous : 0L;
-        if (!loggedIn) {
-            return new Plan(drop, true, true, 0L, false);
-        }
+        boolean stopLanes = !loggedIn || drop != 0L;
         if (!online) {
-            return new Plan(drop, drop != 0L, true, 0L, false);
+            return new Plan(drop, stopLanes, true, 0L, false);
         }
-        // A returning network or a switched user drops the socket first: the backoff is skipped and the old token is not kept.
-        return new Plan(drop, drop != 0L, cameBack || drop != 0L, userId, true);
+        SocketKind kind = sessionPresent ? SocketKind.SESSION : SocketKind.IDENTITY;
+        boolean kindChanged = connectedKind != null && connectedKind != kind;
+        connectedKind = kind;
+        // A returning network, a switched user or a new credential kind drops the socket first: the backoff is skipped
+        // and the old token is not kept. The very first connect has nothing to drop.
+        boolean rekey = cameBack || drop != 0L || kindChanged;
+        return new Plan(drop, stopLanes, rekey, loggedIn ? userId : 0L, true);
     }
 }

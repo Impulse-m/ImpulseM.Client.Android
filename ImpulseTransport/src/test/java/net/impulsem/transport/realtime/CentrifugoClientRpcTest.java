@@ -315,6 +315,32 @@ public class CentrifugoClientRpcTest {
     }
 
 
+    @Test
+    public void refreshConnectionTokenSendsTheNewTokenOnTheLiveConnection() throws Exception {
+        startClient(Instance);
+
+        client.refreshConnectionToken("t2");
+
+        Protocol.RefreshRequest refresh = sessions.get(0).nextCommandOf(CommandKind.REFRESH).getRefresh();
+        assertEquals("t2", refresh.getToken());
+        assertEquals(1, server.getRequestCount());
+    }
+
+
+    @Test
+    public void refreshConnectionTokenIgnoresAnEmptyToken() throws Exception {
+        startClient(Instance);
+
+        client.refreshConnectionToken("");
+        client.refreshConnectionToken(null);
+        client.refreshConnectionToken("t2");
+
+        // The first refresh the server sees must be the real token: an empty one would have been sent before it.
+        Protocol.RefreshRequest refresh = sessions.get(0).nextCommandOf(CommandKind.REFRESH).getRefresh();
+        assertEquals("t2", refresh.getToken());
+    }
+
+
     /** Builds the client against the fake server with the given instance (null for none) and waits for the connect. */
     private void startClient(String instance) throws InterruptedException {
         client = new CentrifugoClient(
