@@ -1,7 +1,5 @@
 package net.impulsem.transport.rpc;
 
-import static net.impulsem.transport.GrpcWebTestSupport.error;
-import static net.impulsem.transport.GrpcWebTestSupport.ok;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -13,7 +11,10 @@ import static org.junit.Assert.fail;
 import io.github.centrifugal.centrifuge.ReplyError;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -22,18 +23,16 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import net.impulsem.transport.auth.Clock;
+import net.impulsem.transport.auth.ImpulseRpcPaths;
 import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.live.TlBuilder;
 import net.impulsem.transport.schema.TlProtoSchema;
 import net.impulsem.transport.wire.ProtoWriter;
 import net.impulsem.transport.wire.TlReader;
 import net.impulsem.transport.wire.TlWriter;
-import okhttp3.OkHttpClient;
-import okhttp3.mockwebserver.MockWebServer;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -50,7 +49,7 @@ public class RpcClientTest {
     private static final int ServerCode = 100;
     private static final long CallTimeoutMillis = 30_000L;
     private static final long MediaCallTimeoutMillis = 10_000L;
-    private static final String RefreshPath = "/impulse.auth.AuthService/RefreshSession";
+    private static final long SettleDelayMillis = 800L;
 
     private static final class MemoryStore implements SessionStore {
 
@@ -76,22 +75,21 @@ public class RpcClientTest {
     }
 
 
-    private MockWebServer server;
     private MemoryStore store;
     private TokenManager tokens;
     private FakeCarrier update;
     private FakeCarrier media;
+    private FakeCarrier pool;
     private RpcClient client;
 
 
     @Before
     public void setUp() throws IOException {
-        server = new MockWebServer();
-        server.start();
         store = new MemoryStore();
         store.tokens = new SessionTokens("old", "r1", 5L);
         update = new FakeCarrier();
         media = new FakeCarrier();
+        pool = new FakeCarrier();
         build();
     }
 
@@ -100,7 +98,7 @@ public class RpcClientTest {
     public void tearDown() throws IOException {
         update.shutdown();
         media.shutdown();
-        server.shutdown();
+        pool.shutdown();
     }
 
 
@@ -110,10 +108,8 @@ public class RpcClientTest {
 
 
     private void build(RpcCarrier mediaFleet) {
-        GrpcWebClient grpc = new GrpcWebClient(new OkHttpClient(), server.url("/"));
         tokens = new TokenManager(
             store,
-            grpc,
             new Clock() {
                 @Override
                 public long nowMillis() {
@@ -121,6 +117,7 @@ public class RpcClientTest {
                 }
             }
         );
+        tokens.setRefreshCarriers(update, pool);
         client = new RpcClient(new Transcoder(TlProtoSchema.load()), update, mediaFleet, tokens);
     }
 
@@ -238,13 +235,56 @@ public class RpcClientTest {
     }
 
 
-    private void awaitRequests(int count) throws Exception {
-        long deadline = System.currentTimeMillis() + 5000;
-        while (server.getRequestCount() < count) {
-            if (System.currentTimeMillis() > deadline) {
-                fail("server never saw request " + count);
+    /** The methods of the next count rpcs the carrier was asked to send, in order. */
+    private static List<String> methodsSent(
+        FakeCarrier carrier,
+        int count
+    ) throws InterruptedException {
+        List<String> methods = new ArrayList<String>();
+        for (int i = 0; i < count; i++) {
+            methods.add(carrier.takeSent().method);
+        }
+        return methods;
+    }
+
+
+    /** Answers each call of the inner carrier only after a delay, so a test can act while the call is in flight. */
+    private static RpcCarrier settledLater(
+        final RpcCarrier inner,
+        final long delayMillis
+    ) {
+        return new RpcCarrier() {
+            @Override
+            public CarrierCall call(
+                String method,
+                byte[] data,
+                long timeoutMillis,
+                final CarrierCallback callback
+            ) {
+                return inner.call(method, data, timeoutMillis, new CarrierCallback() {
+                    @Override
+                    public void onReply(byte[] reply) {
+                        pause(delayMillis);
+                        callback.onReply(reply);
+                    }
+
+
+                    @Override
+                    public void onFailure(CarrierFailure failure) {
+                        pause(delayMillis);
+                        callback.onFailure(failure);
+                    }
+                });
             }
-            Thread.sleep(10);
+        };
+    }
+
+
+    private static void pause(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -347,7 +387,7 @@ public class RpcClientTest {
     @Test
     public void authKeyUnregisteredRefreshesAndRetries() throws Exception {
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        update.reply(refreshResponse("new", "r2", 5L));
         update.reply(boolValue());
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
@@ -355,9 +395,11 @@ public class RpcClientTest {
         assertNull(outcome.error);
         assertFalse(outcome.forceLogout);
         assertArrayEquals(bool(), outcome.tlResult);
-        assertEquals(1, server.getRequestCount());
-        assertEquals(RefreshPath, server.takeRequest().getPath());
-        assertEquals(2, update.callCount());
+        assertEquals(3, update.callCount());
+        assertEquals(
+            Arrays.asList("auth.resetAuthorizations", ImpulseRpcPaths.RefreshSessionMethod, "auth.resetAuthorizations"),
+            methodsSent(update, 3)
+        );
         assertEquals("new", store.tokens.accessToken);
         assertEquals("r2", store.tokens.refreshToken);
     }
@@ -366,59 +408,68 @@ public class RpcClientTest {
     @Test
     public void persistentAuthKeyUnregisteredAfterRefreshForcesLogout() throws Exception {
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        update.reply(refreshResponse("new", "r2", 5L));
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
         assertTrue(outcome.forceLogout);
         assertEquals("AUTH_KEY_UNREGISTERED", outcome.error.text);
-        assertEquals(1, server.getRequestCount());
-        assertEquals(2, update.callCount());
+        assertEquals(3, update.callCount());
+        assertEquals(
+            Arrays.asList("auth.resetAuthorizations", ImpulseRpcPaths.RefreshSessionMethod, "auth.resetAuthorizations"),
+            methodsSent(update, 3)
+        );
     }
 
 
     @Test
     public void tokenRefusal109RefreshesAndRetries() throws Exception {
         update.fail(sdkError(109));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        update.reply(refreshResponse("new", "r2", 5L));
         update.reply(boolValue());
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
         assertNull(outcome.error);
         assertArrayEquals(bool(), outcome.tlResult);
-        assertEquals(1, server.getRequestCount());
-        assertEquals(2, update.callCount());
+        assertEquals(3, update.callCount());
+        assertEquals(
+            Arrays.asList("auth.resetAuthorizations", ImpulseRpcPaths.RefreshSessionMethod, "auth.resetAuthorizations"),
+            methodsSent(update, 3)
+        );
     }
 
 
     @Test
     public void tokenRefusal103TwiceForcesLogout() throws Exception {
         update.fail(sdkError(103));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        update.reply(refreshResponse("new", "r2", 5L));
         update.fail(sdkError(103));
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
         assertTrue(outcome.forceLogout);
         assertNull(outcome.tlResult);
-        assertEquals(1, server.getRequestCount());
-        assertEquals(2, update.callCount());
+        assertEquals(3, update.callCount());
+        assertEquals(
+            Arrays.asList("auth.resetAuthorizations", ImpulseRpcPaths.RefreshSessionMethod, "auth.resetAuthorizations"),
+            methodsSent(update, 3)
+        );
     }
 
 
     @Test
     public void failedRefreshForcesLogout() throws Exception {
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(error(3, "AUTH_TOKEN_INVALID"));
+        update.fail(appError(400, "AUTH_TOKEN_INVALID"));
 
         RpcOutcome outcome = client.callBlocking(resetAuthorizations());
 
         assertTrue(outcome.forceLogout);
         assertNull(outcome.tlResult);
         assertNull(store.tokens);
-        assertEquals(1, update.callCount());
+        assertEquals(2, update.callCount());
     }
 
 
@@ -431,7 +482,7 @@ public class RpcClientTest {
         assertTrue(outcome.forceLogout);
         assertEquals("SESSION_REVOKED", outcome.error.text);
         assertEquals(401, outcome.error.code);
-        assertEquals(0, server.getRequestCount());
+        assertEquals(0, pool.callCount());
         assertEquals(1, update.callCount());
     }
 
@@ -439,7 +490,7 @@ public class RpcClientTest {
     @Test
     public void refreshWithoutUserIdFailsAndKeepsTheSession() throws Exception {
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(ok(refreshResponse("new", "r2", 0L)));
+        update.reply(refreshResponse("new", "r2", 0L));
 
         try {
             client.callBlocking(resetAuthorizations());
@@ -452,25 +503,9 @@ public class RpcClientTest {
 
 
     @Test
-    public void refreshKeepsActivePendingToken() throws Exception {
-        update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
-        update.reply(boolValue());
-        tokens.setPendingToken("pend");
-
-        RpcOutcome outcome = client.callBlocking(resetAuthorizations());
-
-        assertNull(outcome.error);
-        assertEquals("pend", tokens.bearer());
-        assertEquals("new", store.tokens.accessToken);
-    }
-
-
-    @Test
     public void signInResponsePersistsTokensAndUserId() throws Exception {
         store.tokens = null;
         build();
-        tokens.setPendingToken("pend");
         update.reply(authorization("acc", "ref", 777L));
 
         RpcOutcome outcome = client.callBlocking(signIn());
@@ -489,7 +524,6 @@ public class RpcClientTest {
     public void signInResponseWithoutUserFailsAndStoresNoTokens() throws Exception {
         store.tokens = null;
         build();
-        tokens.setPendingToken("pend");
         update.reply(authorization("acc", "ref", 0L));
 
         RpcOutcome outcome = client.callBlocking(signIn());
@@ -545,7 +579,7 @@ public class RpcClientTest {
         assertEquals(400, outcome.error.code);
         assertEquals("TAKEOUT_INVALID", outcome.error.text);
         assertEquals(0, update.callCount());
-        assertEquals(0, server.getRequestCount());
+        assertEquals(0, pool.callCount());
     }
 
 
@@ -554,8 +588,8 @@ public class RpcClientTest {
     @Test
     public void cancelWhileHeldThrowsCanceled() throws Exception {
         PreparedCall call = client.prepare(resetAuthorizations());
-        ExecutorService pool = Executors.newFixedThreadPool(1);
-        Future<RpcOutcome> running = executeInBackground(pool, call);
+        ExecutorService threadPool = Executors.newFixedThreadPool(1);
+        Future<RpcOutcome> running = executeInBackground(threadPool, call);
         awaitCalls(update, 1);
 
         call.cancel();
@@ -567,7 +601,7 @@ public class RpcClientTest {
             assertTrue(e.getCause() instanceof IOException);
             assertEquals("Canceled", e.getCause().getMessage());
         } finally {
-            pool.shutdown();
+            threadPool.shutdown();
         }
     }
 
@@ -589,34 +623,11 @@ public class RpcClientTest {
     @Test
     public void cancelDuringRefreshNeverSendsRetry() throws Exception {
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)).setHeadersDelay(800, TimeUnit.MILLISECONDS));
-        ExecutorService pool = Executors.newFixedThreadPool(1);
+        update.reply(refreshResponse("new", "r2", 5L));
+        tokens.setRefreshCarriers(settledLater(update, SettleDelayMillis), pool);
+        ExecutorService threadPool = Executors.newFixedThreadPool(1);
         PreparedCall call = client.prepare(resetAuthorizations());
-        Future<RpcOutcome> running = executeInBackground(pool, call);
-        awaitRequests(1);
-
-        call.cancel();
-
-        try {
-            running.get(5, TimeUnit.SECONDS);
-            fail("expected cancellation");
-        } catch (ExecutionException e) {
-            assertEquals("Canceled", e.getCause().getMessage());
-        } finally {
-            pool.shutdown();
-        }
-        assertEquals(1, update.callCount());
-    }
-
-
-    @Test
-    public void cancelReachesTheRetryAttempt() throws Exception {
-        update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
-        update.hold();
-        ExecutorService pool = Executors.newFixedThreadPool(1);
-        PreparedCall call = client.prepare(resetAuthorizations());
-        Future<RpcOutcome> running = executeInBackground(pool, call);
+        Future<RpcOutcome> running = executeInBackground(threadPool, call);
         awaitCalls(update, 2);
 
         call.cancel();
@@ -627,7 +638,35 @@ public class RpcClientTest {
         } catch (ExecutionException e) {
             assertEquals("Canceled", e.getCause().getMessage());
         } finally {
-            pool.shutdown();
+            threadPool.shutdown();
+        }
+        assertEquals(2, update.callCount());
+        assertEquals(
+            Arrays.asList("auth.resetAuthorizations", ImpulseRpcPaths.RefreshSessionMethod),
+            methodsSent(update, 2)
+        );
+    }
+
+
+    @Test
+    public void cancelReachesTheRetryAttempt() throws Exception {
+        update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
+        update.reply(refreshResponse("new", "r2", 5L));
+        update.hold();
+        ExecutorService threadPool = Executors.newFixedThreadPool(1);
+        PreparedCall call = client.prepare(resetAuthorizations());
+        Future<RpcOutcome> running = executeInBackground(threadPool, call);
+        awaitCalls(update, 3);
+
+        call.cancel();
+
+        try {
+            running.get(5, TimeUnit.SECONDS);
+            fail("expected cancellation");
+        } catch (ExecutionException e) {
+            assertEquals("Canceled", e.getCause().getMessage());
+        } finally {
+            threadPool.shutdown();
         }
     }
 
@@ -676,20 +715,23 @@ public class RpcClientTest {
     @Test
     public void callNamedRefreshesAndRetries() throws Exception {
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        update.reply(refreshResponse("new", "r2", 5L));
         update.reply(utf8("x"));
 
         assertArrayEquals(utf8("x"), client.callNamed("initConnection", new byte[0]));
 
-        assertEquals(1, server.getRequestCount());
-        assertEquals(2, update.callCount());
+        assertEquals(3, update.callCount());
+        assertEquals(
+            Arrays.asList("initConnection", ImpulseRpcPaths.RefreshSessionMethod, "initConnection"),
+            methodsSent(update, 3)
+        );
     }
 
 
     @Test
     public void callNamedPersistentAuthKeyUnregisteredThrowsSessionLost() throws Exception {
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        update.reply(refreshResponse("new", "r2", 5L));
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
         try {
             client.callNamed("initConnection", new byte[0]);
@@ -703,7 +745,7 @@ public class RpcClientTest {
     @Test
     public void callNamedFailedRefreshThrowsSessionLost() throws Exception {
         update.fail(appError(401, "AUTH_KEY_UNREGISTERED"));
-        server.enqueue(error(3, "AUTH_TOKEN_INVALID"));
+        update.fail(appError(400, "AUTH_TOKEN_INVALID"));
         try {
             client.callNamed("initConnection", new byte[0]);
             fail("expected SessionLostException");
@@ -717,13 +759,15 @@ public class RpcClientTest {
     public void callNamedRefreshesAnExpiredTokenBeforeSending() throws Exception {
         store.tokens = new SessionTokens("h.eyJleHAiOjE2OTk5OTAwMDB9.s", "r1", 5L);
         build();
-        server.enqueue(ok(refreshResponse("new", "r2", 5L)));
+        pool.reply(refreshResponse("new", "r2", 5L));
         update.reply(utf8("x"));
 
         assertArrayEquals(utf8("x"), client.callNamed("initConnection", new byte[0]));
 
-        assertEquals(RefreshPath, server.takeRequest().getPath());
+        assertEquals(ImpulseRpcPaths.RefreshSessionMethod, pool.takeSent().method);
+        assertEquals(1, pool.callCount());
         assertEquals("initConnection", update.takeSent().method);
+        assertEquals(1, update.callCount());
     }
 
 
@@ -731,12 +775,12 @@ public class RpcClientTest {
     public void callNamedSessionLostWhenExpiredTokenRefreshIsRejected() throws Exception {
         store.tokens = new SessionTokens("h.eyJleHAiOjE2OTk5OTAwMDB9.s", "r1", 5L);
         build();
-        server.enqueue(error(16, "SESSION_EXPIRED"));
+        pool.fail(appError(401, "SESSION_EXPIRED"));
         try {
             client.callNamed("initConnection", new byte[0]);
             fail("expected SessionLostException");
         } catch (SessionLostException expected) {
-            assertEquals(1, server.getRequestCount());
+            assertEquals(1, pool.callCount());
             assertEquals(0, update.callCount());
         }
     }

@@ -2,42 +2,32 @@ package net.impulsem.transport.auth;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.util.Collections;
-import java.util.concurrent.Executor;
 import java.util.Random;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import net.impulsem.transport.errors.RpcError;
-import net.impulsem.transport.errors.RpcErrors;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
-import net.impulsem.transport.grpcweb.GrpcWebResponse;
 import net.impulsem.transport.policy.RequestPolicy;
+import net.impulsem.transport.rpc.BlockingCall;
+import net.impulsem.transport.rpc.CarrierErrors;
 import net.impulsem.transport.rpc.ConnectionDeclarer;
+import net.impulsem.transport.rpc.RpcCarrier;
 
 
 /**
- * Holds the session, the pending 2FA token and the QR exporter ticket, and refreshes the session
- * with a single in-flight request shared by every waiting caller.
+ * Holds the session and refreshes it with a single in-flight request shared by every waiting caller. The refresh
+ * travels over the update socket while the access token works, and over the token-less pool fleet once the token has
+ * expired or the server has refused it.
  */
 public final class TokenManager {
 
-    private static final long PendingLifetimeMillis = 5 * 60 * 1000L;
     private static final long NoRefreshPointMillis = Long.MAX_VALUE;
     private static final int NoFlags = 0;
     private static final int RateLimitedCode = 420;
+    private static final long RefreshTimeoutMillis = 30_000L;
 
-    private static final class Pending {
-
-        final String token;
-        final long expiresAt;
-
-
-        Pending(
-            String token,
-            long expiresAt
-        ) {
-            this.token = token;
-            this.expiresAt = expiresAt;
-        }
-    }
+    private static final Logger Log = Logger.getLogger(TokenManager.class.getName());
 
 
     /** A stored token pair with the refresh point drawn when it was stored. The point is never persisted. */
@@ -58,9 +48,9 @@ public final class TokenManager {
 
 
     private final SessionStore store;
-    private final GrpcWebClient client;
     private final Clock clock;
     private final RefreshSchedule schedule;
+    private final CopyOnWriteArrayList<Runnable> sessionListeners = new CopyOnWriteArrayList<Runnable>();
 
     private final Object refreshLock = new Object();
     private boolean refreshing;
@@ -73,42 +63,49 @@ public final class TokenManager {
     private long clearGeneration;
 
     private volatile Held held;
-    private volatile Pending pending;
-    private volatile String qrTicket;
-    private volatile Runnable sessionListener;
+    private volatile RpcCarrier refreshSocket;
+    private volatile RpcCarrier refreshPool;
+    private volatile String refusedAccessToken;
     private volatile Executor refreshExecutor;
     private volatile ConnectionDeclarer.Delayer refreshDelayer;
 
 
     public TokenManager(
         SessionStore store,
-        GrpcWebClient client,
         Clock clock
     ) {
-        this(store, client, clock, new Random());
+        this(store, clock, new Random());
     }
 
 
     public TokenManager(
         SessionStore store,
-        GrpcWebClient client,
         Clock clock,
         Random random
     ) {
         this.store = store;
-        this.client = client;
         this.clock = clock;
         this.schedule = new RefreshSchedule(random);
         this.held = hold(store.load());
     }
 
 
-    /** The pending token if set and unexpired, else the access token, else null. */
+    /**
+     * Sets the carriers a refresh goes over: the update socket while its access token works, the pool fleet once the
+     * token has expired or was refused. Until this is called a refresh fails. A setter, because the socket is built
+     * after the token manager.
+     */
+    public void setRefreshCarriers(
+        RpcCarrier updateSocket,
+        RpcCarrier poolFleet
+    ) {
+        refreshSocket = updateSocket;
+        refreshPool = poolFleet;
+    }
+
+
+    /** The stored access token, or null without a session. */
     public String bearer() {
-        String active = activePendingToken();
-        if (active != null) {
-            return active;
-        }
         Held current = held;
         return current == null ? null : current.tokens.accessToken;
     }
@@ -122,7 +119,7 @@ public final class TokenManager {
         SessionTokens value = new SessionTokens(access, refresh, userId);
         synchronized (this) {
             held = hold(value);
-            pending = null;
+            refusedAccessToken = null;
             cancelDeferredRefresh();
             store.save(value);
         }
@@ -131,8 +128,7 @@ public final class TokenManager {
 
 
     /**
-     * Persists a refreshed pair. Unlike onLoginTokens it leaves an active pending 2FA token alone.
-     * Returns false and stores nothing when clear() ran since the refresh began.
+     * Persists a refreshed pair. Returns false and stores nothing when clear() ran since the refresh began.
      */
     private boolean onRefreshedTokens(
         SessionTokens value,
@@ -143,6 +139,7 @@ public final class TokenManager {
                 return false;
             }
             held = hold(value);
+            refusedAccessToken = null;
             store.save(value);
         }
         notifySessionChanged();
@@ -163,36 +160,23 @@ public final class TokenManager {
     }
 
 
-    /** The pending token if set and unexpired; an expired one is dropped only if nobody replaced it meanwhile. */
-    private String activePendingToken() {
-        Pending seen = pending;
-        if (seen == null) {
-            return null;
-        }
-        if (clock.nowMillis() < seen.expiresAt) {
-            return seen.token;
-        }
-        synchronized (this) {
-            if (pending == seen) {
-                pending = null;
+    /**
+     * Listeners run after login or refresh stored a new token pair, never on clear. Each runs in its own try block, so
+     * one that throws does not keep the others from running.
+     */
+    public void addSessionListener(Runnable listener) {
+        sessionListeners.add(listener);
+    }
+
+
+    private void notifySessionChanged() {
+        for (Runnable listener : sessionListeners) {
+            try {
+                listener.run();
+            } catch (RuntimeException e) {
+                Log.log(Level.WARNING, "session listener failed", e);
             }
         }
-        return null;
-    }
-
-
-    public void setPendingToken(String jwt) {
-        pending = new Pending(jwt, clock.nowMillis() + PendingLifetimeMillis);
-    }
-
-
-    public String qrExporterTicket() {
-        return qrTicket;
-    }
-
-
-    public void setQrExporterTicket(String ticket) {
-        qrTicket = ticket;
     }
 
 
@@ -209,17 +193,27 @@ public final class TokenManager {
     }
 
 
-    /** Called after login or refresh stored a new token pair, never on clear. */
-    public void setSessionListener(Runnable listener) {
-        sessionListener = listener;
+    /** Remembers that the server refused this access token, e.g. with 103 or 109 on the socket. */
+    public void markRefused(String accessToken) {
+        refusedAccessToken = accessToken;
     }
 
 
-    private void notifySessionChanged() {
-        Runnable listener = sessionListener;
-        if (listener != null) {
-            listener.run();
+    /**
+     * True when the session's access token is refused or its exp has passed. An unreadable token is not unusable:
+     * opaque tokens are never refreshed ahead of time.
+     */
+    public boolean accessUnusable() {
+        Held current = held;
+        if (current == null || current.tokens.accessToken == null) {
+            return false;
         }
+        String access = current.tokens.accessToken;
+        if (access.equals(refusedAccessToken)) {
+            return true;
+        }
+        long exp = expirySeconds(access);
+        return exp >= 0 && clock.nowMillis() >= exp * 1000L;
     }
 
 
@@ -233,8 +227,7 @@ public final class TokenManager {
             clearGeneration++;
             store.clear();
             held = null;
-            pending = null;
-            qrTicket = null;
+            refusedAccessToken = null;
             cancelDeferredRefresh();
         }
     }
@@ -248,10 +241,30 @@ public final class TokenManager {
         if (current == null || current.tokens.accessToken == null || current.tokens.refreshToken == null) {
             return false;
         }
-        if (activePendingToken() != null) {
-            return false;
-        }
         return clock.nowMillis() >= current.refreshPointMillis;
+    }
+
+
+    /**
+     * The token the update socket connects with. Null without a session, or when the session ended during the refresh.
+     * An expired or refused access token is refreshed first, through the pool, so the socket does not connect with a
+     * token the server would refuse.
+     *
+     * @throws IOException when that refresh fails with a transport error; the session is kept.
+     */
+    public String connectionTokenBlocking() throws IOException {
+        if (!hasSession()) {
+            return null;
+        }
+        // Only an unusable token is refreshed here, and that goes through the pool: the SDK asks for this token while
+        // the socket connects, so a refresh on the socket would wait for itself. A valid token past its J6 point is
+        // refreshed on the live socket afterwards.
+        if (accessUnusable()) {
+            if (!refreshBlocking()) {
+                return null;
+            }
+        }
+        return bearer();
     }
 
 
@@ -321,15 +334,35 @@ public final class TokenManager {
         if (current == null || current.refreshToken == null) {
             return false;
         }
-        GrpcWebResponse response = client.execute(
-            client.newCall(
-                ImpulseRpcPaths.RefreshSession,
-                ImpulseRpcPaths.encodeRefreshSession(current.refreshToken),
-                Collections.<String, String>emptyMap()
-            )
+        RpcCarrier socket = refreshSocket;
+        RpcCarrier pool = refreshPool;
+        if (socket == null || pool == null) {
+            throw new IOException("no refresh carrier");
+        }
+        byte[] request = ImpulseRpcPaths.encodeRefreshSession(current.refreshToken);
+        RpcCarrier carrier = accessUnusable() ? pool : socket;
+        BlockingCall.Outcome outcome = BlockingCall.send(
+            carrier,
+            ImpulseRpcPaths.RefreshSessionMethod,
+            request,
+            RefreshTimeoutMillis,
+            null
         );
-        RpcError error = RpcErrors.fromResponse(response);
-        if (error != null) {
+        if (outcome.failure != null && carrier == socket && CarrierErrors.isTokenRefusal(outcome.failure)) {
+            // The socket's own token was refused; the token-less pool fleet takes the refresh instead.
+            outcome = BlockingCall.send(
+                pool,
+                ImpulseRpcPaths.RefreshSessionMethod,
+                request,
+                RefreshTimeoutMillis,
+                null
+            );
+        }
+        if (outcome.failure != null) {
+            RpcError error = CarrierErrors.toRpcError(outcome.failure);
+            if (error == null) {
+                throw new IOException("RefreshSession failed: carrier fault", outcome.failure.cause);
+            }
             if (isUnrecoverable(error)) {
                 clear();
                 return false;
@@ -339,7 +372,7 @@ public final class TokenManager {
             }
             throw new IOException("RefreshSession failed: " + error);
         }
-        ImpulseRpcPaths.Authorization authorization = ImpulseRpcPaths.decodeRefreshSession(response.body);
+        ImpulseRpcPaths.Authorization authorization = ImpulseRpcPaths.decodeRefreshSession(outcome.reply);
         if (authorization.sessionToken == null
             || authorization.sessionToken.isEmpty()
             || authorization.refreshToken == null

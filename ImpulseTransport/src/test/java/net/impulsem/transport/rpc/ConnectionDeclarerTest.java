@@ -25,11 +25,8 @@ import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.schema.TlProtoSchema;
 import net.impulsem.transport.wire.ProtoReader;
-import okhttp3.OkHttpClient;
-import okhttp3.mockwebserver.MockWebServer;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -157,7 +154,7 @@ public class ConnectionDeclarerTest {
         "en"
     );
 
-    private MockWebServer server;
+    private FakeCarrier pool;
     private MemoryStore store;
     private TokenManager tokens;
     private FakeCarrier carrier;
@@ -168,8 +165,7 @@ public class ConnectionDeclarerTest {
 
     @Before
     public void setUp() throws IOException {
-        server = new MockWebServer();
-        server.start();
+        pool = new FakeCarrier();
         store = new MemoryStore();
         store.tokens = new SessionTokens("old", "r1", 5L);
         executor = Executors.newSingleThreadExecutor();
@@ -181,7 +177,7 @@ public class ConnectionDeclarerTest {
     public void tearDown() throws IOException {
         executor.shutdownNow();
         carrier.shutdown();
-        server.shutdown();
+        pool.shutdown();
     }
 
 
@@ -194,12 +190,10 @@ public class ConnectionDeclarerTest {
     }
 
 
-    /** Builds the declarer on the given update-socket carrier; the server stays only for the token manager. */
+    /** Builds the declarer on the given update-socket carrier; refreshes would go over it and the pool fleet. */
     private void buildOn(RpcCarrier updateSocket) {
-        GrpcWebClient grpc = new GrpcWebClient(new OkHttpClient(), server.url("/"));
         tokens = new TokenManager(
             store,
-            grpc,
             new Clock() {
                 @Override
                 public long nowMillis() {
@@ -207,6 +201,7 @@ public class ConnectionDeclarerTest {
                 }
             }
         );
+        tokens.setRefreshCarriers(updateSocket, pool);
         rpc = new RpcClient(new Transcoder(TlProtoSchema.load()), updateSocket, null, tokens);
         declarer = new ConnectionDeclarer(
             rpc,

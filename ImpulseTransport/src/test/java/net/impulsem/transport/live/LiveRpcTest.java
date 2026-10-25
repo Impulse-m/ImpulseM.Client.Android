@@ -25,11 +25,9 @@ import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.rpc.RpcClient;
 import net.impulsem.transport.rpc.RpcOutcome;
 import net.impulsem.transport.schema.TlProtoSchema;
-import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import org.junit.Assume;
 import org.junit.Before;
@@ -92,7 +90,6 @@ public class LiveRpcTest {
     private TlProtoSchema schema;
     private TlView view;
     private Transcoder transcoder;
-    private GrpcWebClient grpc;
     private final Random random = new Random();
 
 
@@ -106,7 +103,6 @@ public class LiveRpcTest {
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .build();
-        grpc = new GrpcWebClient(http, HttpUrl.get(Endpoint));
     }
 
 
@@ -260,7 +256,7 @@ public class LiveRpcTest {
         String code
     ) {
         Account account = new Account(phone, code);
-        account.tokens = new TokenManager(account.store, grpc, Clock.SYSTEM);
+        account.tokens = new TokenManager(account.store, Clock.SYSTEM);
         account.rpc = new RpcClient(transcoder, null, null, account.tokens);
         return account;
     }

@@ -15,11 +15,9 @@ import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.rpc.RpcClient;
 import net.impulsem.transport.rpc.RpcOutcome;
 import net.impulsem.transport.schema.TlProtoSchema;
-import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 
 
@@ -81,7 +79,6 @@ final class LiveAccounts {
     final OkHttpClient http;
     final TlView view;
     final Transcoder transcoder;
-    private final GrpcWebClient grpc;
     private final Random random = new Random();
 
 
@@ -93,7 +90,6 @@ final class LiveAccounts {
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .build();
-        grpc = new GrpcWebClient(http, HttpUrl.get(Endpoint));
     }
 
 
@@ -107,7 +103,7 @@ final class LiveAccounts {
             code.append(x);
         }
         Account account = new Account("99966" + x + String.format("%04d", random.nextInt(10000)), code.toString());
-        account.tokens = new TokenManager(account.store, grpc, Clock.SYSTEM);
+        account.tokens = new TokenManager(account.store, Clock.SYSTEM);
         account.rpc = new RpcClient(transcoder, null, null, account.tokens);
         login(account, lastName);
         List<?> users = (List<?>) result(
@@ -129,7 +125,7 @@ final class LiveAccounts {
     ) {
         Account account = new Account(phone, code);
         account.store.save(saved);
-        account.tokens = new TokenManager(account.store, grpc, Clock.SYSTEM);
+        account.tokens = new TokenManager(account.store, Clock.SYSTEM);
         account.rpc = new RpcClient(transcoder, null, null, account.tokens);
         account.userId = saved.userId;
         return account;

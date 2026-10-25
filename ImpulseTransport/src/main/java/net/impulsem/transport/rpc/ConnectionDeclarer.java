@@ -80,7 +80,7 @@ public final class ConnectionDeclarer {
         this.executor = executor;
         this.delayer = delayer;
         this.listener = listener;
-        tokens.setSessionListener(new Runnable() {
+        tokens.addSessionListener(new Runnable() {
             @Override
             public void run() {
                 sessionChanged();
