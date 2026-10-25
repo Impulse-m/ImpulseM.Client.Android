@@ -981,6 +981,18 @@ public final class ImpulseConnection {
                 "detail", outcome.transcodeDetail
             );
         }
+        if ("METHOD_INVALID".equals(error.text)) {
+            // The fleet's registry lacks the method, or the socket's credential cannot carry it: traced so the
+            // server side can add it.
+            RemoteLog.trace(
+                LogLevel.WARN,
+                RemoteLog.ComponentTransport,
+                "METHOD_INVALID",
+                "account", account,
+                "method", pending.method,
+                "signedIn", credentials.signedIn()
+            );
+        }
         RequestPolicy.Decision decision = RequestPolicy.onError(entry.flags, entry.connectionType, error, pending.serverFailures);
         log("token " + entry.token + " " + pending.method + " error " + error.code + " " + error.text + " -> " + decision.action);
         if (outcome.forceLogout || decision.action == RequestPolicy.Action.LOGOUT_AND_DELIVER) {
