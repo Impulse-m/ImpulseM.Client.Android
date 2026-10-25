@@ -1,5 +1,7 @@
 package net.impulsem.transport.errors;
 
+
+/** Reads the Telegram error texts the transport reacts to. */
 public final class RpcErrors {
 
     private static final String[] FLOOD_PREFIXES = {
@@ -48,6 +50,4 @@ public final class RpcErrors {
         }
         return -1;
     }
-
-
 }
