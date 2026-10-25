@@ -5,13 +5,16 @@ import android.os.SystemClock;
 import net.impulsem.proxy.ProxyRouting;
 import net.impulsem.transport.auth.Clock;
 import net.impulsem.transport.auth.ConnectionDeclaration;
+import net.impulsem.transport.auth.Credentials;
+import net.impulsem.transport.auth.IdentityManager;
 import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.errors.RpcError;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
+import net.impulsem.transport.fleet.RpcPoolCarrier;
 import net.impulsem.transport.policy.RequestPolicy;
 import net.impulsem.transport.rpc.ConnectionDeclarer;
+import net.impulsem.transport.rpc.PreparedCall;
 import net.impulsem.transport.rpc.RpcClient;
 import net.impulsem.transport.rpc.RpcOutcome;
 import net.impulsem.transport.schema.TlProtoSchema;
@@ -37,6 +40,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
@@ -49,7 +53,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import okhttp3.Call;
 import okhttp3.Dispatcher;
 import okhttp3.OkHttpClient;
 
@@ -74,6 +77,7 @@ public final class ImpulseConnection {
     private static final long PauseTickGraceMillis = 10L * 1000L;
     private static final int MaxWorkerThreads = 48;
     private static final String LangPack = "android";
+    private static final String LogOutMethod = "auth.logOut";
 
     private static final ImpulseConnection[] Instances = new ImpulseConnection[UserConfig.MAX_ACCOUNT_COUNT];
     private static OkHttpClient httpClient;
@@ -99,7 +103,7 @@ public final class ImpulseConnection {
         int networkFailures;
         long startedEpoch;
         String method = "?";
-        Call call;
+        PreparedCall call;
         ScheduledFuture<?> timer;
 
 
@@ -114,8 +118,10 @@ public final class ImpulseConnection {
     private final Object lock = new Object();
 
     private final AndroidSessionStore store;
-    private final GrpcWebClient grpc;
     private final TokenManager tokens;
+    private final RpcPoolCarrier poolFleet;
+    private final IdentityManager identity;
+    private final Credentials credentials;
     private RpcClient rpc;
     private Transcoder transcoder;
     private ConnectionDeclarer declarer;
@@ -140,7 +146,6 @@ public final class ImpulseConnection {
     private int connectionState = connectingState();
     private int thisDatacenter = 1;
 
-    private volatile long timeOffsetMillis;
     private volatile int lastPingMillis;
     private volatile boolean tickSuspended;
     private ScheduledFuture<?> suspendTask;
@@ -214,9 +219,7 @@ public final class ImpulseConnection {
         this.account = account;
         this.owner = owner;
         this.store = new AndroidSessionStore(account);
-        this.grpc = new GrpcWebClient(sharedHttpClient(), ImpulseEndpoints.rpcBaseUrl());
-        this.grpc.setServerTimeListener(serverTimeMillis -> timeOffsetMillis = serverTimeMillis - System.currentTimeMillis());
-        this.tokens = new TokenManager(store, grpc, Clock.SYSTEM);
+        this.tokens = new TokenManager(store, Clock.SYSTEM);
         this.executor = new ThreadPoolExecutor(
             MaxWorkerThreads,
             MaxWorkerThreads,
@@ -239,7 +242,51 @@ public final class ImpulseConnection {
             }
         };
         this.tokens.setDeferredRefreshScheduling(this.executor, this.timerDelayer);
+        // A WebSocket has no read deadline of its own: the server's pings keep it alive, as for the update socket.
+        OkHttpClient poolHttp = sharedHttpClient().newBuilder().readTimeout(0L, TimeUnit.MILLISECONDS).build();
+        this.poolFleet = RpcPoolCarrier.poolFleet(poolHttp, ImpulseEndpoints.poolUrl());
+        this.identity = new IdentityManager(
+            store.identityStore(),
+            poolFleet,
+            Clock.SYSTEM,
+            new Random(),
+            timerDelayer,
+            executor
+        );
+        // The socket may ask for an identity before the app declares the connection, and the server refuses a mint
+        // without an api_id, so it is set from the build at once.
+        this.identity.setApiId(BuildVars.APP_ID);
+        this.credentials = new Credentials(tokens, identity);
         this.realtime = ImpulseRealtime.create(account, this);
+        this.tokens.setRefreshCarriers(realtime.carrier(), poolFleet);
+        this.identity.setRenewalCarrier(realtime.carrier());
+        this.identity.setListener(new IdentityManager.Listener() {
+            @Override
+            public void onIdentityChanged() {
+                log("identity changed");
+                realtime.reconnect();
+                credentialChanged();
+            }
+
+            @Override
+            public void onIdentityRenewed(String identityToken) {
+                realtime.refreshConnectionToken(identityToken);
+                credentialChanged();
+            }
+        });
+        this.tokens.addSessionListener(new Runnable() {
+            @Override
+            public void run() {
+                // A sign-in ends the identity; a refresh of a live session goes to the socket without a reconnect.
+                // The sync runs in both cases: the planner rekeys the socket only when its credential kind changed.
+                if (identity.current() != null) {
+                    identity.discard();
+                } else {
+                    realtime.refreshConnectionToken(tokens.bearer());
+                }
+                realtime.syncSoon();
+            }
+        });
     }
 
 
@@ -457,12 +504,12 @@ public final class ImpulseConnection {
 
 
     public long currentTimeMillis() {
-        return System.currentTimeMillis() + timeOffsetMillis;
+        return realtime.serverTimeMillis();
     }
 
 
     public int timeDifference() {
-        return (int) (timeOffsetMillis / 1000L);
+        return (int) ((realtime.serverTimeMillis() - System.currentTimeMillis()) / 1000L);
     }
 
 
@@ -587,8 +634,13 @@ public final class ImpulseConnection {
     }
 
 
-    RpcClient rpcClient() {
-        return rpc();
+    Credentials credentials() {
+        return credentials;
+    }
+
+
+    String rpcInstance() {
+        return store.rpcInstance();
     }
 
 
@@ -610,26 +662,14 @@ public final class ImpulseConnection {
     }
 
 
-    /** The realtime layer could not get a token because the session is gone: log out like any forced logout. */
-    void onRealtimeSessionLost() {
-        boolean loggedIn;
-        synchronized (lock) {
-            loggedIn = RequestPolicy.shouldForceLogout(userId);
-        }
-        if (loggedIn) {
-            tokens.clear();
-            postLogout();
-        }
-    }
-
-
     private synchronized RpcClient rpc() {
         if (rpc == null) {
             transcoder = new Transcoder(TlProtoSchema.load());
-            rpc = new RpcClient(transcoder, grpc, tokens);
+            rpc = new RpcClient(transcoder, realtime.carrier(), null, tokens, credentials);
             declarer = new ConnectionDeclarer(
                 rpc,
                 tokens,
+                credentials,
                 executor,
                 timerDelayer,
                 new ConnectionDeclarer.Listener() {
@@ -651,6 +691,7 @@ public final class ImpulseConnection {
                     }
                 }
             );
+            rpc.setDeclarationGate(declarer);
         }
         return rpc;
     }
@@ -659,6 +700,23 @@ public final class ImpulseConnection {
     private synchronized ConnectionDeclarer declarer() {
         rpc();
         return declarer;
+    }
+
+
+    /** Tells the declarer the credential changed, if the declarer exists; runs on the worker pool, not the caller's thread. */
+    private void credentialChanged() {
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                ConnectionDeclarer current;
+                synchronized (ImpulseConnection.this) {
+                    current = declarer;
+                }
+                if (current != null) {
+                    current.credentialChanged();
+                }
+            }
+        });
     }
 
 
@@ -678,6 +736,7 @@ public final class ImpulseConnection {
             @Override
             public void run() {
                 try {
+                    identity.setApiId(apiId);
                     declarer().setDeclaration(new ConnectionDeclaration(
                         apiId,
                         deviceModel,
@@ -824,7 +883,7 @@ public final class ImpulseConnection {
         }
         // Read before the call exists: a cancel that follows an epoch advance must see an older epoch.
         long epoch = proxyEpoch.get();
-        Call call;
+        PreparedCall call;
         try {
             call = client.prepare(data);
         } catch (RuntimeException e) {
@@ -838,7 +897,7 @@ public final class ImpulseConnection {
             }
             pending.call = call;
             pending.startedEpoch = epoch;
-            pending.method = call.request().url().encodedPath();
+            pending.method = call.method();
         }
         ConnectionsManager.onRequestWriteToSocket(account, entry.token);
         long startTime = SystemClock.elapsedRealtime();
@@ -873,12 +932,26 @@ public final class ImpulseConnection {
         setState(ConnectionStateConnected);
         releaseLoginWaiters();
         ConnectionsManager.onBytesSent(entry.data.length, ApplicationLoader.getCurrentNetworkType(), account);
+        afterLogOut(pending);
         if (outcome.error == null) {
             ConnectionsManager.onBytesReceived(outcome.tlResult.length, ApplicationLoader.getCurrentNetworkType(), account);
             finishSuccess(pending, outcome.tlResult);
         } else {
             onServerError(pending, outcome);
         }
+    }
+
+
+    /**
+     * Any outcome of auth.logOut ends this account's session: the tokens go and the socket follows the signed-out
+     * state. Canon's callback cleans up on any outcome too, so ours must not depend on the reply arriving.
+     */
+    private void afterLogOut(Pending pending) {
+        if (!LogOutMethod.equals(pending.method)) {
+            return;
+        }
+        tokens.clear();
+        realtime.syncSoon();
     }
 
 
@@ -949,6 +1022,12 @@ public final class ImpulseConnection {
         }
         log("token " + entry.token + " " + pending.method + " network failure " + pending.networkFailures + (proxyChange ? " (proxy change)" : "") + ": " + failure);
         setState(ApplicationLoader.isNetworkOnline() ? connectingState() : ConnectionStateWaitingForNetwork);
+        if (LogOutMethod.equals(pending.method)) {
+            // The server may have revoked the session and closed the socket before its reply: a logout is never retried.
+            afterLogOut(pending);
+            finishError(pending, -1000, "");
+            return;
+        }
         RequestPolicy.Decision decision = RequestPolicy.onNetworkFailure(entry.flags, entry.connectionType, pending.networkFailures);
         if (decision.action == RequestPolicy.Action.RETRY_AFTER) {
             scheduleRun(pending, decision.delayMillis, true);
@@ -1031,7 +1110,7 @@ public final class ImpulseConnection {
 
 
     private void abort(Pending pending) {
-        Call call;
+        PreparedCall call;
         ScheduledFuture<?> timer;
         synchronized (lock) {
             call = pending.call;
@@ -1190,7 +1269,7 @@ public final class ImpulseConnection {
                     synchronized (lock) {
                         thisDatacenter = config.this_dc;
                     }
-                    log("config this_dc=" + config.this_dc + " offset=" + timeOffsetMillis);
+                    log("config this_dc=" + config.this_dc);
                     MessagesController.getInstance(account).updateConfig(config);
                 } else {
                     log("config failed " + (error == null ? "" : error.code + " " + error.text));

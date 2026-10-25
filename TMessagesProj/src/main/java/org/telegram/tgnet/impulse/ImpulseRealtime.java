@@ -1,17 +1,14 @@
 package org.telegram.tgnet.impulse;
 
-import net.impulsem.transport.auth.ImpulseRpcPaths;
 import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.realtime.CentrifugoClient;
 import net.impulsem.transport.realtime.CentrifugoListener;
-import net.impulsem.transport.realtime.CentrifugoTokenProto;
 import net.impulsem.transport.realtime.GapTracker;
 import net.impulsem.transport.realtime.Publication;
 import net.impulsem.transport.realtime.PublicationRouter;
 import net.impulsem.transport.realtime.SyncPlanner;
-import net.impulsem.transport.rpc.RpcClient;
-import net.impulsem.transport.rpc.SessionLostException;
+import net.impulsem.transport.rpc.RpcCarrier;
 
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
@@ -120,7 +117,14 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             .newBuilder()
             .readTimeout(0L, TimeUnit.MILLISECONDS)
             .build();
-        this.client = new CentrifugoClient(http, ImpulseEndpoints.realtimeUrl(), this, this, executor);
+        this.client = new CentrifugoClient(
+            http,
+            ImpulseEndpoints.realtimeUrl(),
+            this,
+            this,
+            executor,
+            connection.rpcInstance()
+        );
         this.client.setLogLabel("account=" + account);
         this.client.setTraceSink(this::traceLifecycle);
         this.lanes = new ChannelLaneManager(account, client);
@@ -216,25 +220,23 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
 
     @Override
     public String fetchToken() throws IOException {
-        try {
-            byte[] response = connection.rpcClient().callImpulse(ImpulseRpcPaths.GetCentrifugoToken, new byte[0]);
-            String token = CentrifugoTokenProto.decodeToken(response);
-            if (token == null || token.isEmpty()) {
-                throw new IOException("empty centrifugo token");
-            }
-            return token;
-        } catch (SessionLostException e) {
-            RemoteLog.trace(
-                LogLevel.WARN,
-                RemoteLog.ComponentRealtime,
-                "REALTIME_SESSION_LOST",
-                "account", account,
-                "during", "token_fetch",
-                "error", e
-            );
-            connection.onRealtimeSessionLost();
-            throw e;
-        }
+        return connection.credentials().connectTokenBlocking();
+    }
+
+
+    /** The socket that carries rpcs; the connection hands it to the token manager and the identity manager. */
+    RpcCarrier carrier() {
+        return client;
+    }
+
+
+    long serverTimeMillis() {
+        return client.serverTimeMillis();
+    }
+
+
+    void refreshConnectionToken(String token) {
+        client.refreshConnectionToken(token);
     }
 
 
