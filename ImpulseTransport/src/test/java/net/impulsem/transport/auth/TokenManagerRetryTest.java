@@ -1,7 +1,5 @@
 package net.impulsem.transport.auth;
 
-import static net.impulsem.transport.GrpcWebTestSupport.error;
-import static net.impulsem.transport.GrpcWebTestSupport.ok;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -16,10 +14,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.rpc.ConnectionDeclarer;
-import okhttp3.OkHttpClient;
-import okhttp3.mockwebserver.MockWebServer;
+import net.impulsem.transport.rpc.FakeCarrier;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -52,6 +48,12 @@ public class TokenManagerRetryTest {
         }
 
 
+        synchronized void clear() {
+            tasks.clear();
+            delays.clear();
+        }
+
+
         synchronized long lastDelayMillis() {
             return delays.get(delays.size() - 1);
         }
@@ -67,7 +69,8 @@ public class TokenManagerRetryTest {
     }
 
 
-    private MockWebServer server;
+    private FakeCarrier socket;
+    private FakeCarrier pool;
     private TokenManagerTest.MemoryStore store;
     private TokenManagerTest.FakeClock clock;
     private FakeDelayer delayer;
@@ -76,8 +79,8 @@ public class TokenManagerRetryTest {
 
     @Before
     public void setUp() throws IOException {
-        server = new MockWebServer();
-        server.start();
+        socket = new FakeCarrier();
+        pool = new FakeCarrier();
         store = new TokenManagerTest.MemoryStore();
         clock = new TokenManagerTest.FakeClock();
         clock.now = NowMillis;
@@ -88,18 +91,15 @@ public class TokenManagerRetryTest {
 
     @After
     public void tearDown() throws IOException {
-        server.shutdown();
+        socket.shutdown();
+        pool.shutdown();
     }
 
 
     private void storeAccessExpiringIn(long secondsLeft) {
         store.tokens = new SessionTokens(TokenManagerTest.jwt(NowSeconds + secondsLeft), "refresh-1", 42L);
-        manager = new TokenManager(
-            store,
-            new GrpcWebClient(new OkHttpClient(), server.url("/")),
-            clock,
-            new Random(1L)
-        );
+        manager = new TokenManager(store, clock, new Random(1L));
+        manager.setRefreshCarriers(socket, pool);
         manager.setDeferredRefreshScheduling(
             new java.util.concurrent.Executor() {
                 @Override
@@ -109,24 +109,26 @@ public class TokenManagerRetryTest {
             },
             delayer
         );
+        // The stored pair also schedules its J6 point on this delayer; these tests count only their retry tasks.
+        delayer.clear();
     }
 
 
     @Test
     public void floodWaitRefreshIsRetriedOnceAfterFiveSecondsAndSucceeds() throws Exception {
         String original = store.tokens.accessToken;
-        server.enqueue(error(8, "FLOOD_WAIT_5"));
+        socket.fail(TokenManagerTest.appError(420, "FLOOD_WAIT_5"));
         assertTrue(manager.refreshBlocking());
-        assertEquals(1, server.getRequestCount());
+        assertEquals(1, socket.callCount());
         assertEquals(1, delayer.pending());
         assertEquals(5000L, delayer.lastDelayMillis());
         assertEquals(original, manager.bearer());
 
-        server.enqueue(ok(TokenManagerTest.authorizationProto(42L, "access-2", "refresh-2")));
+        socket.reply(TokenManagerTest.authorizationProto(42L, "access-2", "refresh-2"));
         clock.now += 5000L;
         delayer.runNext();
 
-        assertEquals(2, server.getRequestCount());
+        assertEquals(2, socket.callCount());
         assertEquals(0, delayer.pending());
         assertEquals("access-2", store.tokens.accessToken);
         assertEquals("access-2", manager.bearer());
@@ -137,12 +139,12 @@ public class TokenManagerRetryTest {
     public void floodWaitLandingPastExpiryMinus120IsNotRetried() throws Exception {
         storeAccessExpiringIn(400L);
         String original = store.tokens.accessToken;
-        server.enqueue(error(8, "FLOOD_WAIT_300"));
+        socket.fail(TokenManagerTest.appError(420, "FLOOD_WAIT_300"));
         try {
             manager.refreshBlocking();
             fail("expected IOException");
         } catch (IOException expected) {
-            assertEquals(1, server.getRequestCount());
+            assertEquals(1, socket.callCount());
             assertEquals(0, delayer.pending());
             assertEquals(original, store.tokens.accessToken);
             assertTrue(manager.hasSession());
@@ -153,14 +155,14 @@ public class TokenManagerRetryTest {
     @Test
     public void failedDeferredRetryDoesNotThrowFromItsTask() throws Exception {
         String original = store.tokens.accessToken;
-        server.enqueue(error(8, "FLOOD_WAIT_5"));
+        socket.fail(TokenManagerTest.appError(420, "FLOOD_WAIT_5"));
         assertTrue(manager.refreshBlocking());
 
-        server.enqueue(error(13, "INTERNAL"));
+        socket.fail(TokenManagerTest.appError(500, "INTERNAL"));
         clock.now += 5000L;
         delayer.runNext();
 
-        assertEquals(2, server.getRequestCount());
+        assertEquals(2, socket.callCount());
         assertEquals(original, store.tokens.accessToken);
         assertTrue(manager.hasSession());
     }
@@ -168,14 +170,14 @@ public class TokenManagerRetryTest {
 
     @Test
     public void concurrentCallersDuringPendingRetrySendOneRequest() throws Exception {
-        server.enqueue(error(8, "FLOOD_WAIT_5"));
+        socket.fail(TokenManagerTest.appError(420, "FLOOD_WAIT_5"));
         assertTrue(manager.refreshBlocking());
 
-        ExecutorService pool = Executors.newFixedThreadPool(ConcurrentCallers);
+        ExecutorService threadPool = Executors.newFixedThreadPool(ConcurrentCallers);
         final CountDownLatch start = new CountDownLatch(1);
         List<Future<Boolean>> results = new ArrayList<Future<Boolean>>();
         for (int i = 0; i < ConcurrentCallers; i++) {
-            results.add(pool.submit(new Callable<Boolean>() {
+            results.add(threadPool.submit(new Callable<Boolean>() {
                 @Override
                 public Boolean call() throws Exception {
                     start.await();
@@ -187,15 +189,15 @@ public class TokenManagerRetryTest {
         for (Future<Boolean> result : results) {
             assertTrue(result.get(10, TimeUnit.SECONDS));
         }
-        pool.shutdown();
+        threadPool.shutdown();
 
-        assertEquals(1, server.getRequestCount());
+        assertEquals(1, socket.callCount());
         assertEquals(1, delayer.pending());
 
-        server.enqueue(ok(TokenManagerTest.authorizationProto(42L, "access-2", "refresh-2")));
+        socket.reply(TokenManagerTest.authorizationProto(42L, "access-2", "refresh-2"));
         clock.now += 5000L;
         delayer.runNext();
-        assertEquals(2, server.getRequestCount());
+        assertEquals(2, socket.callCount());
         assertEquals("access-2", store.tokens.accessToken);
     }
 }

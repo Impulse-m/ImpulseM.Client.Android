@@ -1,5 +1,6 @@
 package net.impulsem.transport.realtime;
 
+import io.github.centrifugal.centrifuge.AuthResult;
 import io.github.centrifugal.centrifuge.Client;
 import io.github.centrifugal.centrifuge.ConnectedEvent;
 import io.github.centrifugal.centrifuge.ConnectingEvent;
@@ -11,7 +12,11 @@ import io.github.centrifugal.centrifuge.ErrorEvent;
 import io.github.centrifugal.centrifuge.EventListener;
 import io.github.centrifugal.centrifuge.Options;
 import io.github.centrifugal.centrifuge.PublicationEvent;
+import io.github.centrifugal.centrifuge.RPCResult;
 import io.github.centrifugal.centrifuge.ReplyError;
+import io.github.centrifugal.centrifuge.ResultCallback;
+import io.github.centrifugal.centrifuge.RpcCall;
+import io.github.centrifugal.centrifuge.RpcOptions;
 import io.github.centrifugal.centrifuge.SubscribedEvent;
 import io.github.centrifugal.centrifuge.SubscribingEvent;
 import io.github.centrifugal.centrifuge.Subscription;
@@ -33,6 +38,10 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.logging.TraceSink;
+import net.impulsem.transport.rpc.CarrierCall;
+import net.impulsem.transport.rpc.CarrierCallback;
+import net.impulsem.transport.rpc.CarrierFailure;
+import net.impulsem.transport.rpc.RpcCarrier;
 import net.impulsem.transport.rpc.SessionLostException;
 import okhttp3.OkHttpClient;
 
@@ -47,7 +56,7 @@ import okhttp3.OkHttpClient;
  * <p>Listener callbacks arrive on the SDK's thread and are never invoked while a lock is held. Calls that can block on
  * the SDK (token fetches) run on the supplied executor, which needs at least two threads.
  */
-public final class CentrifugoClient {
+public final class CentrifugoClient implements RpcCarrier {
 
     public interface TokenProvider {
 
@@ -120,6 +129,19 @@ public final class CentrifugoClient {
         CentrifugoListener listener,
         ScheduledExecutorService executor
     ) {
+        this(http, wsUrl, tokens, listener, executor, null);
+    }
+
+
+    /** The instance names this client to the server for rpc options (msg_id); null sends none. */
+    public CentrifugoClient(
+        OkHttpClient http,
+        String wsUrl,
+        TokenProvider tokens,
+        CentrifugoListener listener,
+        ScheduledExecutorService executor,
+        String instance
+    ) {
         this.tokens = tokens;
         this.listener = listener;
         this.executor = executor;
@@ -130,6 +152,9 @@ public final class CentrifugoClient {
         this.options.setTimeout(ReplyTimeoutMillis);
         this.options.setMinReconnectDelay(MinReconnectMillis);
         this.options.setMaxReconnectDelay(MaxReconnectMillis);
+        if (instance != null) {
+            this.options.setInstance(instance);
+        }
         this.options.setTokenGetter(new ConnectionTokenGetter() {
             @Override
             public void getConnectionToken(
@@ -247,6 +272,28 @@ public final class CentrifugoClient {
 
 
     /**
+     * Hands a renewed token of the same identity to the live connection (SDK refresh) instead of reconnecting. A failure
+     * is logged; the connection keeps its token, and the SDK fetches one from the provider at its next refresh or connect.
+     */
+    public void refreshConnectionToken(String token) {
+        if (token == null || token.isEmpty()) {
+            return;
+        }
+        sdk.refresh(token, new ResultCallback<AuthResult>() {
+            @Override
+            public void onDone(
+                Throwable error,
+                AuthResult result
+            ) {
+                if (error != null) {
+                    Log.log(Level.WARNING, "connection token refresh failed: " + describe(error));
+                }
+            }
+        });
+    }
+
+
+    /**
      * Declares interest in a channel. The subscription is sent now when connected, and again after every reconnect.
      * A channel that is already wanted is left as it is.
      */
@@ -284,6 +331,57 @@ public final class CentrifugoClient {
         synchronized (lock) {
             return new LinkedHashSet<String>(channels.keySet());
         }
+    }
+
+
+    /**
+     * Sends the rpc on the connection. The SDK refuses a deadline above its client timeout, so a longer request is cut to
+     * that timeout; a timeout of zero or less means the client timeout.
+     */
+    @Override
+    public CarrierCall call(
+        final String method,
+        byte[] data,
+        long timeoutMillis,
+        final CarrierCallback callback
+    ) {
+        long timeout = timeoutMillis <= 0L ? ReplyTimeoutMillis : Math.min(timeoutMillis, ReplyTimeoutMillis);
+        final RpcCall sdkCall = sdk.rpcCall(
+            method,
+            data,
+            new RpcOptions.Builder().timeout(timeout).build(),
+            new ResultCallback<RPCResult>() {
+                @Override
+                public void onDone(
+                    Throwable error,
+                    RPCResult result
+                ) {
+                    try {
+                        if (error != null) {
+                            callback.onFailure(CarrierFailure.of(error));
+                        } else {
+                            byte[] reply = result.getData();
+                            callback.onReply(reply == null ? new byte[0] : reply);
+                        }
+                    } catch (RuntimeException ex) {
+                        // An exception escaping an SDK callback disconnects the socket, so it is logged here.
+                        Log.log(Level.WARNING, "rpc callback of " + method + " threw", ex);
+                    }
+                }
+            }
+        );
+        return new CarrierCall() {
+            @Override
+            public void cancel() {
+                sdkCall.cancel();
+            }
+        };
+    }
+
+
+    /** The server's clock, as the SDK estimates it from the last reply that carried a server time. */
+    public long serverTimeMillis() {
+        return sdk.serverTimeMillis();
     }
 
 

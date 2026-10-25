@@ -9,6 +9,7 @@ import okhttp3.HttpUrl;
 public final class ImpulseEndpoints {
 
     private static final String RealtimePath = "/connection/websocket?cf_ws_frame_ping_pong=true";
+    private static final String PoolPath = "/pool/connection/websocket?cf_protocol=protobuf&cf_ws_frame_ping_pong=true";
 
 
     private ImpulseEndpoints() {
@@ -22,6 +23,17 @@ public final class ImpulseEndpoints {
 
     /** The Centrifugo WebSocket URL: wss://host/connection/websocket?cf_ws_frame_ping_pong=true. */
     public static String realtimeUrl() {
+        return websocketBase() + RealtimePath;
+    }
+
+
+    /** The token-less pool fleet's WebSocket URL, on the same host as the realtime socket. */
+    public static String poolUrl() {
+        return websocketBase() + PoolPath;
+    }
+
+
+    private static String websocketBase() {
         HttpUrl base = rpcBaseUrl();
         String scheme = base.isHttps() ? "wss" : "ws";
         int defaultPort = base.isHttps() ? 443 : 80;
@@ -29,6 +41,6 @@ public final class ImpulseEndpoints {
         if (base.port() != defaultPort) {
             authority += ":" + base.port();
         }
-        return scheme + "://" + authority + RealtimePath;
+        return scheme + "://" + authority;
     }
 }

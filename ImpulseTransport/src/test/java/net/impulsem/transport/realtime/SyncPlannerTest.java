@@ -22,23 +22,87 @@ public class SyncPlannerTest {
 
 
     @Test
-    public void logoutDropsTheUserLaneOnceAndDisconnects() {
+    public void logoutDropsTheUserLaneOnceAndReconnectsWithoutALane() {
         SyncPlanner planner = new SyncPlanner();
         planner.plan(5L, true, true);
         SyncPlanner.Plan out = planner.plan(0L, false, true);
-        assertTrue(out.disconnect);
         assertTrue(out.stopLanes);
-        assertFalse(out.connect);
+        assertTrue(out.connect);
         assertEquals(5L, out.dropUserLane);
+        assertEquals(0L, out.subscribeUserLane);
         assertEquals(0L, planner.plan(0L, false, true).dropUserLane);
     }
 
 
+    /** Without a session the socket still connects, as identity; the user id alone does not make a lane. */
     @Test
     public void missingSessionCountsAsLoggedOut() {
         SyncPlanner.Plan plan = new SyncPlanner().plan(5L, false, true);
-        assertTrue(plan.disconnect);
-        assertFalse(plan.connect);
+        assertTrue(plan.connect);
+        assertFalse(plan.disconnect);
+        assertTrue(plan.stopLanes);
+        assertEquals(0L, plan.subscribeUserLane);
+    }
+
+
+    @Test
+    public void signedOutOnlineConnectsWithoutALane() {
+        SyncPlanner.Plan plan = new SyncPlanner().plan(0L, false, true);
+        assertTrue(plan.connect);
+        assertFalse(plan.disconnect);
+        assertEquals(0L, plan.subscribeUserLane);
+        assertEquals(0L, plan.dropUserLane);
+    }
+
+
+    @Test
+    public void signInRekeysOnce() {
+        SyncPlanner planner = new SyncPlanner();
+        planner.plan(0L, false, true);
+        SyncPlanner.Plan in = planner.plan(5L, true, true);
+        assertTrue(in.disconnect);
+        assertTrue(in.connect);
+        assertEquals(5L, in.subscribeUserLane);
+        SyncPlanner.Plan steady = planner.plan(5L, true, true);
+        assertFalse(steady.disconnect);
+        assertTrue(steady.connect);
+    }
+
+
+    @Test
+    public void signOutRekeys() {
+        SyncPlanner planner = new SyncPlanner();
+        planner.plan(5L, true, true);
+        SyncPlanner.Plan out = planner.plan(0L, false, true);
+        assertTrue(out.disconnect);
+        assertTrue(out.connect);
+        SyncPlanner.Plan steady = planner.plan(0L, false, true);
+        assertFalse(steady.disconnect);
+        assertTrue(steady.connect);
+    }
+
+
+    @Test
+    public void firstConnectIsNotARekey() {
+        SyncPlanner.Plan plan = new SyncPlanner().plan(5L, true, true);
+        assertFalse(plan.disconnect);
+        assertTrue(plan.connect);
+    }
+
+
+    @Test
+    public void offlineDisconnectsInEitherKind() {
+        SyncPlanner identity = new SyncPlanner();
+        identity.plan(0L, false, true);
+        SyncPlanner.Plan offlineIdentity = identity.plan(0L, false, false);
+        assertTrue(offlineIdentity.disconnect);
+        assertFalse(offlineIdentity.connect);
+
+        SyncPlanner session = new SyncPlanner();
+        session.plan(5L, true, true);
+        SyncPlanner.Plan offlineSession = session.plan(5L, true, false);
+        assertTrue(offlineSession.disconnect);
+        assertFalse(offlineSession.connect);
     }
 
 

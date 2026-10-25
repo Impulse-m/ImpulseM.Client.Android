@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 import net.impulsem.transport.auth.SessionTokens;
+import org.junit.After;
 import org.junit.Assume;
 import org.junit.Test;
 
@@ -36,6 +37,12 @@ public class DeviceDriver {
 
     private final LiveAccounts live = new LiveAccounts();
     private final Random random = new Random();
+
+
+    @After
+    public void tearDown() {
+        live.close();
+    }
 
 
     @Test
@@ -223,8 +230,10 @@ public class DeviceDriver {
     private void oldRefresh() throws IOException {
         String old = System.getProperty("driver.oldRefresh");
         assertNotNull("driver.oldRefresh is required", old);
-        LiveAccounts.Account stale = live.restoreAccount("0", "0", new SessionTokens("x", old, 1L));
-        boolean refreshed = stale.tokens.refreshBlocking();
+        // The access token is marked refused, so the refresh goes through the pool, which needs no socket.
+        LiveAccounts.Account stale = live.detachedAccount(new SessionTokens("x", old, 1L));
+        stale.stack.tokens.markRefused("x");
+        boolean refreshed = stale.stack.tokens.refreshBlocking();
         System.out.println("DRIVER old refresh token accepted=" + refreshed);
         assertFalse("old refresh token still works", refreshed);
     }

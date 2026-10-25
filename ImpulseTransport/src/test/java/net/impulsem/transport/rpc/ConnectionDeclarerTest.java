@@ -1,37 +1,40 @@
 package net.impulsem.transport.rpc;
 
-import static net.impulsem.transport.GrpcWebTestSupport.error;
-import static net.impulsem.transport.GrpcWebTestSupport.ok;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
+import io.github.centrifugal.centrifuge.ReplyError;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import net.impulsem.transport.auth.Clock;
 import net.impulsem.transport.auth.ConnectionDeclaration;
+import net.impulsem.transport.auth.Credentials;
+import net.impulsem.transport.auth.IdentityManager;
 import net.impulsem.transport.auth.ImpulseRpcPaths;
 import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
+import net.impulsem.transport.auth.TestIdentity;
 import net.impulsem.transport.auth.TokenManager;
 import net.impulsem.transport.codec.Transcoder;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
 import net.impulsem.transport.schema.TlProtoSchema;
 import net.impulsem.transport.wire.ProtoReader;
-import okhttp3.OkHttpClient;
-import okhttp3.mockwebserver.Dispatcher;
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -39,7 +42,7 @@ import org.junit.Test;
 
 public class ConnectionDeclarerTest {
 
-    private static final String TokenPath = "/impulse.sync.SyncService/GetCentrifugoToken";
+    private static final String OtherMethod = "help.getConfig";
     private static final long WaitSeconds = 10L;
 
     private static final class MemoryStore implements SessionStore {
@@ -90,6 +93,44 @@ public class ConnectionDeclarerTest {
     }
 
 
+    /**
+     * Holds the initConnection call without answering it, so the test can settle it later from its own thread.
+     * Every other method goes to the fake carrier. A shared script queue would hand a reply meant for one call to
+     * whichever call polled first.
+     */
+    private static final class InitConnectionGate implements RpcCarrier {
+
+        final CountDownLatch arrived = new CountDownLatch(1);
+        final RpcCarrier fake;
+        volatile CarrierCallback pendingInit;
+
+
+        InitConnectionGate(RpcCarrier fake) {
+            this.fake = fake;
+        }
+
+
+        @Override
+        public CarrierCall call(
+            String method,
+            byte[] data,
+            long timeoutMillis,
+            CarrierCallback callback
+        ) {
+            if (!ImpulseRpcPaths.InitConnectionMethod.equals(method)) {
+                return fake.call(method, data, timeoutMillis, callback);
+            }
+            pendingInit = callback;
+            arrived.countDown();
+            return new CarrierCall() {
+                @Override
+                public void cancel() {
+                }
+            };
+        }
+    }
+
+
     private static final class Result {
 
         final String outcome;
@@ -121,9 +162,11 @@ public class ConnectionDeclarerTest {
         "en"
     );
 
-    private MockWebServer server;
+    private FakeCarrier pool;
     private MemoryStore store;
     private TokenManager tokens;
+    private IdentityManager identity;
+    private FakeCarrier carrier;
     private RpcClient rpc;
     private ExecutorService executor;
     private ConnectionDeclarer declarer;
@@ -131,8 +174,7 @@ public class ConnectionDeclarerTest {
 
     @Before
     public void setUp() throws IOException {
-        server = new MockWebServer();
-        server.start();
+        pool = new FakeCarrier();
         store = new MemoryStore();
         store.tokens = new SessionTokens("old", "r1", 5L);
         executor = Executors.newSingleThreadExecutor();
@@ -143,26 +185,43 @@ public class ConnectionDeclarerTest {
     @After
     public void tearDown() throws IOException {
         executor.shutdownNow();
-        server.shutdown();
+        carrier.shutdown();
+        pool.shutdown();
     }
 
 
     private void build() {
-        GrpcWebClient grpc = new GrpcWebClient(new OkHttpClient(), server.url("/"));
-        tokens = new TokenManager(
-            store,
-            grpc,
-            new Clock() {
-                @Override
-                public long nowMillis() {
-                    return 1_700_000_000_000L;
-                }
+        if (carrier != null) {
+            carrier.shutdown();
+        }
+        carrier = new FakeCarrier();
+        buildOn(carrier);
+    }
+
+
+    /** Builds the declarer on the given update-socket carrier; refreshes would go over it and the pool fleet. */
+    private void buildOn(RpcCarrier updateSocket) {
+        Clock clock = new Clock() {
+            @Override
+            public long nowMillis() {
+                return 1_700_000_000_000L;
             }
+        };
+        tokens = new TokenManager(store, clock);
+        tokens.setRefreshCarriers(updateSocket, pool);
+        identity = TestIdentity.manager(pool, clock);
+        Credentials credentials = new Credentials(tokens, identity);
+        rpc = new RpcClient(
+            new Transcoder(TlProtoSchema.load()),
+            updateSocket,
+            null,
+            tokens,
+            credentials
         );
-        rpc = new RpcClient(new Transcoder(TlProtoSchema.load()), grpc, tokens);
         declarer = new ConnectionDeclarer(
             rpc,
             tokens,
+            credentials,
             executor,
             delayer,
             new ConnectionDeclarer.Listener() {
@@ -196,20 +255,17 @@ public class ConnectionDeclarerTest {
     }
 
 
-    private RecordedRequest nextRequest() throws Exception {
-        RecordedRequest request = server.takeRequest(WaitSeconds, TimeUnit.SECONDS);
-        assertNotNull("no request arrived", request);
-        return request;
+    private FakeCarrier.Sent nextSent() throws Exception {
+        return carrier.takeSent();
     }
 
 
+    /** Reads one string field of the ConnectionDeclaration inside an InitConnectionRequest. */
     private static String declarationField(
-        RecordedRequest request,
+        byte[] data,
         int field
     ) {
-        byte[] frame = request.getBody().readByteArray();
-        // gRPC-Web frame: 1 flag byte, 4 length bytes, then the protobuf message.
-        ProtoReader outer = new ProtoReader(frame, 5, frame.length - 5);
+        ProtoReader outer = new ProtoReader(data, 0, data.length);
         assertTrue(outer.next());
         assertEquals(1, outer.field());
         byte[] inner = outer.readBytes();
@@ -226,20 +282,20 @@ public class ConnectionDeclarerTest {
 
     @Test
     public void sentOnceWhenTheSessionExists() throws Exception {
-        server.enqueue(ok(new byte[0]));
+        carrier.reply(new byte[0]);
 
         declarer.setDeclaration(declaration);
 
-        RecordedRequest request = nextRequest();
-        assertEquals(ImpulseRpcPaths.InitConnection, request.getPath());
-        assertEquals("Bearer old", request.getHeader("authorization"));
-        assertEquals("HUAWEI MNA-LX9", declarationField(request, 2));
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, sent.method);
+        assertArrayEquals(ImpulseRpcPaths.encodeInitConnection(declaration), sent.data);
+        assertEquals("HUAWEI MNA-LX9", declarationField(sent.data, 2));
         assertEquals("ok", nextResult().outcome);
 
         declarer.sessionChanged();
         declarer.setDeclaration(declaration);
         drain();
-        assertEquals("an unchanged bearer and declaration write nothing", 1, server.getRequestCount());
+        assertEquals("an unchanged bearer and declaration write nothing", 1, carrier.callCount());
     }
 
 
@@ -252,7 +308,7 @@ public class ConnectionDeclarerTest {
         declarer.sessionChanged();
         drain();
 
-        assertEquals(0, server.getRequestCount());
+        assertEquals(0, carrier.callCount());
         assertNull(results.poll());
     }
 
@@ -263,107 +319,98 @@ public class ConnectionDeclarerTest {
         build();
         declarer.setDeclaration(declaration);
         drain();
-        assertEquals(0, server.getRequestCount());
-        server.enqueue(ok(new byte[0]));
+        assertEquals(0, carrier.callCount());
+        carrier.reply(new byte[0]);
 
         tokens.onLoginTokens("fresh", "r9", 7L);
 
-        RecordedRequest request = nextRequest();
-        assertEquals(ImpulseRpcPaths.InitConnection, request.getPath());
-        assertEquals("Bearer fresh", request.getHeader("authorization"));
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, sent.method);
         assertEquals("ok", nextResult().outcome);
     }
 
 
     @Test
     public void sentAgainWhenTheBearerChanges() throws Exception {
-        server.enqueue(ok(new byte[0]));
-        server.enqueue(ok(new byte[0]));
+        carrier.reply(new byte[0]);
+        carrier.reply(new byte[0]);
         declarer.setDeclaration(declaration);
-        assertEquals("Bearer old", nextRequest().getHeader("authorization"));
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, nextSent().method);
         assertEquals("ok", nextResult().outcome);
 
         tokens.onLoginTokens("rotated", "r2", 5L);
 
-        assertEquals("Bearer rotated", nextRequest().getHeader("authorization"));
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, nextSent().method);
         assertEquals("ok", nextResult().outcome);
         drain();
-        assertEquals(2, server.getRequestCount());
+        assertEquals(2, carrier.callCount());
     }
 
 
     @Test
     public void languageChangeResendsWithTheNewLangCode() throws Exception {
-        server.enqueue(ok(new byte[0]));
-        server.enqueue(ok(new byte[0]));
+        carrier.reply(new byte[0]);
+        carrier.reply(new byte[0]);
         declarer.setDeclaration(declaration);
-        assertEquals("en", declarationField(nextRequest(), 7));
+        assertEquals("en", declarationField(nextSent().data, 7));
         assertEquals("ok", nextResult().outcome);
 
         declarer.setLangCode("ru");
 
-        RecordedRequest request = nextRequest();
-        assertEquals("ru", declarationField(request, 7));
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals("ru", declarationField(sent.data, 7));
         assertEquals("ok", nextResult().outcome);
         declarer.setLangCode("ru");
         drain();
-        assertEquals("the same language again writes nothing", 2, server.getRequestCount());
+        assertEquals("the same language again writes nothing", 2, carrier.callCount());
     }
 
 
     @Test
     public void languageChangeBeforeTheDeclarationIsNotLost() throws Exception {
-        server.enqueue(ok(new byte[0]));
+        carrier.reply(new byte[0]);
 
         declarer.setLangCode("ru");
         declarer.setDeclaration(declaration);
 
-        RecordedRequest request = nextRequest();
-        assertEquals("ru", declarationField(request, 7));
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals("ru", declarationField(sent.data, 7));
         assertEquals("ok", nextResult().outcome);
         drain();
-        assertEquals(1, server.getRequestCount());
+        assertEquals(1, carrier.callCount());
     }
 
 
     @Test
     public void systemLanguageChangeResendsToo() throws Exception {
-        server.enqueue(ok(new byte[0]));
-        server.enqueue(ok(new byte[0]));
+        carrier.reply(new byte[0]);
+        carrier.reply(new byte[0]);
         declarer.setDeclaration(declaration);
-        nextRequest();
+        nextSent();
         nextResult();
 
         declarer.setSystemLangCode("de");
 
-        assertEquals("de", declarationField(nextRequest(), 5));
+        assertEquals("de", declarationField(nextSent().data, 5));
     }
 
 
     @Test
     public void aFailureDoesNotBlockAConcurrentRpc() throws Exception {
-        final CountDownLatch initArrived = new CountDownLatch(1);
-        final CountDownLatch releaseInit = new CountDownLatch(1);
-        server.setDispatcher(new Dispatcher() {
-            @Override
-            public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
-                if (ImpulseRpcPaths.InitConnection.equals(request.getPath())) {
-                    initArrived.countDown();
-                    releaseInit.await(WaitSeconds, TimeUnit.SECONDS);
-                    return error(13, "INTERNAL_BROKEN");
-                }
-                return ok("payload".getBytes(StandardCharsets.UTF_8));
-            }
-        });
+        InitConnectionGate gate = new InitConnectionGate(carrier);
+        buildOn(gate);
+        carrier.reply("payload".getBytes(StandardCharsets.UTF_8));
 
         declarer.setDeclaration(declaration);
-        assertTrue(initArrived.await(WaitSeconds, TimeUnit.SECONDS));
+        assertTrue(gate.arrived.await(WaitSeconds, TimeUnit.SECONDS));
 
-        byte[] body = rpc.callImpulse(TokenPath, new byte[0]);
+        byte[] body = rpc.callNamed(OtherMethod, new byte[0]);
         assertEquals("payload", new String(body, StandardCharsets.UTF_8));
         assertNull("the declaration is still in flight", results.poll());
 
-        releaseInit.countDown();
+        gate.pendingInit.onFailure(CarrierFailure.of(
+            new ReplyError(100, "", false, 500, "INTERNAL_BROKEN", Collections.<String, String>emptyMap())
+        ));
         assertTrue(nextResult().outcome.length() > 0);
     }
 
@@ -371,7 +418,7 @@ public class ConnectionDeclarerTest {
     @Test
     public void aTransientFailureIsRetriedAndThenGivenUpQuietly() throws Exception {
         for (int a = 0; a < 10; a++) {
-            server.enqueue(error(14, "UNAVAILABLE"));
+            carrier.fail(new IOException("lost"));
         }
         declarer.setDeclaration(declaration);
 
@@ -388,19 +435,19 @@ public class ConnectionDeclarerTest {
             rounds++;
         }
 
-        assertTrue("it must stop after a few attempts", server.getRequestCount() <= 4);
-        assertTrue(server.getRequestCount() >= 2);
+        assertTrue("it must stop after a few attempts", carrier.callCount() <= 4);
+        assertTrue(carrier.callCount() >= 2);
         drain();
         assertEquals(0, delayer.takeAll().size());
-        int requests = server.getRequestCount();
+        int requests = carrier.callCount();
         drain();
-        assertEquals("no request after giving up", requests, server.getRequestCount());
+        assertEquals("no request after giving up", requests, carrier.callCount());
     }
 
 
     @Test
     public void aPermanentErrorIsNotRetried() throws Exception {
-        server.enqueue(error(3, "API_ID_INVALID"));
+        carrier.fail(new ReplyError(100, "", false, 400, "API_ID_INVALID", Collections.<String, String>emptyMap()));
 
         declarer.setDeclaration(declaration);
 
@@ -408,15 +455,15 @@ public class ConnectionDeclarerTest {
         assertEquals("gave_up", result.outcome);
         assertEquals(400, result.code);
         drain();
-        assertEquals(1, server.getRequestCount());
+        assertEquals(1, carrier.callCount());
         assertEquals(0, delayer.takeAll().size());
     }
 
 
     @Test
     public void aPendingRetryIsDroppedWhenANewTriggerSupersedesIt() throws Exception {
-        server.enqueue(error(14, "UNAVAILABLE"));
-        server.enqueue(ok(new byte[0]));
+        carrier.fail(new IOException("lost"));
+        carrier.reply(new byte[0]);
         declarer.setDeclaration(declaration);
         assertEquals("retry", nextResult().outcome);
         List<Runnable> stale = delayer.takeAll();
@@ -427,6 +474,131 @@ public class ConnectionDeclarerTest {
         stale.get(0).run();
         drain();
 
-        assertEquals("the stale retry sends nothing", 2, server.getRequestCount());
+        assertEquals("the stale retry sends nothing", 2, carrier.callCount());
+    }
+
+
+    @Test
+    public void signedOutConnectionIsDeclaredWithTheIdentity() throws Exception {
+        store.tokens = null;
+        build();
+        pool.reply(TestIdentity.identityReply(TestIdentity.jwt("identity-1", 1_700_003_600L)));
+        identity.obtainBlocking();
+        carrier.reply(new byte[0]);
+
+        declarer.setDeclaration(declaration);
+
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, sent.method);
+        assertArrayEquals(ImpulseRpcPaths.encodeInitConnection(declaration), sent.data);
+        assertEquals("ok", nextResult().outcome);
+        drain();
+        assertEquals(1, carrier.callCount());
+    }
+
+
+    @Test
+    public void aCredentialChangeDeclaresAgain() throws Exception {
+        store.tokens = null;
+        build();
+        pool.reply(TestIdentity.identityReply(TestIdentity.jwt("identity-1", 1_700_003_600L)));
+        identity.obtainBlocking();
+        carrier.reply(new byte[0]);
+        carrier.reply(new byte[0]);
+        declarer.setDeclaration(declaration);
+        nextSent();
+        assertEquals("ok", nextResult().outcome);
+
+        identity.discard();
+        pool.reply(TestIdentity.identityReply(TestIdentity.jwt("identity-2", 1_700_003_600L)));
+        identity.obtainBlocking();
+        declarer.credentialChanged();
+
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, sent.method);
+        assertEquals("ok", nextResult().outcome);
+        drain();
+        assertEquals(2, carrier.callCount());
+    }
+
+
+    @Test
+    public void awaitDeclaredReturnsAtOnceWhenDeclared() throws Exception {
+        carrier.reply(new byte[0]);
+        declarer.setDeclaration(declaration);
+        nextSent();
+        assertEquals("ok", nextResult().outcome);
+
+        assertTrue(declarer.awaitDeclared(0L));
+        assertEquals(1, carrier.callCount());
+    }
+
+
+    @Test
+    public void awaitDeclaredWaitsForTheRunningDeclaration() throws Exception {
+        InitConnectionGate gate = new InitConnectionGate(carrier);
+        buildOn(gate);
+        declarer.setDeclaration(declaration);
+        assertTrue(gate.arrived.await(WaitSeconds, TimeUnit.SECONDS));
+
+        ExecutorService waiterThread = Executors.newSingleThreadExecutor();
+        try {
+            Future<Boolean> waiter = waiterThread.submit(new Callable<Boolean>() {
+                @Override
+                public Boolean call() throws Exception {
+                    return declarer.awaitDeclared(5_000L);
+                }
+            });
+            try {
+                waiter.get(200L, TimeUnit.MILLISECONDS);
+                fail("awaitDeclared returned while the declaration was still in flight");
+            } catch (TimeoutException stillWaiting) {
+                // The declaration is held, so the waiter must still be waiting.
+            }
+
+            gate.pendingInit.onReply(new byte[0]);
+
+            assertTrue(waiter.get(1L, TimeUnit.SECONDS));
+        } finally {
+            waiterThread.shutdownNow();
+        }
+        assertEquals("ok", nextResult().outcome);
+    }
+
+
+    @Test
+    public void awaitDeclaredReturnsFalseWhenTheRunFails() throws Exception {
+        // Three scripted refusals: the first run and the run the waiter triggers each give up at once, so the
+        // waiter never reaches its timeout.
+        for (int a = 0; a < 3; a++) {
+            carrier.fail(new ReplyError(100, "", false, 400, "API_ID_INVALID", Collections.<String, String>emptyMap()));
+        }
+        declarer.setDeclaration(declaration);
+
+        long startedNanos = System.nanoTime();
+        assertFalse(declarer.awaitDeclared(5_000L));
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+
+        assertTrue("the waiter must not run out its timeout, took " + elapsedMillis + " ms", elapsedMillis < 4_000L);
+        assertEquals("gave_up", nextResult().outcome);
+    }
+
+
+    @Test
+    public void invalidateDeclaresAgain() throws Exception {
+        carrier.reply(new byte[0]);
+        carrier.reply(new byte[0]);
+        declarer.setDeclaration(declaration);
+        nextSent();
+        assertEquals("ok", nextResult().outcome);
+
+        declarer.invalidate();
+
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, sent.method);
+        assertArrayEquals(ImpulseRpcPaths.encodeInitConnection(declaration), sent.data);
+        assertEquals("ok", nextResult().outcome);
+        drain();
+        assertEquals(2, carrier.callCount());
     }
 }
