@@ -261,7 +261,7 @@ public class LiveRpcTest {
     ) {
         Account account = new Account(phone, code);
         account.tokens = new TokenManager(account.store, grpc, Clock.SYSTEM);
-        account.rpc = new RpcClient(transcoder, grpc, account.tokens);
+        account.rpc = new RpcClient(transcoder, null, null, account.tokens);
         return account;
     }
 

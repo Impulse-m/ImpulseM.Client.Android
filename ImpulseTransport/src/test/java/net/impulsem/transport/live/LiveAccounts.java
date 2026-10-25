@@ -108,7 +108,7 @@ final class LiveAccounts {
         }
         Account account = new Account("99966" + x + String.format("%04d", random.nextInt(10000)), code.toString());
         account.tokens = new TokenManager(account.store, grpc, Clock.SYSTEM);
-        account.rpc = new RpcClient(transcoder, grpc, account.tokens);
+        account.rpc = new RpcClient(transcoder, null, null, account.tokens);
         login(account, lastName);
         List<?> users = (List<?>) result(
             account,
@@ -130,7 +130,7 @@ final class LiveAccounts {
         Account account = new Account(phone, code);
         account.store.save(saved);
         account.tokens = new TokenManager(account.store, grpc, Clock.SYSTEM);
-        account.rpc = new RpcClient(transcoder, grpc, account.tokens);
+        account.rpc = new RpcClient(transcoder, null, null, account.tokens);
         account.userId = saved.userId;
         return account;
     }

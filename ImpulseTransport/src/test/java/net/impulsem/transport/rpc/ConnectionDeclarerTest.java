@@ -159,7 +159,7 @@ public class ConnectionDeclarerTest {
                 }
             }
         );
-        rpc = new RpcClient(new Transcoder(TlProtoSchema.load()), grpc, tokens);
+        rpc = new RpcClient(new Transcoder(TlProtoSchema.load()), new FakeCarrier(), null, tokens);
         declarer = new ConnectionDeclarer(
             rpc,
             tokens,
@@ -359,7 +359,7 @@ public class ConnectionDeclarerTest {
         declarer.setDeclaration(declaration);
         assertTrue(initArrived.await(WaitSeconds, TimeUnit.SECONDS));
 
-        byte[] body = rpc.callImpulse(TokenPath, new byte[0]);
+        byte[] body = rpc.callNamed(TokenPath, new byte[0]);
         assertEquals("payload", new String(body, StandardCharsets.UTF_8));
         assertNull("the declaration is still in flight", results.poll());
 

@@ -1,8 +1,13 @@
 package net.impulsem.transport.rpc;
 
 import java.io.IOException;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.io.InterruptedIOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.impulsem.transport.auth.TokenManager;
@@ -13,27 +18,32 @@ import net.impulsem.transport.codec.Transcoder;
 import net.impulsem.transport.errors.AuthErrorClass;
 import net.impulsem.transport.errors.RpcError;
 import net.impulsem.transport.errors.RpcErrors;
-import net.impulsem.transport.grpcweb.GrpcWebClient;
-import net.impulsem.transport.grpcweb.GrpcWebResponse;
 import net.impulsem.transport.schema.ConstructorSpec;
 import net.impulsem.transport.schema.MethodSpec;
 import net.impulsem.transport.schema.ParamSpec;
 import net.impulsem.transport.schema.TlProtoSchema;
 import net.impulsem.transport.schema.TypeSpec;
 import net.impulsem.transport.wire.ProtoReader;
-import okhttp3.Call;
-import okhttp3.Request;
 
 
-/** Runs one TL call over gRPC-Web: transcode, authenticate, map errors, refresh and retry, capture login tokens. */
+/** Runs one TL call over a Centrifugo carrier: transcode, authenticate, map errors, refresh and retry, capture login tokens. */
 public final class RpcClient {
+
+    static final long CallTimeoutMillis = 30_000L;
+    static final long MediaCallTimeoutMillis = 10_000L;
+
+    private static final long SettleGraceMillis = 5_000L;
 
     private static final Logger Log = Logger.getLogger(RpcClient.class.getName());
 
-    private static final String HeaderAuthorization = "authorization";
-    private static final String HeaderQrTicket = "x-impulse-qr-exporter-ticket";
-    private static final String HeaderTakeout = "x-takeout-id";
-    private static final String MetadataPendingToken = "pending-token";
+    private static final Set<String> MediaMethods = Collections.unmodifiableSet(
+        new HashSet<String>(Arrays.asList(
+            "upload.saveFilePart",
+            "upload.saveBigFilePart",
+            "upload.getFile",
+            "upload.getWebFile"
+        ))
+    );
 
     private static final String PredicateAuthorization = "auth.authorization";
     private static final String PredicateSentCodeSuccess = "auth.sentCodeSuccess";
@@ -41,96 +51,134 @@ public final class RpcClient {
     private static final String PredicateUser = "user";
     private static final String PredicateUserEmpty = "userEmpty";
 
+
+    /** One attempt's outcome, with its error already classified (a token refusal counts as REFRESH_AND_RETRY). */
+    private static final class Attempt {
+
+        final RpcOutcome outcome;
+        final AuthErrorClass errorClass;
+
+
+        Attempt(
+            RpcOutcome outcome,
+            AuthErrorClass errorClass
+        ) {
+            this.outcome = outcome;
+            this.errorClass = errorClass;
+        }
+    }
+
+
+    /** Settles one carrier call: exactly one of a reply or a failure is recorded before the latch opens. */
+    private static final class Settlement implements CarrierCallback {
+
+        private final CountDownLatch latch = new CountDownLatch(1);
+        private byte[] reply;
+        private CarrierFailure failure;
+
+
+        @Override
+        public void onReply(byte[] data) {
+            reply = data;
+            latch.countDown();
+        }
+
+
+        @Override
+        public void onFailure(CarrierFailure failure) {
+            this.failure = failure;
+            latch.countDown();
+        }
+
+
+        boolean await(long millis) throws IOException {
+            try {
+                return latch.await(millis, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new InterruptedIOException("interrupted while waiting for the carrier");
+            }
+        }
+    }
+
+
     private final Transcoder transcoder;
-    private final GrpcWebClient grpc;
+    private final RpcCarrier updateSocket;
+    private final RpcCarrier mediaFleet;
     private final TokenManager tokens;
     private final TlProtoSchema schema;
 
 
+    /** The media fleet may be null until it exists; file calls then fail as a carrier fault. */
     public RpcClient(
         Transcoder transcoder,
-        GrpcWebClient grpc,
+        RpcCarrier updateSocket,
+        RpcCarrier mediaFleet,
         TokenManager tokens
     ) {
         this.transcoder = transcoder;
-        this.grpc = grpc;
+        this.updateSocket = updateSocket;
+        this.mediaFleet = mediaFleet;
         this.tokens = tokens;
         this.schema = transcoder.schema();
     }
 
 
     /**
-     * Encodes the request and builds the HTTP call. The returned handle forwards cancel() to the
-     * attempt in flight, and its tag carries the EncodedRequest so {@link #execute(Call)} can
-     * rebuild attempts with fresh credentials.
+     * Encodes the request for the carriers. The returned handle carries the encoded request and forwards
+     * cancel() to the carrier call in flight.
      *
      * @throws TranscodeException when the method is not in the mapping or the TL is malformed.
      */
-    public Call prepare(byte[] tlRequest) {
-        EncodedRequest encoded = transcoder.encodeRequest(tlRequest);
-        return new ActiveCall(encoded, build(encoded));
+    public PreparedCall prepare(byte[] tlRequest) {
+        return new PreparedCall(transcoder.encodeRequest(tlRequest));
     }
 
 
     /**
      * One attempt, with one transparent refresh and retry on REFRESH_AND_RETRY. When another caller
-     * has already refreshed (the bearer changed since the failed attempt) the refresh is skipped.
+     * has already refreshed (the bearer changed since the attempt began) the refresh is skipped.
      *
      * <p>On a force-logout error the outcome carries {@code forceLogout = true}, but this client does
      * NOT clear the stored session; the Android layer does that.
      *
-     * @throws IOException with message "Canceled" when the call was cancelled, or on transport failure.
+     * @throws IOException with message "Canceled" when the call was cancelled, or on a carrier failure
+     *     that is not an answer from the server.
      */
-    public RpcOutcome execute(Call call) throws IOException {
-        ActiveCall active;
-        if (call instanceof ActiveCall) {
-            active = (ActiveCall) call;
-        } else {
-            Object tag = call.request().tag();
-            if (!(tag instanceof EncodedRequest)) {
-                throw new IllegalArgumentException("call was not created by RpcClient.prepare");
-            }
-            active = new ActiveCall((EncodedRequest) tag, call);
+    public RpcOutcome execute(PreparedCall call) throws IOException {
+        EncodedRequest encoded = call.encoded;
+        checkCanceled(call);
+        if (encoded.takeoutId != null) {
+            // Takeout has no carrier on the fleets; the feature is hidden in the app.
+            return new RpcOutcome(null, new RpcError(400, "TAKEOUT_INVALID"), false);
         }
-        EncodedRequest encoded = active.encoded;
-
-        checkCanceled(active);
         if (tokens.needsProactiveRefresh() && !tokens.refreshBlocking()) {
             return new RpcOutcome(null, new RpcError(401, "SESSION_EXPIRED"), true);
         }
-        checkCanceled(active);
-        Call firstCall = credentialsCurrent(active.request()) ? active.current() : build(encoded);
-        String sentAuthorization = firstCall.request().header(HeaderAuthorization);
-
-        RpcOutcome first = attemptOnce(active, firstCall, encoded);
-        if (first.error == null) {
-            return first;
+        checkCanceled(call);
+        String bearerBefore = tokens.bearer();
+        Attempt first = attemptOnce(call);
+        if (first.errorClass == AuthErrorClass.FORCE_LOGOUT) {
+            return new RpcOutcome(null, first.outcome.error, true);
         }
-        AuthErrorClass errorClass = RpcErrors.classify(first.error);
-        if (errorClass == AuthErrorClass.FORCE_LOGOUT) {
-            return new RpcOutcome(null, first.error, true);
+        if (first.errorClass != AuthErrorClass.REFRESH_AND_RETRY) {
+            return first.outcome;
         }
-        if (errorClass != AuthErrorClass.REFRESH_AND_RETRY) {
-            return first;
+        if (!sessionRefreshed(bearerBefore)) {
+            return new RpcOutcome(null, first.outcome.error, true);
         }
-        if (!sessionRefreshed(sentAuthorization)) {
-            return new RpcOutcome(null, first.error, true);
+        checkCanceled(call);
+        Attempt second = attemptOnce(call);
+        // Still unregistered right after a refresh: the session is dead, refreshing again only burns the rotating token.
+        if (second.errorClass == AuthErrorClass.FORCE_LOGOUT || second.errorClass == AuthErrorClass.REFRESH_AND_RETRY) {
+            return new RpcOutcome(null, second.outcome.error, true);
         }
-        checkCanceled(active);
-        RpcOutcome second = attemptOnce(active, build(encoded), encoded);
-        if (second.error != null) {
-            AuthErrorClass secondClass = RpcErrors.classify(second.error);
-            // Still unregistered right after a refresh: the session is dead, refreshing again only burns the rotating token.
-            if (secondClass == AuthErrorClass.FORCE_LOGOUT || secondClass == AuthErrorClass.REFRESH_AND_RETRY) {
-                return new RpcOutcome(null, second.error, true);
-            }
-        }
-        return second;
+        return second.outcome;
     }
 
 
     public RpcOutcome callBlocking(byte[] tlRequest) throws IOException {
-        Call call;
+        PreparedCall call;
         try {
             call = prepare(tlRequest);
         } catch (TranscodeException e) {
@@ -141,131 +189,139 @@ public final class RpcClient {
 
 
     /**
-     * Calls an impulse.* rpc that has no TL counterpart and returns the response message.
+     * Calls an impulse.* registry method that has no TL counterpart and returns the reply bytes.
      *
      * @throws SessionLostException when the session is unrecoverable.
-     * @throws RpcStatusException on any other error status.
-     * @throws IOException on transport failures.
+     * @throws RpcStatusException on any other error answer.
+     * @throws IOException on a carrier failure that is not an answer from the server.
      */
-    public byte[] callImpulse(
-        String path,
+    public byte[] callNamed(
+        String method,
         byte[] protoRequest
     ) throws IOException {
         if (tokens.needsProactiveRefresh() && !tokens.refreshBlocking()) {
-            throw new SessionLostException(path + " failed: session expired before the call", new RpcError(401, "SESSION_EXPIRED"));
+            throw new SessionLostException(method + " failed: session expired before the call", new RpcError(401, "SESSION_EXPIRED"));
         }
         boolean retried = false;
         while (true) {
-            Call call = grpc.newCall(path, protoRequest, headers(null));
-            String sentAuthorization = call.request().header(HeaderAuthorization);
-            GrpcWebResponse response = grpc.execute(call);
-            absorbMetadata(response);
-            RpcError error = RpcErrors.fromResponse(response);
-            if (error == null) {
-                return response.body;
+            String bearerBefore = tokens.bearer();
+            Settlement settled = send(updateSocket, method, protoRequest, CallTimeoutMillis, null);
+            if (settled.failure == null) {
+                return settled.reply;
             }
-            AuthErrorClass errorClass = RpcErrors.classify(error);
-            if (errorClass == AuthErrorClass.FORCE_LOGOUT) {
-                throw new SessionLostException(path + " failed: " + error, error);
+            Attempt attempt = failedAttempt(method, settled.failure);
+            RpcError error = attempt.outcome.error;
+            if (attempt.errorClass == AuthErrorClass.FORCE_LOGOUT) {
+                throw new SessionLostException(method + " failed: " + error, error);
             }
-            if (errorClass == AuthErrorClass.REFRESH_AND_RETRY) {
-                if (retried || !sessionRefreshed(sentAuthorization)) {
-                    throw new SessionLostException(path + " failed: " + error, error);
+            if (attempt.errorClass == AuthErrorClass.REFRESH_AND_RETRY) {
+                if (retried || !sessionRefreshed(bearerBefore)) {
+                    throw new SessionLostException(method + " failed: " + error, error);
                 }
                 retried = true;
                 continue;
             }
-            throw new RpcStatusException(path + " failed: " + error, error);
+            throw new RpcStatusException(method + " failed: " + error, error);
         }
     }
 
 
     /**
-     * True when a usable new bearer is in place: either another caller already replaced the one the
-     * failed attempt sent, or our own refresh succeeded.
+     * True when a usable new bearer is in place: either another caller already replaced the bearer the
+     * failed attempt was sent with, or our own refresh succeeded.
      */
-    private boolean sessionRefreshed(String sentAuthorization) throws IOException {
+    private boolean sessionRefreshed(String bearerBefore) throws IOException {
         String current = tokens.bearer();
-        if (current != null && !("Bearer " + current).equals(sentAuthorization)) {
+        if (current != null && !current.equals(bearerBefore)) {
             return true;
         }
         return tokens.refreshBlocking();
     }
 
 
-    private static void checkCanceled(ActiveCall active) throws IOException {
-        if (active.isCanceled()) {
+    private static void checkCanceled(PreparedCall call) throws IOException {
+        if (call.isCanceled()) {
             throw new IOException("Canceled");
         }
     }
 
 
-    private Call build(EncodedRequest encoded) {
-        return grpc.newCall(encoded.path, encoded.proto, headers(encoded), encoded);
-    }
-
-
-    private Map<String, String> headers(EncodedRequest encoded) {
-        Map<String, String> headers = new LinkedHashMap<String, String>();
-        String bearer = tokens.bearer();
-        if (bearer != null) {
-            headers.put(HeaderAuthorization, "Bearer " + bearer);
-        }
-        String ticket = tokens.qrExporterTicket();
-        if (ticket != null) {
-            headers.put(HeaderQrTicket, ticket);
-        }
-        if (encoded != null && encoded.takeoutId != null) {
-            headers.put(HeaderTakeout, String.valueOf(encoded.takeoutId));
-        }
-        return headers;
-    }
-
-
-    private boolean credentialsCurrent(Request request) {
-        String bearer = tokens.bearer();
-        String expectedAuthorization = bearer == null ? null : "Bearer " + bearer;
-        return equal(expectedAuthorization, request.header(HeaderAuthorization))
-            && equal(tokens.qrExporterTicket(), request.header(HeaderQrTicket));
-    }
-
-
-    private static boolean equal(
-        String a,
-        String b
-    ) {
-        return a == null ? b == null : a.equals(b);
-    }
-
-
-    private RpcOutcome attemptOnce(
-        ActiveCall active,
-        Call call,
-        EncodedRequest encoded
-    ) throws IOException {
-        active.attach(call);
-        GrpcWebResponse response;
-        try {
-            response = grpc.execute(call);
-        } catch (IOException e) {
-            if (active.isCanceled()) {
-                // OkHttp reports a mid-flight cancel as "Socket closed" or "Canceled" depending on timing.
-                throw new IOException("Canceled", e);
+    private Attempt attemptOnce(PreparedCall call) throws IOException {
+        EncodedRequest encoded = call.encoded;
+        String method = encoded.method;
+        RpcCarrier carrier = updateSocket;
+        long timeoutMillis = CallTimeoutMillis;
+        if (MediaMethods.contains(method)) {
+            carrier = mediaFleet;
+            timeoutMillis = MediaCallTimeoutMillis;
+            if (carrier == null) {
+                throw new IOException("no media fleet for " + method);
             }
-            throw e;
         }
-        absorbMetadata(response);
-        RpcError error = RpcErrors.fromResponse(response);
-        if (error != null) {
-            return new RpcOutcome(null, error, false);
+        Settlement settled = send(carrier, method, encoded.proto, timeoutMillis, call);
+        if (settled.failure != null) {
+            if (call.isCanceled()) {
+                throw new IOException("Canceled");
+            }
+            return failedAttempt(method, settled.failure);
         }
+        return new Attempt(decodeReply(encoded, settled.reply), AuthErrorClass.NONE);
+    }
 
+
+    /**
+     * Sends one rpc and waits for the carrier to settle it. The carrier call becomes the target of
+     * {@code owner}'s cancel(); a call that never settles in time is cancelled and reported as an IOException.
+     */
+    private static Settlement send(
+        RpcCarrier carrier,
+        String method,
+        byte[] proto,
+        long timeoutMillis,
+        PreparedCall owner
+    ) throws IOException {
+        Settlement settlement = new Settlement();
+        CarrierCall carrierCall = carrier.call(method, proto, timeoutMillis, settlement);
+        if (owner != null) {
+            owner.attach(carrierCall);
+        }
+        if (!settlement.await(timeoutMillis + SettleGraceMillis)) {
+            carrierCall.cancel();
+            throw new IOException("no answer to " + method);
+        }
+        return settlement;
+    }
+
+
+    /**
+     * Classifies a failed carrier call. A token refusal (103 or 109) is a refresh-and-retry; a failure that maps to no
+     * Telegram error is the carrier's own fault, so it is thrown for the caller's network-failure path.
+     */
+    private static Attempt failedAttempt(
+        String method,
+        CarrierFailure failure
+    ) throws IOException {
+        RpcError error = CarrierErrors.toRpcError(failure);
+        if (CarrierErrors.isTokenRefusal(failure)) {
+            return new Attempt(new RpcOutcome(null, error, false), AuthErrorClass.REFRESH_AND_RETRY);
+        }
+        if (error == null) {
+            throw new IOException("carrier fault on " + method + ": " + failure.cause, failure.cause);
+        }
+        return new Attempt(new RpcOutcome(null, error, false), RpcErrors.classify(error));
+    }
+
+
+    private RpcOutcome decodeReply(
+        EncodedRequest encoded,
+        byte[] body
+    ) {
         final String[] captured = new String[2];
         byte[] tl;
         try {
             tl = transcoder.decodeResult(
                 encoded.methodId,
-                response.body,
+                body,
                 new CaptureSink() {
                     @Override
                     public void onCapture(
@@ -283,13 +339,13 @@ public final class RpcClient {
             );
         } catch (TranscodeException e) {
             // The server already executed the call, so a retry would repeat it; deliver once.
-            Log.log(Level.WARNING, "cannot decode response of " + encoded.path + ": " + e.getMessage(), e);
+            Log.log(Level.WARNING, "cannot decode response of " + encoded.method + ": " + e.getMessage(), e);
             return transcodeFailed(encoded, e.getMessage());
         }
         if (captured[0] != null && captured[1] != null) {
-            long userId = extractUserId(encoded.methodId, response.body);
+            long userId = extractUserId(encoded.methodId, body);
             if (userId == 0) {
-                Log.log(Level.WARNING, "authorization from " + encoded.path + " carries no user id");
+                Log.log(Level.WARNING, "authorization from " + encoded.method + " carries no user id");
                 return transcodeFailed(encoded, "authorization carries no user id");
             }
             tokens.onLoginTokens(captured[0], captured[1], userId);
@@ -302,23 +358,7 @@ public final class RpcClient {
         EncodedRequest encoded,
         String reason
     ) {
-        return new RpcOutcome(null, new RpcError(400, "TRANSCODE_FAILED"), false, encoded.path + ": " + reason);
-    }
-
-
-    private void absorbMetadata(GrpcWebResponse response) {
-        Map<String, String> metadata = response.metadata;
-        if (metadata == null) {
-            return;
-        }
-        String pending = metadata.get(MetadataPendingToken);
-        if (pending != null && !pending.isEmpty()) {
-            tokens.setPendingToken(pending);
-        }
-        String ticket = metadata.get(HeaderQrTicket);
-        if (ticket != null && !ticket.isEmpty()) {
-            tokens.setQrExporterTicket(ticket);
-        }
+        return new RpcOutcome(null, new RpcError(400, "TRANSCODE_FAILED"), false, encoded.method + ": " + reason);
     }
 
 

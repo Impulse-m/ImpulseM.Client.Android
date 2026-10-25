@@ -12,6 +12,10 @@ public final class ImpulseRpcPaths {
     public static final String GetCentrifugoToken = "/impulse.sync.SyncService/GetCentrifugoToken";
     public static final String InitConnection = "/impulse.auth.AuthService/InitConnection";
 
+    public static final String InitConnectionMethod = "initConnection";
+    public static final String RefreshSessionMethod = "refreshSession";
+    public static final String ConnectionIdentityMethod = "connectionIdentity";
+
 
     /** The decoded impulse.auth.Authorization message; absent strings are null. */
     public static final class Authorization {

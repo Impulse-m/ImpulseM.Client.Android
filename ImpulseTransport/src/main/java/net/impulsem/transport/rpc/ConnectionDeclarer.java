@@ -196,7 +196,7 @@ public final class ConnectionDeclarer {
             return;
         }
         try {
-            rpc.callImpulse(ImpulseRpcPaths.InitConnection, ImpulseRpcPaths.encodeInitConnection(current));
+            rpc.callNamed(ImpulseRpcPaths.InitConnectionMethod, ImpulseRpcPaths.encodeInitConnection(current));
         } catch (SessionLostException e) {
             report(OutcomeSessionLost, attempt, e.error == null ? 0 : e.error.code);
             finish();

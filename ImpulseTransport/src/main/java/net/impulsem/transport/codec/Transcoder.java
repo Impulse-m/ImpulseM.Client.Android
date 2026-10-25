@@ -109,7 +109,7 @@ public final class Transcoder {
                     encodeParams(source, method.params, writer, 0);
                     requireConsumed(source);
                     requireConsumed(reader);
-                    return new EncodedRequest(method.id, method.path, writer.toByteArray(), takeoutId);
+                    return new EncodedRequest(method.id, method.method, method.path, writer.toByteArray(), takeoutId);
                 }
             }
         } catch (TranscodeException e) {

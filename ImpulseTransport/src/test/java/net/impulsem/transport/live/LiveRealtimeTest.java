@@ -311,7 +311,7 @@ public class LiveRealtimeTest {
 
 
     private static String mintToken(LiveAccounts.Account account) throws IOException {
-        byte[] response = account.rpc.callImpulse(ImpulseRpcPaths.GetCentrifugoToken, new byte[0]);
+        byte[] response = account.rpc.callNamed(ImpulseRpcPaths.GetCentrifugoToken, new byte[0]);
         ProtoReader reader = new ProtoReader(response, 0, response.length);
         String token = null;
         while (reader.next()) {
