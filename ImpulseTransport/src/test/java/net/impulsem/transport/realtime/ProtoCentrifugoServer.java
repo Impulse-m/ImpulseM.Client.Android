@@ -28,7 +28,7 @@ import okio.ByteString;
  * Centrifugo fake for the realtime tests, served over MockWebServer. Every WebSocket message is a stream of
  * varint-length-delimited protobuf messages, the same framing the SDK uses on the wire.
  */
-final class ProtoCentrifugoServer {
+public final class ProtoCentrifugoServer {
 
     /** The byte sent for an empty command, which is the client's answer to a ping. */
     static final byte[] EmptyFrame = new byte[] {0};
@@ -47,9 +47,9 @@ final class ProtoCentrifugoServer {
 
 
     /** One server-side connection: records commands and answers them like Centrifugo would. */
-    static final class Session extends WebSocketListener {
+    public static final class Session extends WebSocketListener {
 
-        final BlockingQueue<Protocol.Command> commands = new LinkedBlockingQueue<Protocol.Command>();
+        public final BlockingQueue<Protocol.Command> commands = new LinkedBlockingQueue<Protocol.Command>();
         final BlockingQueue<ByteString> rawFrames = new LinkedBlockingQueue<ByteString>();
         final BlockingQueue<Protocol.Error> subscribeErrors = new LinkedBlockingQueue<Protocol.Error>();
         final List<Protocol.Publication> subscribeReplyPublications = new CopyOnWriteArrayList<Protocol.Publication>();
@@ -61,7 +61,7 @@ final class ProtoCentrifugoServer {
         /** When positive, the server closes with 3005 this long after ttl unless a refresh arrived. */
         volatile int expiredCloseGraceMillis = 0;
         /** Answers rpc commands; null leaves them unanswered. */
-        volatile RpcResponder rpcResponder;
+        public volatile RpcResponder rpcResponder;
         /** Sets the rpc-options flag on the connect reply, which tells the SDK that the server takes rpc options. */
         volatile boolean confirmRpcOptions = false;
         /** When positive, the connect reply carries this server time in milliseconds. */
@@ -205,7 +205,7 @@ final class ProtoCentrifugoServer {
 
 
         /** Waits for the next command of the given kind; the other commands are skipped. */
-        Protocol.Command nextCommandOf(CommandKind kind) throws InterruptedException {
+        public Protocol.Command nextCommandOf(CommandKind kind) throws InterruptedException {
             long deadline = System.currentTimeMillis() + WaitMillis;
             while (System.currentTimeMillis() < deadline) {
                 Protocol.Command command = commands.poll(PollMillis, TimeUnit.MILLISECONDS);
@@ -256,7 +256,7 @@ final class ProtoCentrifugoServer {
 
 
     /** The command kinds the tests wait for. */
-    enum CommandKind {
+    public enum CommandKind {
         CONNECT,
         SUBSCRIBE,
         UNSUBSCRIBE,
@@ -281,7 +281,7 @@ final class ProtoCentrifugoServer {
 
 
     /** Builds the reply to one rpc command; the server sets the command id on it. */
-    interface RpcResponder {
+    public interface RpcResponder {
 
         Protocol.Reply.Builder answer(Protocol.RPCRequest request);
     }
@@ -295,7 +295,7 @@ final class ProtoCentrifugoServer {
 
 
     /** Binds a MockWebServer whose upgrades are served by the sessions, in order. */
-    static MockWebServer start(List<Session> sessions) throws IOException {
+    public static MockWebServer start(List<Session> sessions) throws IOException {
         MockWebServer server = new MockWebServer();
         server.start();
         for (Session session : sessions) {
