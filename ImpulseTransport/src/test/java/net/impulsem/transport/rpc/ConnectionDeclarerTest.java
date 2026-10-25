@@ -42,7 +42,7 @@ import org.junit.Test;
 
 public class ConnectionDeclarerTest {
 
-    private static final String TokenPath = "/impulse.sync.SyncService/GetCentrifugoToken";
+    private static final String OtherMethod = "help.getConfig";
     private static final long WaitSeconds = 10L;
 
     private static final class MemoryStore implements SessionStore {
@@ -404,7 +404,7 @@ public class ConnectionDeclarerTest {
         declarer.setDeclaration(declaration);
         assertTrue(gate.arrived.await(WaitSeconds, TimeUnit.SECONDS));
 
-        byte[] body = rpc.callNamed(TokenPath, new byte[0]);
+        byte[] body = rpc.callNamed(OtherMethod, new byte[0]);
         assertEquals("payload", new String(body, StandardCharsets.UTF_8));
         assertNull("the declaration is still in flight", results.poll());
 

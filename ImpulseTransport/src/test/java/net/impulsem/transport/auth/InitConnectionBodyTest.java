@@ -51,12 +51,6 @@ public class InitConnectionBodyTest {
 
 
     @Test
-    public void pathIsTheAuthServiceInitConnection() {
-        assertEquals("/impulse.auth.AuthService/InitConnection", ImpulseRpcPaths.InitConnection);
-    }
-
-
-    @Test
     public void declarationFieldsUseTheContractFieldNumbersAndWireTypes() {
         ConnectionDeclaration declaration = new ConnectionDeclaration(
             3,

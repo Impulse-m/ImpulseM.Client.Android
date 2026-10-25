@@ -5,12 +5,8 @@ import net.impulsem.transport.wire.ProtoReader;
 import net.impulsem.transport.wire.ProtoWriter;
 
 
-/** Paths and hand-encoded messages of the impulse.* services that have no TL counterpart. */
+/** Registry method names and hand-encoded messages of the impulse.* services that have no TL counterpart. */
 public final class ImpulseRpcPaths {
-
-    public static final String RefreshSession = "/impulse.auth.AuthService/RefreshSession";
-    public static final String GetCentrifugoToken = "/impulse.sync.SyncService/GetCentrifugoToken";
-    public static final String InitConnection = "/impulse.auth.AuthService/InitConnection";
 
     public static final String InitConnectionMethod = "initConnection";
     public static final String RefreshSessionMethod = "refreshSession";
