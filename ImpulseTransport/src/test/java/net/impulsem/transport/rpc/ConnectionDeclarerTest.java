@@ -2,9 +2,11 @@ package net.impulsem.transport.rpc;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import io.github.centrifugal.centrifuge.ReplyError;
 import java.io.IOException;
@@ -13,14 +15,18 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import net.impulsem.transport.auth.Clock;
 import net.impulsem.transport.auth.ConnectionDeclaration;
 import net.impulsem.transport.auth.Credentials;
+import net.impulsem.transport.auth.IdentityManager;
 import net.impulsem.transport.auth.ImpulseRpcPaths;
 import net.impulsem.transport.auth.SessionStore;
 import net.impulsem.transport.auth.SessionTokens;
@@ -159,6 +165,7 @@ public class ConnectionDeclarerTest {
     private FakeCarrier pool;
     private MemoryStore store;
     private TokenManager tokens;
+    private IdentityManager identity;
     private FakeCarrier carrier;
     private RpcClient rpc;
     private ExecutorService executor;
@@ -202,16 +209,19 @@ public class ConnectionDeclarerTest {
         };
         tokens = new TokenManager(store, clock);
         tokens.setRefreshCarriers(updateSocket, pool);
+        identity = TestIdentity.manager(pool, clock);
+        Credentials credentials = new Credentials(tokens, identity);
         rpc = new RpcClient(
             new Transcoder(TlProtoSchema.load()),
             updateSocket,
             null,
             tokens,
-            new Credentials(tokens, TestIdentity.manager(pool, clock))
+            credentials
         );
         declarer = new ConnectionDeclarer(
             rpc,
             tokens,
+            credentials,
             executor,
             delayer,
             new ConnectionDeclarer.Listener() {
@@ -465,5 +475,130 @@ public class ConnectionDeclarerTest {
         drain();
 
         assertEquals("the stale retry sends nothing", 2, carrier.callCount());
+    }
+
+
+    @Test
+    public void signedOutConnectionIsDeclaredWithTheIdentity() throws Exception {
+        store.tokens = null;
+        build();
+        pool.reply(TestIdentity.identityReply(TestIdentity.jwt("identity-1", 1_700_003_600L)));
+        identity.obtainBlocking();
+        carrier.reply(new byte[0]);
+
+        declarer.setDeclaration(declaration);
+
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, sent.method);
+        assertArrayEquals(ImpulseRpcPaths.encodeInitConnection(declaration), sent.data);
+        assertEquals("ok", nextResult().outcome);
+        drain();
+        assertEquals(1, carrier.callCount());
+    }
+
+
+    @Test
+    public void aCredentialChangeDeclaresAgain() throws Exception {
+        store.tokens = null;
+        build();
+        pool.reply(TestIdentity.identityReply(TestIdentity.jwt("identity-1", 1_700_003_600L)));
+        identity.obtainBlocking();
+        carrier.reply(new byte[0]);
+        carrier.reply(new byte[0]);
+        declarer.setDeclaration(declaration);
+        nextSent();
+        assertEquals("ok", nextResult().outcome);
+
+        identity.discard();
+        pool.reply(TestIdentity.identityReply(TestIdentity.jwt("identity-2", 1_700_003_600L)));
+        identity.obtainBlocking();
+        declarer.credentialChanged();
+
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, sent.method);
+        assertEquals("ok", nextResult().outcome);
+        drain();
+        assertEquals(2, carrier.callCount());
+    }
+
+
+    @Test
+    public void awaitDeclaredReturnsAtOnceWhenDeclared() throws Exception {
+        carrier.reply(new byte[0]);
+        declarer.setDeclaration(declaration);
+        nextSent();
+        assertEquals("ok", nextResult().outcome);
+
+        assertTrue(declarer.awaitDeclared(0L));
+        assertEquals(1, carrier.callCount());
+    }
+
+
+    @Test
+    public void awaitDeclaredWaitsForTheRunningDeclaration() throws Exception {
+        InitConnectionGate gate = new InitConnectionGate(carrier);
+        buildOn(gate);
+        declarer.setDeclaration(declaration);
+        assertTrue(gate.arrived.await(WaitSeconds, TimeUnit.SECONDS));
+
+        ExecutorService waiterThread = Executors.newSingleThreadExecutor();
+        try {
+            Future<Boolean> waiter = waiterThread.submit(new Callable<Boolean>() {
+                @Override
+                public Boolean call() throws Exception {
+                    return declarer.awaitDeclared(5_000L);
+                }
+            });
+            try {
+                waiter.get(200L, TimeUnit.MILLISECONDS);
+                fail("awaitDeclared returned while the declaration was still in flight");
+            } catch (TimeoutException stillWaiting) {
+                // The declaration is held, so the waiter must still be waiting.
+            }
+
+            gate.pendingInit.onReply(new byte[0]);
+
+            assertTrue(waiter.get(1L, TimeUnit.SECONDS));
+        } finally {
+            waiterThread.shutdownNow();
+        }
+        assertEquals("ok", nextResult().outcome);
+    }
+
+
+    @Test
+    public void awaitDeclaredReturnsFalseWhenTheRunFails() throws Exception {
+        // Three scripted refusals: the first run and the run the waiter triggers each give up at once, so the
+        // waiter never reaches its timeout.
+        for (int a = 0; a < 3; a++) {
+            carrier.fail(new ReplyError(100, "", false, 400, "API_ID_INVALID", Collections.<String, String>emptyMap()));
+        }
+        declarer.setDeclaration(declaration);
+
+        long startedNanos = System.nanoTime();
+        assertFalse(declarer.awaitDeclared(5_000L));
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+
+        assertTrue("the waiter must not run out its timeout, took " + elapsedMillis + " ms", elapsedMillis < 4_000L);
+        assertEquals("gave_up", nextResult().outcome);
+    }
+
+
+    @Test
+    public void invalidateDeclaresAgain() throws Exception {
+        carrier.reply(new byte[0]);
+        carrier.reply(new byte[0]);
+        declarer.setDeclaration(declaration);
+        nextSent();
+        assertEquals("ok", nextResult().outcome);
+
+        declarer.invalidate();
+
+        FakeCarrier.Sent sent = nextSent();
+        assertEquals(ImpulseRpcPaths.InitConnectionMethod, sent.method);
+        assertArrayEquals(ImpulseRpcPaths.encodeInitConnection(declaration), sent.data);
+        assertEquals("ok", nextResult().outcome);
+        drain();
+        assertEquals(2, carrier.callCount());
     }
 }
