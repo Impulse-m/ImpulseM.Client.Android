@@ -1,58 +1,42 @@
-## ImpulseM for Android
+## ImpulseM Android client
 
-[Telegram](https://telegram.org) is a messaging app with a focus on speed and security. It’s superfast, simple and free.
-This repository contains the ImpulseM Android client, based on Telegram for Android, with ImpulseM transport and LiveKit calls.
+ImpulseM Android client for the ImpulseM platform: messaging over the ImpulseM transport, with LiveKit calls.
 
-### Downloads and automated releases
+## Build
 
-Download signed APKs from [GitHub Releases](https://github.com/Impulse-m/ImpulseM.Client.Android/releases).
-Every push to `master` publishes an ImpulseM Beta prerelease (`net.impulsem.messenger.beta`).
-Pushing a version tag such as `v1.0.0` publishes an optimized release APK (`net.impulsem.messenger`).
-The two editions install separately and use the same private signing certificate.
-The **Android releases** workflow also supports manual runs from `master` or a version tag.
+Requirements: Android Studio, Android SDK 36, Android NDK 27.2.12479018, CMake 3.22.1, JDK 17.
 
-Each release includes `SHA256SUMS.txt`. CI assigns increasing Android version codes from its run number.
-Repository secrets `ANDROID_KEYSTORE_BASE64` and `ANDROID_SIGNING_PROPERTIES_BASE64` hold the
-keystore and signing properties; repository variable `ANDROID_SIGNING_CERT_SHA256` pins the expected certificate.
-
-## Creating your Telegram Application
-
-We welcome all developers to use our API and source code to create applications on our platform.
-There are several things we require from **all developers** for the moment.
-
-1. [**Obtain your own api_id**](https://core.telegram.org/api/obtaining_api_id) for your application.
-2. Please **do not** use the name Telegram for your app — or make sure your users understand that it is unofficial.
-3. Kindly **do not** use our standard logo (white paper plane in a blue circle) as your app's logo.
-3. Please study our [**security guidelines**](https://core.telegram.org/mtproto/security_guidelines) and take good care of your users' data and privacy.
-4. Please remember to publish **your** code too in order to comply with the licences.
-
-### API, Protocol documentation
-
-Telegram API manuals: https://core.telegram.org/api
-
-MTproto protocol manuals: https://core.telegram.org/mtproto
-
-### Compilation Guide
-
-**Note**: In order to support [reproducible builds](https://core.telegram.org/reproducible-builds), this repo contains dummy release.keystore,  google-services.json and filled variables inside BuildVars.java. Before publishing your own APKs please make sure to replace all these files with your own.
-
-You will require Android Studio 2025.1.4, Android NDK 27.2.12479018 and Android SDK 36.
-
-1. Clone the Telegram source code with its submodules:
+1. Clone with submodules:
    ```bash
    git clone --recursive --shallow-submodules https://github.com/Impulse-m/ImpulseM.Client.Android.git ImpulseM
    ```
-   In case you forgot the `--recursive` flag, change to the `ImpulseM` directory and run:
+   If you forgot `--recursive`, run `git submodule update --init --recursive --depth=1` inside the checkout.
+2. Build values are read from Gradle properties (`-P`, `gradle.properties`) or environment variables of the same name. See the table below.
+3. Release builds need a private signing keystore kept outside the repository. Point `impulsem.signing.properties` in `local.properties` at an external properties file containing `storeFile`, `storePassword`, `keyAlias` and `keyPassword`.
+4. Release builds also need a `google-services.json` for your own Firebase project in the folder of `TMessagesProj_App`.
+5. Build a debug APK, which does not need signing:
    ```bash
-   git submodule init && git submodule update --init --recursive --depth=1
+   ./gradlew :TMessagesProj_App:assembleAfatDebug -PIMPULSEM_RPC_URL=https://rpc.example.org
    ```
-2. Create a private ImpulseM keystore outside the repository. The bundled Telegram keystore is not used by this fork.
-3. Set `impulsem.signing.properties` in `local.properties` to an external properties file containing `storeFile`, `storePassword`, `keyAlias`, and `keyPassword`. Do not put passwords in the tracked `gradle.properties`.
-4.  Go to https://console.firebase.google.com/, create two android apps with application IDs org.telegram.messenger and org.telegram.messenger.beta, turn on firebase messaging and download google-services.json, which should be copied to the same folder as TMessagesProj.
-5. Open the project in the Studio (note that it should be opened, NOT imported).
-6. Fill out values in TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java – there’s a link for each of the variables showing where and which data to obtain.
-7. You are ready to compile Telegram.
+   Release APK: `./gradlew :TMessagesProj_App:assembleAfatRelease` with the same values.
 
-### Localization
+Tests of the transport layer run with `./gradlew :ImpulseTransport:test :ImpulseProxy:test`.
 
-We moved all translations to https://translations.telegram.org/en/android/. Please use it.
+## Build variables
+
+| Name | What it does | When it is empty |
+| --- | --- | --- |
+| `IMPULSEM_RPC_URL` | Base URL of the transport host, for example `https://rpc.example.org`. The app derives its websocket endpoints from it. | Release builds fail with a clear message. Debug builds start, make no connection and stay not connected. |
+| `IMPULSEM_SITE_URL` | Base URL of the project website, for example `https://example.org`, without a trailing slash. Website links (terms, privacy, FAQ, downloads) are built from it. | Website links are hidden or shown as plain text. |
+| `IMPULSEM_LINK_HOST` | Host of public share and deep links, for example `o.example.org`, without a scheme. | No host is recognised statically, and UI that needs it to build a link is hidden. The app's own URL scheme still works. |
+| `IMPULSEM_WEB_URL` | URL of the web client, for example `https://web.example.org/k`. | "Open the web version" links are hidden. |
+
+CI reads the same names from repository or organisation variables (`vars.IMPULSEM_*`) in `.github/workflows/android-release.yml`.
+
+## Releases
+
+GitHub Actions workflow `Android releases` builds signed APKs on every push to `master` (beta prerelease) and on version tags (release). It needs the repository secrets `ANDROID_KEYSTORE_BASE64` and `ANDROID_SIGNING_PROPERTIES_BASE64`, the variable `ANDROID_SIGNING_CERT_SHA256` that pins the expected signing certificate, and the `IMPULSEM_*` variables above.
+
+## License
+
+Licensed under the GNU General Public License, version 2. See [LICENSE](LICENSE).

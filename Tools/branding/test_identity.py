@@ -71,8 +71,15 @@ class IdentityTest(unittest.TestCase):
         manifest: str = brand.read(brand.MAIN / "AndroidManifest.xml")
         for host in TELEGRAM_HOSTS:
             self.assertNotIn('android:host="' + host + '"', manifest)
-        self.assertIn('android:host="' + brand.LINK_HOST + '" android:scheme="https"', manifest)
+        self.assertNotIn('android:host=""', manifest)
+        if brand.LINK_HOST:
+            self.assertNotIn(brand.LINK_HOST, manifest)
+        self.assertIn('android:host="${impulsemLinkHost}" android:scheme="https"', manifest)
+        self.assertIn('android:enabled="${impulsemLinkEnabled}"', manifest)
         self.assertIn('android:scheme="tg"', manifest)
+        gradle: str = brand.read(brand.ROOT / "build.gradle")
+        self.assertIn('ext.impulsemLinkHost = readImpulsemValue("IMPULSEM_LINK_HOST")', gradle)
+        self.assertIn("variant.manifestPlaceholders.put('impulsemLinkEnabled'", gradle)
 
 
     def test_firebase_plugin_removed(self) -> None:

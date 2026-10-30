@@ -167,7 +167,10 @@ android {
         resValue "string", "AppName", impulsemAppName
         resValue "string", "AppNameBeta", impulsemAppName + " Beta"
 
-        buildConfigField "String", "IMPULSEM_ENDPOINT", "\"" + (project.findProperty("IMPULSEM_ENDPOINT") ?: "https://rpc.impulsem.io") + "\""
+        buildConfigField "String", "IMPULSEM_RPC_URL", "\"" + rootProject.impulsemRpcUrl + "\""
+        buildConfigField "String", "IMPULSEM_SITE_URL", "\"" + rootProject.impulsemSiteUrl + "\""
+        buildConfigField "String", "IMPULSEM_LINK_HOST", "\"" + rootProject.impulsemLinkHost + "\""
+        buildConfigField "String", "IMPULSEM_WEB_URL", "\"" + rootProject.impulsemWebUrl + "\""
 
         multiDexEnabled true
 

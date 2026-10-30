@@ -1,5 +1,6 @@
 """Single source of truth for ImpulseM brand values used by the rebranding tools and checks."""
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -13,7 +14,8 @@ ASSETS: Path = MAIN / "assets"
 NAME: str = "ImpulseM"
 NAME_BETA: str = "ImpulseM Beta"
 PACKAGE: str = "net.impulsem.messenger"
-LINK_HOST: str = "o.impulsem.net"
+# The App Link host is a build value (IMPULSEM_LINK_HOST), never written into the manifest; empty means no link filter.
+LINK_HOST: str = os.environ.get("IMPULSEM_LINK_HOST", "").strip()
 
 PRIMARY_DAY: int = 0xFF2085DF
 LINK_DAY: int = 0xFF106ACC

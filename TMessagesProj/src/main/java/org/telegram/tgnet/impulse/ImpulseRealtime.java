@@ -150,6 +150,10 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
 
     /** Connects when logged in and online, disconnects otherwise, and keeps the user lane on the current user. Runs only on syncExecutor. */
     private void sync() {
+        if (!ImpulseEndpoints.isConfigured()) {
+            // The build names no transport host: there is nowhere to connect, so the socket stays down.
+            return;
+        }
         try {
             SyncPlanner.Plan plan = planner.plan(
                 connection.currentUserId(),
@@ -212,7 +216,9 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             @Override
             public void run() {
                 sync();
-                client.reconnectNow();
+                if (ImpulseEndpoints.isConfigured()) {
+                    client.reconnectNow();
+                }
             }
         });
     }

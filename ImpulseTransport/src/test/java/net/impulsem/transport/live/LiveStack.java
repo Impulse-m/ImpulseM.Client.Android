@@ -36,8 +36,8 @@ import okhttp3.OkHttpClient;
 final class LiveStack {
 
     static final int ApiId = 3;
-    static final String SocketUrl = "wss://rpc.impulsem.io/connection/websocket?cf_ws_frame_ping_pong=true";
-    static final String PoolUrl = "wss://rpc.impulsem.io/pool/connection/websocket?cf_protocol=protobuf&cf_ws_frame_ping_pong=true";
+    static final String SocketUrl = websocketUrl("/connection/websocket?cf_ws_frame_ping_pong=true");
+    static final String PoolUrl = websocketUrl("/pool/connection/websocket?cf_protocol=protobuf&cf_ws_frame_ping_pong=true");
 
     private static final String MediaPath = "/connection/websocket?cf_protocol=protobuf&cf_ws_frame_ping_pong=true";
     private static final int SchedulerThreads = 4;
@@ -394,5 +394,22 @@ final class LiveStack {
     /** A random rpc instance: 32 hex characters, sent to the server for the rpc options. */
     private static String randomInstance(Random random) {
         return String.format("%016x%016x", random.nextLong(), random.nextLong());
+    }
+
+
+    /** The WebSocket URL of a path on the host named by the IMPULSEM_RPC_URL environment variable (https becomes wss). */
+    private static String websocketUrl(String path) {
+        String base = System.getenv("IMPULSEM_RPC_URL");
+        if (base == null || base.trim().isEmpty()) {
+            throw new IllegalStateException("IMPULSEM_RPC_URL is not set: the live suite needs the transport host, e.g. https://rpc.example.org");
+        }
+        String trimmed = base.trim().replaceAll("/+$", "");
+        if (trimmed.startsWith("https://")) {
+            return "wss://" + trimmed.substring("https://".length()) + path;
+        }
+        if (trimmed.startsWith("http://")) {
+            return "ws://" + trimmed.substring("http://".length()) + path;
+        }
+        throw new IllegalStateException("IMPULSEM_RPC_URL must start with https:// or http://: " + trimmed);
     }
 }

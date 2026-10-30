@@ -9,6 +9,8 @@ import net.impulsem.transport.logging.LogLevel;
 import net.impulsem.transport.logging.LogRecord;
 import net.impulsem.transport.logging.LokiShipper;
 
+import okhttp3.HttpUrl;
+
 import org.telegram.messenger.BuildConfig;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
@@ -24,7 +26,7 @@ import java.util.logging.Logger;
 
 
 /**
- * Ships structured traces and exceptions to the backend's Loki ({IMPULSEM_ENDPOINT}/loki/api/v1/push). Free-text lines
+ * Ships structured traces and exceptions to the backend's Loki ({IMPULSEM_RPC_URL}/loki/api/v1/push). Free-text lines
  * stay in the local log file only. Beta builds only (BuildConfig.DEBUG_VERSION), and off until the user turns it on in
  * Settings > Privacy and Security; a release build never creates the shipper at all.
  */
@@ -70,6 +72,11 @@ public final class RemoteLog {
         if (!BuildConfig.DEBUG_VERSION) {
             return;
         }
+        HttpUrl backend = ImpulseEndpoints.rpcBaseUrl();
+        if (backend == null) {
+            // The build names no transport host, so there is no Loki to ship to: the shipper is not created.
+            return;
+        }
         preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE);
         Map<String, String> labels = new LinkedHashMap<>();
         labels.put("service_name", ServiceName);
@@ -79,7 +86,7 @@ public final class RemoteLog {
         lineFields.put("install", installId());
         LokiShipper created = new LokiShipper(
             ImpulseConnection::httpClient,
-            LokiShipper.pushUrlFor(ImpulseEndpoints.rpcBaseUrl()),
+            LokiShipper.pushUrlFor(backend),
             labels,
             lineFields,
             ImpulseConnection::processBearer

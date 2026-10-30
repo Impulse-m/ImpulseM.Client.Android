@@ -63,6 +63,39 @@ def ensureLibXray = {
 }
 ensureLibXray()
 
+// The ImpulseM build values. Each one is a Gradle property (-P or gradle.properties) or an environment variable of the
+// same name; an empty value means "not set". They are read here once and used by every module through rootProject.
+def readImpulsemValue = { String name ->
+    def value = project.findProperty(name)
+    if (value == null || value.toString().trim().isEmpty()) {
+        value = System.getenv(name)
+    }
+    return value == null ? "" : value.toString().trim()
+}
+// The link host must be a bare host for the manifest: lowercase, no scheme, no trailing slashes. The same rule is applied
+// in ImpulseConfig.linkHost() on the Java side.
+def normalizeImpulsemLinkHost = { String raw ->
+    String host = raw.trim().toLowerCase(Locale.ROOT)
+    host = host.replaceFirst('^https?://', '')
+    return host.replaceFirst('/+$', '')
+}
+ext.impulsemRpcUrl = readImpulsemValue("IMPULSEM_RPC_URL")
+ext.impulsemSiteUrl = readImpulsemValue("IMPULSEM_SITE_URL")
+ext.impulsemLinkHost = normalizeImpulsemLinkHost(readImpulsemValue("IMPULSEM_LINK_HOST"))
+ext.impulsemWebUrl = readImpulsemValue("IMPULSEM_WEB_URL")
+
+// A release build cannot run without the transport host, so it fails here with a clear message instead of starting
+// an app that has nowhere to connect. Debug builds may leave it empty: the app then stays not connected.
+gradle.taskGraph.whenReady { graph ->
+    boolean releaseBuild = graph.allTasks.any { task ->
+        task.name ==~ /(assemble|bundle|package|install)\w*(Release|HA_private|HA_public|HA_hardcore|Standalone)/
+    }
+    if (releaseBuild && rootProject.impulsemRpcUrl.isEmpty()) {
+        throw new GradleException("IMPULSEM_RPC_URL is empty: a release build needs the transport host. "
+            + "Pass -PIMPULSEM_RPC_URL=https://<host> or set the environment variable of the same name.")
+    }
+}
+
 // Strip JLatexMath fonts we don't ship (transitive AAR assets from
 // io.noties.markwon:ext-latex -> ru.noties:jlatexmath-android, ~764 KB total under
 // assets/org/scilab/forge/jlatexmath/fonts/). Has to live in the APK modules — a
@@ -108,6 +141,11 @@ subprojects {
                         variant.packaging.jniLibs.excludes.add("lib/${abi}/**")
                     }
                 }
+                // The App Link host. Without one, the activity-alias that carries the link filter stays disabled, so
+                // no http/https filter is registered; the placeholder value is then a host that never resolves.
+                String linkHost = rootProject.impulsemLinkHost
+                variant.manifestPlaceholders.put('impulsemLinkEnabled', linkHost.isEmpty() ? 'false' : 'true')
+                variant.manifestPlaceholders.put('impulsemLinkHost', linkHost.isEmpty() ? 'link-host-unset.invalid' : linkHost)
             }
         }
 

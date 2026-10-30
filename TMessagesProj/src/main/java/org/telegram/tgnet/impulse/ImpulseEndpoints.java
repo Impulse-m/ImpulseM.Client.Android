@@ -1,11 +1,9 @@
 package org.telegram.tgnet.impulse;
 
-import org.telegram.messenger.BuildConfig;
-
 import okhttp3.HttpUrl;
 
 
-/** The ImpulseM backend addresses, derived from the IMPULSEM_ENDPOINT build property. */
+/** The ImpulseM transport addresses, derived from the build's IMPULSEM_RPC_URL. Each is null when the build has none. */
 public final class ImpulseEndpoints {
 
     private static final String RealtimePath = "/connection/websocket?cf_ws_frame_ping_pong=true";
@@ -16,25 +14,38 @@ public final class ImpulseEndpoints {
     }
 
 
+    /** The transport host as an HTTP base URL, or null when the build has none. */
     public static HttpUrl rpcBaseUrl() {
-        return HttpUrl.get(BuildConfig.IMPULSEM_ENDPOINT);
+        String rpcUrl = ImpulseConfig.rpcUrl();
+        return rpcUrl == null ? null : HttpUrl.get(rpcUrl);
     }
 
 
-    /** The Centrifugo WebSocket URL: wss://host/connection/websocket?cf_ws_frame_ping_pong=true. */
+    /** The Centrifugo WebSocket URL: wss://host/connection/websocket?cf_ws_frame_ping_pong=true, or null. */
     public static String realtimeUrl() {
-        return websocketBase() + RealtimePath;
+        String base = websocketBase();
+        return base == null ? null : base + RealtimePath;
     }
 
 
-    /** The token-less pool fleet's WebSocket URL, on the same host as the realtime socket. */
+    /** The token-less pool fleet's WebSocket URL, on the same host as the realtime socket, or null. */
     public static String poolUrl() {
-        return websocketBase() + PoolPath;
+        String base = websocketBase();
+        return base == null ? null : base + PoolPath;
+    }
+
+
+    /** True when the build names a transport host, so that a connection may be attempted at all. */
+    public static boolean isConfigured() {
+        return ImpulseConfig.rpcUrl() != null;
     }
 
 
     private static String websocketBase() {
         HttpUrl base = rpcBaseUrl();
+        if (base == null) {
+            return null;
+        }
         String scheme = base.isHttps() ? "wss" : "ws";
         int defaultPort = base.isHttps() ? 443 : 80;
         String authority = base.host();

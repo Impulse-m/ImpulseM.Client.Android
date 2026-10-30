@@ -83,16 +83,33 @@ jobs:
           printf '\nstoreFile=%s\n' "$RUNNER_TEMP/android-signing/release.keystore" >> "$RUNNER_TEMP/android-signing/signing.properties"
           printf 'impulsem.signing.properties=%s\n' "$RUNNER_TEMP/android-signing/signing.properties" >> local.properties
 
+      - name: Check the transport host
+        env:
+          IMPULSEM_RPC_URL: ${{ vars.IMPULSEM_RPC_URL }}
+        run: |
+          if [ -z "$IMPULSEM_RPC_URL" ]; then
+            echo 'IMPULSEM_RPC_URL is missing'
+            exit 1
+          fi
+
       - name: Build signed APK
         env:
           BUILD_TASK: ${{ steps.release.outputs.task }}
           VERSION_CODE: ${{ steps.release.outputs.version_code }}
           VERSION_NAME: ${{ steps.release.outputs.version }}
+          IMPULSEM_RPC_URL: ${{ vars.IMPULSEM_RPC_URL }}
+          IMPULSEM_SITE_URL: ${{ vars.IMPULSEM_SITE_URL }}
+          IMPULSEM_LINK_HOST: ${{ vars.IMPULSEM_LINK_HOST }}
+          IMPULSEM_WEB_URL: ${{ vars.IMPULSEM_WEB_URL }}
           CMAKE_BUILD_PARALLEL_LEVEL: '2'
         run: |
           gradle "$BUILD_TASK" \
             "-PAPP_VERSION_CODE=$VERSION_CODE" \
             "-PAPP_VERSION_NAME=$VERSION_NAME" \
+            "-PIMPULSEM_RPC_URL=$IMPULSEM_RPC_URL" \
+            "-PIMPULSEM_SITE_URL=$IMPULSEM_SITE_URL" \
+            "-PIMPULSEM_LINK_HOST=$IMPULSEM_LINK_HOST" \
+            "-PIMPULSEM_WEB_URL=$IMPULSEM_WEB_URL" \
             --no-daemon --max-workers=2 --console=plain \
             -Dorg.gradle.parallel=false \
             '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g'

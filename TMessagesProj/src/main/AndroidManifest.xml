@@ -176,13 +176,6 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="vnd.android.cursor.item/vnd.net.impulsem.messenger.android.profile"/>
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW"/>
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:host="o.impulsem.net" android:scheme="http" />
-                <data android:host="o.impulsem.net" android:scheme="https" />
-            </intent-filter>
             <intent-filter android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:priority="1">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT" />
@@ -216,6 +209,21 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <data android:mimeType="vnd.android.cursor.item/vnd.net.impulsem.messenger.android.call"/>
                 <data android:mimeType="vnd.android.cursor.item/vnd.net.impulsem.messenger.android.call.video"/>
+            </intent-filter>
+        </activity-alias>
+        <!-- The App Link filter lives in its own alias so that an empty IMPULSEM_LINK_HOST can disable it as a whole:
+             a disabled component registers no filter. The host comes from the build; see the root build.gradle. -->
+        <activity-alias
+            android:name="org.telegram.ui.AppLinkAlias"
+            android:targetActivity="org.telegram.ui.LaunchActivity"
+            android:enabled="${impulsemLinkEnabled}"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:host="${impulsemLinkHost}" android:scheme="http" />
+                <data android:host="${impulsemLinkHost}" android:scheme="https" />
             </intent-filter>
         </activity-alias>
         <activity

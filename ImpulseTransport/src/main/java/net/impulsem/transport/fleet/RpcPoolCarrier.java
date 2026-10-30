@@ -4,6 +4,7 @@ import io.github.centrifugal.centrifuge.ConnectionTokenGetter;
 import io.github.centrifugal.centrifuge.RPCResult;
 import io.github.centrifugal.centrifuge.ResultCallback;
 import io.github.centrifugal.centrifuge.RpcPool;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -40,6 +41,8 @@ public final class RpcPoolCarrier implements RpcCarrier {
     private final long carrierTimeoutMillis;
     /** Null when the fleet serves any method. */
     private final Set<String> allowedMethods;
+    /** False when the build gave no endpoint: every call then fails at once and nothing is dialled. */
+    private final boolean configured;
 
 
     public RpcPoolCarrier(
@@ -56,10 +59,11 @@ public final class RpcPoolCarrier implements RpcCarrier {
         this.allowedMethods = allowedMethods == null
             ? null
             : Collections.unmodifiableSet(new LinkedHashSet<String>(allowedMethods));
+        this.configured = endpoint != null;
         RpcPool.EndpointResolver resolver = new RpcPool.EndpointResolver() {
             @Override
             public List<String> endpoints(String endpointKey) {
-                return Collections.singletonList(endpoint);
+                return endpoint == null ? Collections.<String>emptyList() : Collections.singletonList(endpoint);
             }
         };
         RpcPool.Builder builder = new RpcPool.Builder(resolver)
@@ -108,6 +112,14 @@ public final class RpcPoolCarrier implements RpcCarrier {
     ) {
         if (allowedMethods != null && !allowedMethods.contains(method)) {
             throw new IllegalArgumentException("method " + method + " is not served by this fleet");
+        }
+        if (!configured) {
+            callback.onFailure(CarrierFailure.of(new IOException("no transport endpoint is configured for " + method)));
+            return new CarrierCall() {
+                @Override
+                public void cancel() {
+                }
+            };
         }
         long deadline = timeoutMillis <= 0L ? carrierTimeoutMillis : Math.min(timeoutMillis, carrierTimeoutMillis);
         final RpcPool.Call poolCall = pool.rpc(
