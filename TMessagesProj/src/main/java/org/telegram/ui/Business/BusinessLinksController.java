@@ -309,7 +309,8 @@ public class BusinessLinksController {
             if (TextUtils.equals(chatLink.link, slug) ||
                     TextUtils.equals(chatLink.link, "https://" + slug) ||
                     TextUtils.equals(chatLink.link, "https://t.me/m/" + slug) ||
-                    TextUtils.equals(chatLink.link, "tg://message?slug=" + slug)) {
+                    TextUtils.equals(chatLink.link, "tg://message?slug=" + slug) ||
+                    TextUtils.equals(chatLink.link, "im://message?slug=" + slug)) {
                 return chatLink;
             }
         }

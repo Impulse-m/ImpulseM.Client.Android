@@ -186,7 +186,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="tg" />
+                <data android:scheme="im" />
             </intent-filter>
             <intent-filter>
                 <action android:name="net.impulsem.messenger.CREATE_STICKER_PACK"/>

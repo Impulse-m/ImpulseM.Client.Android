@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.text.TextUtils;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.AppUrlScheme;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BirthdayController;
 import org.telegram.messenger.BuildVars;
@@ -89,7 +90,7 @@ public class LinkManager {
         if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
             return handleHttp(uri);
 
-        if ("tg".equalsIgnoreCase(scheme))
+        if (AppUrlScheme.isAppScheme(scheme))
             return handleTg(uri);
 
         return false;
@@ -1580,8 +1581,9 @@ public class LinkManager {
                     }
                     break;
                 }
+                case "im":
                 case "tg": {
-                    if (url.startsWith("tg:resolve") || url.startsWith("tg://resolve")) {
+                    if (AppUrlScheme.toCanonicalUrl(url).startsWith("tg:resolve") || AppUrlScheme.toCanonicalUrl(url).startsWith("tg://resolve")) {
                         return !TextUtils.isEmpty(uri.getQueryParameter("appname"));
                     }
                     break;

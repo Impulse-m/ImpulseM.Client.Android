@@ -34,6 +34,7 @@ import org.telegram.ui.recyclerview.LinearSmoothScrollerCustom;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.AppUrlScheme;
 import org.telegram.messenger.BirthdayController;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.ContactsController;
@@ -152,8 +153,8 @@ public class UserSelectorBottomSheet extends BottomSheetWithRecyclerListView imp
                             }
                         }
                     }
-                } else if (scheme.equals("tg")) {
-                    String url = data.toString();
+                } else if (AppUrlScheme.isAppScheme(scheme)) {
+                    String url = AppUrlScheme.toCanonicalUrl(data.toString());
                     if (url.startsWith("tg:premium_multigift") || url.startsWith("tg://premium_multigift")) {
                         open();
                         return true;

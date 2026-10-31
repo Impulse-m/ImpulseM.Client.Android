@@ -42,6 +42,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.AppUrlScheme;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.DocumentObject;
 import org.telegram.messenger.FileLog;
@@ -1255,7 +1256,7 @@ public class SessionsActivity extends BaseFragment implements NotificationCenter
                 this.error = null;
                 AndroidUtilities.runOnUIThread(() -> {
                     try {
-                        String code = link.substring("tg://login?token=".length());
+                        String code = AppUrlScheme.toCanonicalUrl(link).substring("tg://login?token=".length());
                         code = code.replaceAll("\\/", "_");
                         code = code.replaceAll("\\+", "-");
                         byte[] token = Base64.decode(code, Base64.URL_SAFE);

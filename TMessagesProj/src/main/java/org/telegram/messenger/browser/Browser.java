@@ -23,6 +23,7 @@ import android.text.TextUtils;
 
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.AppUrlScheme;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.CustomTabsCopyReceiver;
@@ -653,7 +654,7 @@ public class Browser {
             return false;
         }
         try {
-            url = url.toLowerCase();
+            url = AppUrlScheme.toCanonicalUrl(url.toLowerCase());
             if (url.startsWith("tg:passport") || url.startsWith("tg://passport") || url.startsWith("tg:secureid") || url.contains("resolve") && url.contains("domain=telegrampassport")) {
                 return true;
             }
@@ -707,7 +708,7 @@ public class Browser {
 
             }
             return true;
-        } else if ("tg".equals(uri.getScheme())) {
+        } else if (AppUrlScheme.isAppScheme(uri.getScheme())) {
             return true;
         } else if ("telegram.dog".equals(host)) {
             String path = uri.getPath();

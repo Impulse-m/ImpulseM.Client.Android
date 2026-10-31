@@ -102,6 +102,7 @@ import androidx.core.math.MathUtils;
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.AppUrlScheme;
 import org.telegram.messenger.AppGlobalConfig;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BotForumHelper;
@@ -10915,7 +10916,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                                     final String host = uri.getHost().toLowerCase();
                                     botButton.isInviteButton = (uri.getQueryParameter("startgroup") != null && (
                                             ("http".equals(uri.getScheme()) || "https".equals(uri.getScheme())) && ("t.me".equals(host) || "telegram.me".equals(host) || "telegram.dog".equals(host)) ||
-                                                    "tg".equals(uri.getScheme()) && (buttonTypeUrl.url.startsWith("tg:resolve") || buttonTypeUrl.url.startsWith("tg://resolve"))
+                                                    AppUrlScheme.isAppScheme(uri.getScheme()) && (AppUrlScheme.toCanonicalUrl(buttonTypeUrl.url).startsWith("tg:resolve") || AppUrlScheme.toCanonicalUrl(buttonTypeUrl.url).startsWith("tg://resolve"))
                                     ));
                                 } catch (Exception ignore) {
                                 }

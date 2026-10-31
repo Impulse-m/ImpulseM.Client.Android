@@ -8,6 +8,7 @@ import android.util.Base64;
 import androidx.annotation.NonNull;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.AppUrlScheme;
 
 import java.io.UnsupportedEncodingException;
 import java.net.IDN;
@@ -253,8 +254,8 @@ public final class ProxySettings {
                 } else {
                     return null;
                 }
-            } else if (scheme.equalsIgnoreCase("tg")) {
-                String url = uri.toString();
+            } else if (AppUrlScheme.isAppScheme(scheme)) {
+                String url = AppUrlScheme.toCanonicalUrl(uri.toString());
 
                 if (url.startsWith("tg://socks") || url.startsWith("tg:socks")) {
                     type = Type.SOCKS5;

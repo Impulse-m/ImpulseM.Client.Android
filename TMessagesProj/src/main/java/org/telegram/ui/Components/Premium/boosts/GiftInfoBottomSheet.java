@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.widget.FrameLayout;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.AppUrlScheme;
 import org.telegram.messenger.DialogObject;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
@@ -95,8 +96,8 @@ public class GiftInfoBottomSheet extends BottomSheetWithRecyclerListView {
                             }
                         }
                     }
-                } else if (scheme.equals("tg")) {
-                    String url = data.toString();
+                } else if (AppUrlScheme.isAppScheme(scheme)) {
+                    String url = AppUrlScheme.toCanonicalUrl(data.toString());
                     String lastPathSegment = data.getLastPathSegment();
                     if (url.startsWith("tg:giftcode") || url.startsWith("tg://giftcode")) {
                         if (lastPathSegment != null) {

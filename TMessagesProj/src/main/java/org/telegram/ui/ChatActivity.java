@@ -137,6 +137,7 @@ import net.impulsem.transport.logging.LogLevel;
 import org.telegram.PhoneFormat.PhoneFormat;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.AppUrlScheme;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BotForumHelper;
 import org.telegram.messenger.BotInlineKeyboard;
@@ -42278,8 +42279,9 @@ public class ChatActivity extends BaseFragment implements
             progressDialogLinkSpan = span;
             cell.invalidate();
         } : null;
-        if (urlFinal.startsWith("tg:privatepost") || urlFinal.startsWith("tg://privatepost")) {
-            String urlTmp = urlFinal.replace("tg:privatepost", "tg://telegram.org").replace("tg://privatepost", "tg://telegram.org");
+        final String urlInternal = AppUrlScheme.toCanonicalUrl(urlFinal);
+        if (urlInternal.startsWith("tg:privatepost") || urlInternal.startsWith("tg://privatepost")) {
+            String urlTmp = urlInternal.replace("tg:privatepost", "tg://telegram.org").replace("tg://privatepost", "tg://telegram.org");
             Uri data = Uri.parse(urlTmp);
             int messageId = Utilities.parseInt(data.getQueryParameter("post"));
             long channelId = Utilities.parseLong(data.getQueryParameter("channel"));
@@ -42342,8 +42344,8 @@ public class ChatActivity extends BaseFragment implements
                         }
                     }
                     return true;
-                } else if (urlFinal.startsWith("tg:resolve") || urlFinal.startsWith("tg://resolve")) {
-                    String urlTmp = urlFinal.replace("tg:resolve", "tg://telegram.org").replace("tg://resolve", "tg://telegram.org");
+                } else if (urlInternal.startsWith("tg:resolve") || urlInternal.startsWith("tg://resolve")) {
+                    String urlTmp = urlInternal.replace("tg:resolve", "tg://telegram.org").replace("tg://resolve", "tg://telegram.org");
                     Uri data = Uri.parse(urlTmp);
                     String usernameE = data.getQueryParameter("domain").toLowerCase();
                     int messageId = Utilities.parseInt(data.getQueryParameter("post"));
@@ -44640,7 +44642,7 @@ public class ChatActivity extends BaseFragment implements
             }
         });
 
-        if (inAppBrowser && !isHashtag && !isMail && !str.startsWith("tg:")) {
+        if (inAppBrowser && !isHashtag && !isMail && !AppUrlScheme.isAppUrl(str)) {
             options.add(R.drawable.outline_saved_24, getString(R.string.WebBookmarkAdd), () -> {
                 ArticleViewer.addBookmark(str, currentAccount, contentView, null, themeDelegate);
             });
