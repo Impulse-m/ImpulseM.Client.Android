@@ -4,6 +4,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import io.github.centrifugal.centrifuge.internal.protocol.Protocol;
@@ -427,6 +428,56 @@ public class CentrifugoClientTest {
         assertEquals(1, publication.envelope.type);
         assertEquals(5L, publication.envelope.pts);
         assertArrayEquals("hello".getBytes(), publication.envelope.updatesProto);
+    }
+
+
+    @Test
+    public void serverSidePublicationsOfSessionAndSystemConfigReachListenerWithPtsZero() throws Exception {
+        Session session = sessions.get(0);
+        session.serverSideChannels.add("session:1:abc");
+        session.serverSideChannels.add("system:config");
+        client.connect();
+        recorder.expect("connected");
+        byte[] zeroPts = bytesOf("{\"type\":1,\"pts\":0,\"ptsCount\":0,\"date\":1700000000,\"data\":\"aGVsbG8=\"}");
+        session.pushPublication("session:1:abc", 4L, zeroPts);
+        session.pushPublication("system:config", 9L, zeroPts);
+        Publication fromSession = recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS);
+        Publication fromConfig = recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS);
+        assertNotNull(fromSession);
+        assertNotNull(fromConfig);
+        assertEquals("session:1:abc", fromSession.channel);
+        assertEquals(4L, fromSession.offset);
+        assertFalse(fromSession.envelope.undecodable());
+        assertEquals(0L, fromSession.envelope.pts);
+        assertEquals(0, fromSession.envelope.ptsCount);
+        assertArrayEquals("hello".getBytes(), fromSession.envelope.updatesProto);
+        assertEquals("system:config", fromConfig.channel);
+        assertFalse(fromConfig.envelope.undecodable());
+        assertFalse(client.subscribedChannels().contains("session:1:abc"));
+        assertEquals(1, server.getRequestCount());
+    }
+
+
+    @Test
+    public void serverSidePublicationsOutsideTheAllowlistAreDroppedWithATrace() throws Exception {
+        Session session = sessions.get(0);
+        session.serverSideChannels.add("channel:9");
+        session.serverSideChannels.add("user:7");
+        session.serverSideChannels.add("session:1:abc");
+        client.setTraceSink(traces);
+        client.connect();
+        recorder.expect("connected");
+        session.pushPublication("channel:9", 1L, ProtoCentrifugoServer.EnvelopeData);
+        session.pushPublication("user:7", 2L, ProtoCentrifugoServer.EnvelopeData);
+        session.pushPublication("session:1:abc", 3L, ProtoCentrifugoServer.EnvelopeData);
+        Publication delivered = recorder.publications.poll(WaitMillis, TimeUnit.MILLISECONDS);
+        assertNotNull(delivered);
+        assertEquals("session:1:abc", delivered.channel);
+        assertEquals(3L, delivered.offset);
+        assertNull(recorder.publications.poll(300L, TimeUnit.MILLISECONDS));
+        Map<String, Object> dropped = traces.await("REALTIME_SERVER_PUBLICATION_DROPPED");
+        assertEquals("channel", dropped.get("lane"));
+        traces.assertNoFreeText();
     }
 
 

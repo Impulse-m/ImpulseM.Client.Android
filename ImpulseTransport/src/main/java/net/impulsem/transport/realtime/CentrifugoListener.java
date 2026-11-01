@@ -24,6 +24,10 @@ public interface CentrifugoListener {
      * A publication arrived. When {@code publication.envelope.undecodable()} is true the payload could not be read
      * (garbage JSON, bad base64, non-numeric fields); the channel and offset are kept when parseable. The
      * application must treat it as a gap and run getDifference.
+     *
+     * <p>The server-side lanes, {@code session:{userId}:{sessionHash}} and {@code system:config}, arrive here too, with
+     * no client subscription behind them. Their frames carry pts 0 and ptsCount 0, so they are not gap-checked and do
+     * not move a pts cursor. Other server-side channels never reach this method.
      */
     void onPublication(Publication publication);
 

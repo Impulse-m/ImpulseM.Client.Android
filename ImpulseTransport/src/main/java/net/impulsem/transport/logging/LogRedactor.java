@@ -17,7 +17,7 @@ public final class LogRedactor {
         "token_fetch",
         "silent_socket", "backoff_skipped", "connect_failed",
         "user", "channel",
-        "subscribe_position_dropped", "subscribe_not_recovered", "publication_requests_difference",
+        "subscribe_position_dropped", "subscribe_not_recovered", "socket_reconnected", "publication_requests_difference",
         "publication_unexpected_constructor", "publication_decode_failed",
         "short_message_unknown_user", "short_message_missing_peer", "short_message_pts_gap", "min_channel",
         "unresolved_peer_in_update", "pts_gap", "qts_gap", "seq_gap", "updates_too_long",

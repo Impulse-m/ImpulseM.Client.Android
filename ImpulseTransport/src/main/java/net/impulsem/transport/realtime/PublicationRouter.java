@@ -6,6 +6,8 @@ public final class PublicationRouter {
 
     public static final String UserPrefix = "user:";
     public static final String ChannelPrefix = "channel:";
+    public static final String SessionPrefix = "session:";
+    public static final String SystemConfigChannel = "system:config";
 
 
     public enum Kind {
@@ -33,6 +35,15 @@ public final class PublicationRouter {
 
 
     private PublicationRouter() {
+    }
+
+
+    /**
+     * True for the lanes the server subscribes this connection to by itself: its session lane and the system config.
+     * Their publications arrive without a client subscription; every other server-side channel is refused.
+     */
+    public static boolean isServerSideLane(String channel) {
+        return channel != null && (channel.startsWith(SessionPrefix) || channel.equals(SystemConfigChannel));
     }
 
 

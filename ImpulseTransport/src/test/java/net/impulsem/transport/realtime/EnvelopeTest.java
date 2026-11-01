@@ -42,6 +42,16 @@ public class EnvelopeTest {
 
 
     @Test
+    public void explicitZeroPtsReadsLikeAnAbsentPts() {
+        Envelope envelope = Envelope.parse(json("{\"type\":1,\"pts\":0,\"ptsCount\":0,\"date\":1700000000,\"data\":\"aGVsbG8=\"}"));
+        assertFalse(envelope.undecodable());
+        assertEquals(0L, envelope.pts);
+        assertEquals(0, envelope.ptsCount);
+        assertArrayEquals("hello".getBytes(), envelope.updatesProto);
+    }
+
+
+    @Test
     public void framesBreakingTheContractAreUndecodable() {
         String[] frames = new String[] {
             "{\"type\":215,\"pts\":900,\"date\":5}",

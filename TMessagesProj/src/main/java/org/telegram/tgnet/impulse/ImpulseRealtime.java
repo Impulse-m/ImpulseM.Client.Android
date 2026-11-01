@@ -35,8 +35,9 @@ import okhttp3.OkHttpClient;
 
 /**
  * The realtime side of one account: a Centrifugo connection that carries the user lane and the channel lanes.
- * Every (re)subscribe of the user lane stands in for the old onSessionCreated and runs getDifference; publications
- * become TLRPC Updates and go to MessagesController.processUpdates.
+ * The user lane's subscribe stands in for the old onSessionCreated and runs getDifference when it could not recover,
+ * and once after every reconnect of the socket (see GapTracker). Publications become TLRPC Updates and go to
+ * MessagesController.processUpdates.
  */
 public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClient.TokenProvider {
 
@@ -248,6 +249,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
 
     @Override
     public void onConnected() {
+        gaps.onConnected();
         RemoteLog.trace(RemoteLog.ComponentRealtime, "REALTIME_CONNECTED", "account", account);
     }
 
@@ -258,7 +260,7 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
         boolean recovered,
         boolean wasRecovering
     ) {
-        boolean needsDifference = gaps.onSubscribed(channel, recovered, wasRecovering);
+        String differenceReason = gaps.onSubscribed(channel, recovered, wasRecovering);
         RemoteLog.trace(
             RemoteLog.ComponentRealtime,
             "REALTIME_SUBSCRIBED",
@@ -267,10 +269,10 @@ public final class ImpulseRealtime implements CentrifugoListener, CentrifugoClie
             "laneId", laneId(channel),
             "recovered", recovered,
             "wasRecovering", wasRecovering,
-            "getDifference", needsDifference
+            "getDifference", differenceReason != null
         );
-        if (needsDifference) {
-            postDifference(recovered ? "subscribe_position_dropped" : "subscribe_not_recovered", channel);
+        if (differenceReason != null) {
+            postDifference(differenceReason, channel);
         }
         if (channel.startsWith(PublicationRouter.UserPrefix)) {
             lanes.requestRecompute();

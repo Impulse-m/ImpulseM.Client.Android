@@ -10,7 +10,8 @@ import okio.ByteString;
 /**
  * The update envelope carried in the {@code data} of a publication. Every frame carries a non-empty body and a
  * positive {@code type} and {@code date}; {@code pts} and {@code ptsCount} are present only on numbered frames,
- * and their absence reads as 0.
+ * and their absence reads as 0. An explicit 0 reads the same way, so a frame with pts 0 is a pts-less frame: it is
+ * delivered as it is, with no gap check and no pts cursor to move.
  */
 public final class Envelope {
 

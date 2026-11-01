@@ -66,6 +66,8 @@ public final class ProtoCentrifugoServer {
         volatile boolean confirmRpcOptions = false;
         /** When positive, the connect reply carries this server time in milliseconds. */
         volatile long serverTimeMillis = 0L;
+        /** Channels the connect reply lists in subs: the server subscribes the connection to them, the client does not. */
+        final List<String> serverSideChannels = new CopyOnWriteArrayList<String>();
         private volatile ScheduledFuture<?> expiry;
 
 
@@ -131,6 +133,9 @@ public final class ProtoCentrifugoServer {
                     }
                     if (confirmRpcOptions) {
                         result.setFlag(RpcOptionsFlag);
+                    }
+                    for (String channel : serverSideChannels) {
+                        result.putSubs(channel, Protocol.SubscribeResult.getDefaultInstance());
                     }
                     Protocol.Reply.Builder reply = Protocol.Reply.newBuilder().setId(id).setConnect(result);
                     if (serverTimeMillis > 0L) {

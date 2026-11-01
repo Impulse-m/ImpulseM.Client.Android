@@ -2,6 +2,8 @@ package net.impulsem.transport.realtime;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import com.google.gson.JsonParser;
 import org.junit.Test;
@@ -42,6 +44,31 @@ public class PublicationRouterTest {
             );
             assertEquals(channel, PublicationRouter.Kind.GET_DIFFERENCE, action.kind);
         }
+    }
+
+
+    @Test
+    public void sessionFrameWithPtsZeroIsDecoded() {
+        PublicationRouter.Action action = PublicationRouter.route(
+            publication("session:7:h1", "{\"type\":1,\"pts\":0,\"ptsCount\":0,\"date\":1700000000,\"data\":\"aGVsbG8=\"}")
+        );
+        assertEquals(PublicationRouter.Kind.DECODE, action.kind);
+        assertArrayEquals("hello".getBytes(), action.proto);
+    }
+
+
+    @Test
+    public void serverSideAllowlistAcceptsOnlySessionLanesAndSystemConfig() {
+        assertTrue(PublicationRouter.isServerSideLane("session:7:h1"));
+        assertTrue(PublicationRouter.isServerSideLane("system:config"));
+        assertFalse(PublicationRouter.isServerSideLane("user:5"));
+        assertFalse(PublicationRouter.isServerSideLane("channel:9"));
+        assertFalse(PublicationRouter.isServerSideLane("system:configx"));
+        assertFalse(PublicationRouter.isServerSideLane("system:"));
+        assertFalse(PublicationRouter.isServerSideLane("session"));
+        assertFalse(PublicationRouter.isServerSideLane("Session:7:h1"));
+        assertFalse(PublicationRouter.isServerSideLane("xsession:7:h1"));
+        assertFalse(PublicationRouter.isServerSideLane(null));
     }
 
 

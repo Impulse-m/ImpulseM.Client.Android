@@ -17,6 +17,7 @@ import io.github.centrifugal.centrifuge.ReplyError;
 import io.github.centrifugal.centrifuge.ResultCallback;
 import io.github.centrifugal.centrifuge.RpcCall;
 import io.github.centrifugal.centrifuge.RpcOptions;
+import io.github.centrifugal.centrifuge.ServerPublicationEvent;
 import io.github.centrifugal.centrifuge.SubscribedEvent;
 import io.github.centrifugal.centrifuge.SubscribingEvent;
 import io.github.centrifugal.centrifuge.Subscription;
@@ -581,6 +582,29 @@ public final class CentrifugoClient implements RpcCarrier {
                 }
             }
             Log.log(Level.WARNING, "realtime error: " + describe(event.getError()));
+        }
+
+
+        /**
+         * Publications of the lanes the server subscribes this connection to (the session lane and system:config). They
+         * arrive with no client subscription, so they are not tied to a wanted channel. Any other server-side channel is
+         * dropped here, with a trace, and never reaches the listener.
+         */
+        @Override
+        public void onPublication(
+            Client client,
+            ServerPublicationEvent event
+        ) {
+            String channel = event.getChannel();
+            if (!PublicationRouter.isServerSideLane(channel)) {
+                trace(LogLevel.WARN, "REALTIME_SERVER_PUBLICATION_DROPPED", "lane", channel == null ? "none" : laneKind(channel));
+                return;
+            }
+            synchronized (lock) {
+                lastFrameAt = System.currentTimeMillis();
+            }
+            Envelope envelope = Envelope.parseBytes(event.getData());
+            firePublication(new Publication(channel, envelope, event.getOffset()));
         }
     }
 
