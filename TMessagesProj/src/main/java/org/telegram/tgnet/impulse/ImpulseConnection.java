@@ -886,6 +886,15 @@ public final class ImpulseConnection {
         int methodId = Transcoder.leadingId(data);
         if (!transcoder.hasMethod(methodId)) {
             log("method 0x" + Integer.toHexString(methodId) + " is not in the mapping");
+            RemoteLog.trace(
+                LogLevel.WARN,
+                RemoteLog.ComponentTransport,
+                "METHOD_INVALID",
+                "account", account,
+                "method", "0x" + Integer.toHexString(methodId),
+                "signedIn", credentials.signedIn(),
+                "where", "unmapped"
+            );
             finishError(pending, 400, "METHOD_INVALID");
             return;
         }
@@ -990,7 +999,8 @@ public final class ImpulseConnection {
                 "METHOD_INVALID",
                 "account", account,
                 "method", pending.method,
-                "signedIn", credentials.signedIn()
+                "signedIn", credentials.signedIn(),
+                "where", "server"
             );
         }
         RequestPolicy.Decision decision = RequestPolicy.onError(entry.flags, entry.connectionType, error, pending.serverFailures);
