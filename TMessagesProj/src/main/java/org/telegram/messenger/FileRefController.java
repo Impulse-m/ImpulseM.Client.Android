@@ -3,6 +3,9 @@ package org.telegram.messenger;
 import android.os.SystemClock;
 import android.util.Pair;
 
+import net.impulsem.transport.logging.LogLevel;
+
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.tgnet.RequestDelegate;
 import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
@@ -1028,6 +1031,9 @@ public class FileRefController extends BaseController {
 
     @SuppressWarnings("unchecked")
     private void sendErrorToObject(Object[] args, int reason) {
+        if (reason == 0) {
+            RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentApp, "FILE_REFERENCE_REFRESH", "result", "noRequest");
+        }
         if (args[0] instanceof TLRPC.TL_inputSingleMedia) {
             TLRPC.TL_messages_sendMultiMedia req = (TLRPC.TL_messages_sendMultiMedia) args[1];
             Object[] objects = multiMediaCache.get(req);
@@ -1078,7 +1084,46 @@ public class FileRefController extends BaseController {
         }
     }
 
+    private static final String[] refreshParentKinds = {
+        "botstory", "story", "premium_promo", "available_reaction", "bot_info", "attach_menu_bot",
+        "message", "webpage", "user", "chat", "str", "set", "wallpaper", "theme"
+    };
+
     private boolean onRequestComplete(String locationKey, String parentKey, TLObject response, TLRPC.TL_error error, boolean cache, boolean fromCache) {
+        boolean found = completeRequest(locationKey, parentKey, response, error, cache, fromCache);
+        if (!fromCache) {
+            traceRefresh(parentKey, response, error, found);
+        }
+        return found;
+    }
+
+    private static void traceRefresh(String parentKey, TLObject response, TLRPC.TL_error error, boolean found) {
+        String result = found ? "updated" : error != null ? "error" : "notFound";
+        ArrayList<Object> fields = new ArrayList<>(Arrays.asList(
+            "parent", refreshParentKind(parentKey),
+            "answer", response != null ? response.getClass().getSimpleName() : "none",
+            "result", result
+        ));
+        if (error != null && error.text != null) {
+            fields.add("error");
+            fields.add(error.text);
+        }
+        RemoteLog.trace(found ? LogLevel.INFO : LogLevel.WARN, RemoteLog.ComponentApp, "FILE_REFERENCE_REFRESH", fields.toArray());
+    }
+
+    private static String refreshParentKind(String parentKey) {
+        if (parentKey == null) {
+            return "none";
+        }
+        for (String kind : refreshParentKinds) {
+            if (parentKey.startsWith(kind)) {
+                return kind;
+            }
+        }
+        return "other";
+    }
+
+    private boolean completeRequest(String locationKey, String parentKey, TLObject response, TLRPC.TL_error error, boolean cache, boolean fromCache) {
         boolean found = false;
         String cacheKey = parentKey;
         if (response instanceof TLRPC.TL_help_premiumPromo) {
@@ -1100,7 +1145,7 @@ public class FileRefController extends BaseController {
                     if (requester.completed) {
                         continue;
                     }
-                    if (onRequestComplete(requester.locationKey, null, response, error, cache && !found, fromCache)) {
+                    if (completeRequest(requester.locationKey, null, response, error, cache && !found, fromCache)) {
                         found = true;
                     }
                 }
