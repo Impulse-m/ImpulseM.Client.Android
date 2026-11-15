@@ -8,6 +8,9 @@
 
 package org.telegram.messenger;
 
+import net.impulsem.transport.logging.LogLevel;
+
+import org.telegram.messenger.remotelog.RemoteLog;
 import org.telegram.messenger.utils.ImmutableByteArrayOutputStream;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.NativeByteBuffer;
@@ -273,6 +276,7 @@ public class FileLoadOperation {
     private int currentType;
     public FilePathDatabase.PathData pathSaveData;
     private long startTime;
+    private String failureServerError;
     private FileLoaderPriorityQueue priorityQueue;
 
     public interface FileLoadOperationDelegate {
@@ -2072,6 +2076,7 @@ public class FileLoadOperation {
                     val = null;
                 }
                 if (val == null) {
+                    failureServerError = error.text;
                     onFail(false, 0);
                 } else {
                     datacenterId = val;
@@ -2084,12 +2089,15 @@ public class FileLoadOperation {
                         onFinishLoadingFile(true, FINISH_CODE_DEFAULT, false);
                     } catch (Exception e) {
                         FileLog.e(e);
+                        failureServerError = error.text;
                         onFail(false, 0);
                     }
                 } else {
+                    failureServerError = error.text;
                     onFail(false, 0);
                 }
             } else if (error.text.contains("RETRY_LIMIT")) {
+                failureServerError = error.text;
                 onFail(false, 2);
             } else {
                 if (BuildVars.LOGS_ENABLED) {
@@ -2103,6 +2111,7 @@ public class FileLoadOperation {
                         FileLog.e(error.text + " " + webLocation + " id = " + fileName);
                     }
                 }
+                failureServerError = error.text;
                 onFail(false, 0);
             }
         }
@@ -2116,6 +2125,11 @@ public class FileLoadOperation {
     protected void onFail(boolean thread, final int reason) {
         cleanup();
         state = reason == 1 ? stateCanceled : stateFailed;
+        String serverError = failureServerError;
+        failureServerError = null;
+        if (reason != 1) {
+            traceFailure(reason, serverError);
+        }
         if (delegate != null) {
             if (BuildVars.LOGS_ENABLED) {
                 long time = startTime == 0 ? 0 : (System.currentTimeMillis() - startTime);
@@ -2139,6 +2153,46 @@ public class FileLoadOperation {
             }
             notifyStreamListeners();
         }
+    }
+
+    private void traceFailure(int reason, String serverError) {
+        ArrayList<Object> fields = new ArrayList<>(Arrays.asList("kind", failureKind(), "dc", datacenterId, "reason", reason));
+        String thumbSize = thumbSizeOfLocation();
+        if (thumbSize != null && !thumbSize.isEmpty()) {
+            fields.add("size");
+            fields.add(thumbSize);
+        }
+        if (serverError != null) {
+            fields.add("error");
+            fields.add(serverError);
+        }
+        RemoteLog.trace(LogLevel.WARN, RemoteLog.ComponentApp, "FILE_LOAD_FAILED", fields.toArray());
+    }
+
+    private String failureKind() {
+        if (webLocation != null) {
+            return "web";
+        }
+        if (location instanceof TLRPC.TL_inputSecureFileLocation) {
+            return "secure";
+        }
+        if (location instanceof TLRPC.TL_inputStickerSetThumb) {
+            return "stickerSetThumb";
+        }
+        if (location instanceof TLRPC.TL_inputPhotoFileLocation || location instanceof TLRPC.TL_inputPeerPhotoFileLocation) {
+            return "photo";
+        }
+        if (location instanceof TLRPC.TL_inputDocumentFileLocation) {
+            return "document";
+        }
+        return "other";
+    }
+
+    private String thumbSizeOfLocation() {
+        if (location == null) {
+            return null;
+        }
+        return location.thumb_size;
     }
 
     private void clearOperation(RequestInfo currentInfo, boolean preloadChanged, boolean acceptChunksAfterCancel) {
@@ -2575,6 +2629,7 @@ public class FileLoadOperation {
                                     clearOperation(requestInfo, false, false);
                                     startDownloadRequest(connectionType);
                                 } else {
+                                    failureServerError = error1.text;
                                     onFail(false, 0);
                                 }
                             }
